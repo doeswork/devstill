@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "repo": {
+    "root": "."
+  },
+  "index": {
+    "path": ".devstill/chroma",
+    "collection": "devstill_code"
+  },
+  "embedding": {
+    "model": "~/.local/share/devstill/models/jina-embeddings-v2-base-code",
+    "device": "cpu",
+    "max_sequence_length": 2048,
+    "batch_size": 8,
+    "normalize_embeddings": true
+  },
+  "files": {
+    "use_gitignore": true,
+    "include": [
+      "**/*.py",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.json",
+      "**/*.toml",
+      "**/*.yaml",
+      "**/*.yml",
+      "**/*.sql",
+      "**/*.html",
+      "**/*.css",
+      "**/*.md"
+    ],
+    "exclude": [
+      ".git/**",
+      ".devstill/**",
+      ".venv/**",
+      "venv/**",
+      "node_modules/**",
+      "dist/**",
+      "build/**",
+      "__pycache__/**"
+    ]
+  },
+  "llm": {
+    "enabled": false,
+    "base_url": "http://127.0.0.1:8080/v1",
+    "model": ""
+  }
+}
