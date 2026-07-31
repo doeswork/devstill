@@ -59,6 +59,31 @@ class FileRecord:
     parser_version: str
 
 
+@dataclass(slots=True, frozen=True)
+class ChunkPolicy:
+    max_chars: int = 8000
+    max_lines: int = 400
+    overlap_lines: int = 20
+
+
+@dataclass(slots=True)
+class FileQuality:
+    path: str
+    status: str
+    parser: str
+    reasons: list[str] = field(default_factory=list)
+    canonical_chunks: int = 0
+    searchable_chunks: int = 0
+    max_chunk_chars: int = 0
+    max_chunk_lines: int = 0
+    fallback_segments: int = 0
+    noisy: bool = False
+    skipped: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 @dataclass(slots=True)
 class IndexSummary:
     repository: str
@@ -69,6 +94,10 @@ class IndexSummary:
     canonical_chunks: int = 0
     search_units_embedded: int = 0
     parse_errors: int = 0
+    good_files: int = 0
+    meh_files: int = 0
+    bad_files: int = 0
+    binary_files_skipped: int = 0
     index_path: str = ""
 
     def to_dict(self) -> dict[str, Any]:

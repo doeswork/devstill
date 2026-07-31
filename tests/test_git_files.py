@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 
+from devstill.config import DevstillConfig
 from devstill.git_files import discover_repository_files
 
 
@@ -41,3 +42,38 @@ def test_fallback_scanner_warns_and_excludes_internal_directories(
         found = discover_repository_files(repo, config)
 
     assert [path.name for path in found] == ["source.py"]
+
+
+def test_scan_all_text_and_configured_opt_out(tmp_path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "source.py").write_text("value = 1\n", encoding="utf-8")
+    (repo / "notes.custom").write_text("notes\n", encoding="utf-8")
+    (repo / "excluded.custom").write_text("hidden\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+
+    scan_all = DevstillConfig.model_validate(
+        {
+            "files": {
+                "scan_all_text": True,
+                "exclude": ["excluded.custom"],
+            }
+        }
+    )
+    assert {
+        path.relative_to(repo).as_posix()
+        for path in discover_repository_files(repo, scan_all)
+    } == {"source.py", "notes.custom"}
+
+    configured_only = scan_all.model_copy(
+        update={
+            "files": scan_all.files.model_copy(
+                update={"scan_all_text": False, "include": ["**/*.py"]}
+            )
+        }
+    )
+    assert [
+        path.relative_to(repo).as_posix()
+        for path in discover_repository_files(repo, configured_only)
+    ] == ["source.py"]

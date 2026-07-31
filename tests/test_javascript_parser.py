@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from devstill.parsers import (
+    FALLBACK_PARSER_VERSION,
     JAVASCRIPT_FAMILY_PARSER_VERSION,
     PARSER_VERSION,
     parse_source_file,
@@ -197,7 +198,7 @@ def test_entrypoint_and_default_export_expressions_are_searchable(
 
 def test_parser_versions_only_migrate_javascript_family(tmp_path: Path) -> None:
     assert parser_version_for(tmp_path / "module.py") == PARSER_VERSION
-    assert parser_version_for(tmp_path / "notes.md") == PARSER_VERSION
+    assert parser_version_for(tmp_path / "notes.md") == FALLBACK_PARSER_VERSION
     for suffix in (".js", ".jsx", ".ts", ".tsx"):
         assert (
             parser_version_for(tmp_path / f"module{suffix}")

@@ -79,6 +79,8 @@ def configured_repo(tmp_path: Path) -> tuple[Path, Path, Any]:
                 },
                 "files": {
                     "use_gitignore": True,
+                    "scan_all_text": False,
+                    "index_noisy_files": False,
                     "include": ["**/*.py", "**/*.tsx", "**/*.md"],
                     "exclude": [".devstill/**", ".venv/**"],
                 },

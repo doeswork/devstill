@@ -175,10 +175,16 @@ class JavaScriptChunker:
             first_line, boundary.start_point.column
         )
         chunk_code = code if code is not None else self._text(boundary)
+        body = node.child_by_field_name("body")
         meta = {
             "parser": "tree_sitter",
             "grammar": self.language,
             "node_type": node.type,
+            "split_points": (
+                [child.start_point.row + 1 for child in body.named_children]
+                if body is not None
+                else []
+            ),
             **comment_meta,
             **(metadata or {}),
         }

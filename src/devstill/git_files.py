@@ -12,10 +12,16 @@ ALWAYS_EXCLUDED_DIRS = {
     ".git",
     ".devstill",
     ".venv",
+    ".cache",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
     "venv",
     "node_modules",
     "dist",
     "build",
+    "target",
     "__pycache__",
 }
 
@@ -37,7 +43,7 @@ def _always_excluded(path: str) -> bool:
 def _configured(path: str, config: DevstillConfig) -> bool:
     return (
         not _always_excluded(path)
-        and _matches(path, config.files.include)
+        and (config.files.scan_all_text or _matches(path, config.files.include))
         and not _matches(path, config.files.exclude)
     )
 

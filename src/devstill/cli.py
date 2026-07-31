@@ -27,8 +27,11 @@ from devstill.context import (
 )
 from devstill.git_files import discover_repository_files
 from devstill.indexer import RepositoryIndexer
+from devstill.models import ChunkPolicy
 from devstill.parsers import parse_source_file
 from devstill.paths import relative_repo_path
+from devstill.removal import build_removal_plan, execute_removal
+from devstill.repository import ensure_devstill_gitignore
 from devstill.search import HybridSearch
 from devstill.tui import DevstillApp
 
@@ -49,6 +52,13 @@ def parser() -> argparse.ArgumentParser:
         "init", help=f"Create {CONFIG_FILENAME} in the current repository."
     )
     init.add_argument("--force", action="store_true")
+
+    remove = sub.add_parser(
+        "remove", help="Remove Devstill data or configuration from this repository."
+    )
+    remove.add_argument("--index-only", action="store_true")
+    remove.add_argument("--dry-run", action="store_true")
+    remove.add_argument("--yes", action="store_true")
 
     doctor = sub.add_parser(
         "doctor", help="Check the installation and current repository."
@@ -104,16 +114,66 @@ def init_repo(force: bool) -> int:
     except FileExistsError as exc:
         console.print(f"[red]{exc}[/red]")
         return 1
-    ignore = Path.cwd() / ".gitignore"
-    lines = ignore.read_text(encoding="utf-8").splitlines() if ignore.exists() else []
-    if ".devstill/" not in lines:
-        with ignore.open("a", encoding="utf-8") as handle:
-            if lines:
-                handle.write("\n")
-            handle.write("# devstill local index\n.devstill/\n")
+    ensure_devstill_gitignore(Path.cwd() / ".gitignore")
     (path.parent / ".devstill").mkdir(exist_ok=True)
     console.print(f"[green]Created {path}[/green]")
     console.print("Run [bold]devstill index[/bold] to build the repository index.")
+    return 0
+
+
+def remove_repo(index_only: bool, dry_run: bool, assume_yes: bool) -> int:
+    config_path, config = _configured()
+    plan = build_removal_plan(config_path, config, index_only=index_only)
+    scope = "index data only" if index_only else "repository integration"
+    console.print(f"Remove Devstill {scope} from [bold]{plan.repo_root}[/bold]")
+    console.print("Index targets:")
+    for target in plan.index_targets:
+        console.print(f"  [cyan]{target}[/cyan]")
+    if not index_only:
+        console.print(f"Configuration: [cyan]{plan.config_path}[/cyan]")
+        if plan.managed_gitignore:
+            console.print(
+                f"Managed .gitignore block: [cyan]{plan.gitignore_path}[/cyan]"
+            )
+        else:
+            console.print("Managed .gitignore block: [dim]not present[/dim]")
+    console.print(
+        "Global Devstill installation and shared embedding model will be preserved."
+    )
+    if dry_run:
+        console.print("[yellow]Dry run: no files were removed.[/yellow]")
+        return 0
+    if not assume_yes:
+        if not sys.stdin.isatty():
+            raise ValueError(
+                "Removal requires confirmation. Re-run with --yes in a "
+                "noninteractive terminal."
+            )
+        try:
+            confirmed = input("Continue? [y/N] ").strip().casefold() in {"y", "yes"}
+        except EOFError:
+            confirmed = False
+        if not confirmed:
+            console.print("Removal cancelled.")
+            return 0
+
+    result = execute_removal(plan)
+    if result.errors:
+        console.print("[red]Devstill removal was incomplete.[/red]")
+        for path, message in result.errors:
+            console.print(f"  [red]{path}: {message}[/red]")
+        console.print(
+            f"Configuration was preserved at [cyan]{plan.config_path}[/cyan] "
+            "when possible so removal can be retried."
+        )
+        return 1
+    for path in result.preserved:
+        console.print(f"[yellow]Preserved unrelated content under {path}.[/yellow]")
+    if index_only:
+        console.print("[green]Removed Devstill index data.[/green]")
+        console.print("Run [bold]devstill index[/bold] to build a fresh index.")
+    else:
+        console.print("[green]Removed Devstill from this repository.[/green]")
     return 0
 
 
@@ -226,7 +286,16 @@ def parse_command(value: str, as_json: bool) -> int:
         raise ValueError(
             f"{path} is not a file inside configured repository {repo_root}"
         )
-    result = parse_source_file(path, repo_root)
+    result = parse_source_file(
+        path,
+        repo_root,
+        policy=ChunkPolicy(
+            max_chars=config.index.max_chunk_chars,
+            max_lines=config.index.max_chunk_lines,
+            overlap_lines=config.index.fallback_overlap_lines,
+        ),
+        index_noisy_files=config.files.index_noisy_files,
+    )
     if as_json:
         print(
             json.dumps(
@@ -235,11 +304,26 @@ def parse_command(value: str, as_json: bool) -> int:
                     "chunks": [chunk.to_dict() for chunk in result.chunks],
                     "errors": [error.to_dict() for error in result.errors],
                     "skipped": result.skipped,
+                    "binary": result.binary,
+                    "parser": result.parser,
+                    "quality": result.quality.to_dict() if result.quality else None,
                 },
                 indent=2,
             )
         )
     else:
+        if result.binary:
+            console.print("[yellow]BINARY[/yellow] [dim]skipped[/dim]")
+        elif result.quality:
+            color = {"GOOD": "green", "MEH": "yellow", "BAD": "red"}[
+                result.quality.status
+            ]
+            console.print(
+                f"[{color}]{result.quality.status}[/{color}] "
+                f"[bold]{result.quality.parser}[/bold]"
+            )
+            for reason in result.quality.reasons:
+                console.print(f"  [dim]{reason}[/dim]")
         for chunk in result.chunks:
             console.print(
                 f"[bold]{chunk.kind}[/bold] {chunk.qualname or chunk.name or ''} "
@@ -275,6 +359,11 @@ def index_command(rebuild: bool, verbose: bool, as_json: bool) -> int:
         )
         for label, value in labels:
             console.print(f"{label}: [bold]{value}[/bold]")
+        console.print("Index quality:")
+        console.print(f"  [green]GOOD: {summary.good_files}[/green]")
+        console.print(f"  [yellow]MEH:  {summary.meh_files}[/yellow]")
+        console.print(f"  [red]BAD:   {summary.bad_files}[/red]")
+        console.print(f"  [dim]Binary skipped: {summary.binary_files_skipped}[/dim]")
     return 0
 
 
@@ -361,6 +450,8 @@ def main() -> None:
     try:
         if args.command == "init":
             raise SystemExit(init_repo(args.force))
+        if args.command == "remove":
+            raise SystemExit(remove_repo(args.index_only, args.dry_run, args.yes))
         if args.command == "doctor":
             raise SystemExit(doctor(args.load_model))
         if args.command == "files":

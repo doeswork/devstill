@@ -9,9 +9,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Self
 
-from devstill.models import FileRecord, ParseError, SearchUnit, SourceChunk
+from devstill.models import FileQuality, FileRecord, ParseError, SearchUnit, SourceChunk
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class SQLiteStore:
@@ -97,6 +97,19 @@ class SQLiteStore:
                 column_number INTEGER
             );
             CREATE INDEX IF NOT EXISTS parse_errors_path_idx ON parse_errors(path);
+            CREATE TABLE IF NOT EXISTS file_quality (
+                path TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                parser TEXT NOT NULL,
+                reasons_json TEXT NOT NULL,
+                canonical_chunks INTEGER NOT NULL,
+                searchable_chunks INTEGER NOT NULL,
+                max_chunk_chars INTEGER NOT NULL,
+                max_chunk_lines INTEGER NOT NULL,
+                fallback_segments INTEGER NOT NULL,
+                noisy INTEGER NOT NULL,
+                skipped INTEGER NOT NULL
+            );
             CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
                 chunk_id UNINDEXED,
                 name,
@@ -259,8 +272,65 @@ class SQLiteStore:
     def delete_file(self, path: str) -> list[str]:
         unit_ids = self._delete_chunks_for_path(path)
         self.connection.execute("DELETE FROM parse_errors WHERE path = ?", (path,))
+        self.connection.execute("DELETE FROM file_quality WHERE path = ?", (path,))
         self.connection.execute("DELETE FROM files WHERE path = ?", (path,))
         return unit_ids
+
+    def upsert_quality(self, quality: FileQuality) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO file_quality(
+                path, status, parser, reasons_json, canonical_chunks,
+                searchable_chunks, max_chunk_chars, max_chunk_lines,
+                fallback_segments, noisy, skipped
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(path) DO UPDATE SET
+                status=excluded.status,
+                parser=excluded.parser,
+                reasons_json=excluded.reasons_json,
+                canonical_chunks=excluded.canonical_chunks,
+                searchable_chunks=excluded.searchable_chunks,
+                max_chunk_chars=excluded.max_chunk_chars,
+                max_chunk_lines=excluded.max_chunk_lines,
+                fallback_segments=excluded.fallback_segments,
+                noisy=excluded.noisy,
+                skipped=excluded.skipped
+            """,
+            (
+                quality.path,
+                quality.status,
+                quality.parser,
+                json.dumps(quality.reasons),
+                quality.canonical_chunks,
+                quality.searchable_chunks,
+                quality.max_chunk_chars,
+                quality.max_chunk_lines,
+                quality.fallback_segments,
+                int(quality.noisy),
+                int(quality.skipped),
+            ),
+        )
+
+    def list_quality(self) -> list[FileQuality]:
+        rows = self.connection.execute(
+            "SELECT * FROM file_quality ORDER BY path"
+        ).fetchall()
+        return [
+            FileQuality(
+                path=row["path"],
+                status=row["status"],
+                parser=row["parser"],
+                reasons=json.loads(row["reasons_json"]),
+                canonical_chunks=row["canonical_chunks"],
+                searchable_chunks=row["searchable_chunks"],
+                max_chunk_chars=row["max_chunk_chars"],
+                max_chunk_lines=row["max_chunk_lines"],
+                fallback_segments=row["fallback_segments"],
+                noisy=bool(row["noisy"]),
+                skipped=bool(row["skipped"]),
+            )
+            for row in rows
+        ]
 
     def replace_parse_errors(self, path: str, errors: Iterable[ParseError]) -> None:
         self.connection.execute("DELETE FROM parse_errors WHERE path = ?", (path,))
@@ -307,7 +377,11 @@ class SQLiteStore:
 
     def list_symbol_chunks(self) -> list[SourceChunk]:
         rows = self.connection.execute(
-            "SELECT * FROM chunks WHERE name IS NOT NULL AND kind != 'module'"
+            """
+            SELECT * FROM chunks
+            WHERE name IS NOT NULL
+              AND coalesce(json_extract(parser_metadata_json, '$.searchable'), 1) != 0
+            """
         ).fetchall()
         return [self._chunk(row) for row in rows]
 
@@ -317,7 +391,8 @@ class SQLiteStore:
             SELECT DISTINCT aliases.chunk_id
             FROM aliases
             JOIN chunks ON chunks.id = aliases.chunk_id
-            WHERE aliases.alias_normalized = ? AND chunks.kind != 'module'
+            WHERE aliases.alias_normalized = ?
+              AND coalesce(json_extract(chunks.parser_metadata_json, '$.searchable'), 1) != 0
             LIMIT ?
             """,
             (query.casefold(), limit),
@@ -337,7 +412,7 @@ class SQLiteStore:
             FROM aliases
             JOIN chunks ON chunks.id = aliases.chunk_id
             WHERE aliases.alias_normalized LIKE ? ESCAPE '\\'
-              AND chunks.kind != 'module'
+              AND coalesce(json_extract(chunks.parser_metadata_json, '$.searchable'), 1) != 0
             ORDER BY length(aliases.alias_normalized), aliases.alias_normalized
             LIMIT ?
             """,
@@ -349,7 +424,8 @@ class SQLiteStore:
         rows = self.connection.execute(
             """
             SELECT id FROM chunks
-            WHERE lower(path) LIKE ? AND kind != 'module'
+            WHERE lower(path) LIKE ?
+              AND coalesce(json_extract(parser_metadata_json, '$.searchable'), 1) != 0
             ORDER BY length(path), start_line
             LIMIT ?
             """,
@@ -370,7 +446,8 @@ class SQLiteStore:
                    bm25(chunks_fts, 0.0, 4.0, 3.0, 2.0, 1.0, 1.0) AS rank
             FROM chunks_fts
             JOIN chunks ON chunks.id = chunks_fts.chunk_id
-            WHERE chunks_fts MATCH ? AND chunks.kind != 'module'
+            WHERE chunks_fts MATCH ?
+              AND coalesce(json_extract(chunks.parser_metadata_json, '$.searchable'), 1) != 0
             ORDER BY rank
             LIMIT ?
             """,
@@ -385,6 +462,7 @@ class SQLiteStore:
         self.connection.execute("DELETE FROM search_unit_members")
         self.connection.execute("DELETE FROM search_units")
         self.connection.execute("DELETE FROM parse_errors")
+        self.connection.execute("DELETE FROM file_quality")
         self.connection.execute("DELETE FROM aliases")
         self.connection.execute("DELETE FROM chunks_fts")
         self.connection.execute("DELETE FROM chunks")

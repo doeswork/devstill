@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 CONFIG_FILENAME = "devstill.json"
 
@@ -21,6 +21,15 @@ class RepoConfig(StrictModel):
 class IndexConfig(StrictModel):
     path: str = ".devstill/chroma"
     collection: str = "devstill_code"
+    max_chunk_chars: int = Field(default=8000, ge=256)
+    max_chunk_lines: int = Field(default=400, ge=1)
+    fallback_overlap_lines: int = Field(default=20, ge=0)
+
+    @model_validator(mode="after")
+    def validate_overlap(self) -> IndexConfig:
+        if self.fallback_overlap_lines >= self.max_chunk_lines:
+            raise ValueError("fallback_overlap_lines must be less than max_chunk_lines")
+        return self
 
 
 class EmbeddingConfig(StrictModel):
@@ -33,6 +42,8 @@ class EmbeddingConfig(StrictModel):
 
 class FilesConfig(StrictModel):
     use_gitignore: bool = True
+    scan_all_text: bool = True
+    index_noisy_files: bool = False
     include: list[str] = Field(
         default_factory=lambda: [
             "**/*.py",
@@ -40,6 +51,14 @@ class FilesConfig(StrictModel):
             "**/*.jsx",
             "**/*.ts",
             "**/*.tsx",
+            "**/*.go",
+            "**/*.rs",
+            "**/*.rb",
+            "**/*.rake",
+            "**/*.gemspec",
+            "**/*.sh",
+            "**/*.bash",
+            "**/*.java",
             "**/*.json",
             "**/*.toml",
             "**/*.yaml",
@@ -48,6 +67,8 @@ class FilesConfig(StrictModel):
             "**/*.html",
             "**/*.css",
             "**/*.md",
+            "Gemfile",
+            "Rakefile",
         ]
     )
     exclude: list[str] = Field(
@@ -142,7 +163,13 @@ def default_config_dict() -> dict[str, Any]:
     return {
         "version": 1,
         "repo": {"root": "."},
-        "index": {"path": ".devstill/chroma", "collection": "devstill_code"},
+        "index": {
+            "path": ".devstill/chroma",
+            "collection": "devstill_code",
+            "max_chunk_chars": 8000,
+            "max_chunk_lines": 400,
+            "fallback_overlap_lines": 20,
+        },
         "embedding": {
             "model": str(default_model_path()),
             "device": "cpu",
@@ -152,6 +179,8 @@ def default_config_dict() -> dict[str, Any]:
         },
         "files": {
             "use_gitignore": True,
+            "scan_all_text": True,
+            "index_noisy_files": False,
             "include": FilesConfig().include,
             "exclude": FilesConfig().exclude,
         },

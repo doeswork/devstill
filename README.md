@@ -23,7 +23,11 @@ ChromaDB dependency and health check
 `devstill doctor`
 `devstill doctor --load-model`
 Git-aware `devstill files`
-Deterministic Python and JavaScript-family `devstill parse`
+Deterministic structural parsing for Python, JavaScript, JSX, TypeScript, TSX,
+Go, Rust, Ruby, SQL, Bash, HTML, CSS, and Java
+Bounded generic text fallback for unknown UTF-8 formats
+Binary and noisy/generated-file detection
+Persistent GOOD/MEH/BAD index-quality reporting
 Incremental `devstill index`
 Canonical SQLite and FTS5 storage
 Persistent Chroma vector storage
@@ -39,7 +43,7 @@ Search screens in the TUI
 Code relationship graph
 Local-LLM enrichment
 Token-budgeted and relationship-aware context expansion
-Tree-sitter structural parsing for HTML, CSS, SQL, and additional languages
+Additional native parsers for C/C++, C#, PHP, Kotlin, and Swift
 File watching
 Running `devstill` still opens the starter TUI shell. Use the CLI for indexing and search until TUI integration is implemented.
 Development repository layout
@@ -116,7 +120,15 @@ Do not allow Transformers 5.x until the Jina model's custom code is confirmed co
 JavaScript-family parsing uses compatible Tree-sitter language ABI versions:
 ```toml
 "tree-sitter>=0.25,<0.26"
+"tree-sitter-bash>=0.25.1,<0.26"
+"tree-sitter-css>=0.25,<0.26"
+"tree-sitter-go>=0.25,<0.26"
+"tree-sitter-html>=0.23.2,<0.24"
+"tree-sitter-java>=0.23.5,<0.24"
 "tree-sitter-javascript>=0.25,<0.26"
+"tree-sitter-ruby>=0.23.1,<0.24"
+"tree-sitter-rust>=0.24.2,<0.25"
+"tree-sitter-sql>=0.3.11,<0.4"
 "tree-sitter-typescript>=0.23.2,<0.24"
 ```
 The environment currently uses:
@@ -185,6 +197,22 @@ devstill index
 devstill
 ```
 `devstill index` is incremental by default. Use `devstill index --rebuild` to rebuild the managed SQLite and Chroma indexes.
+
+Remove Devstill from a repository with a preview and interactive confirmation:
+```bash
+devstill remove --dry-run
+devstill remove
+```
+Full removal deletes the repository's Devstill index, `devstill.json`, and only
+the exact `.gitignore` block added by `devstill init`. It does not remove the
+global command, virtual environment, shared embedding model, or another
+repository's index. To discard only generated index data while keeping the
+repository configured, use:
+```bash
+devstill remove --index-only
+```
+Noninteractive scripts must pass `--yes`. Custom index layouts remove only
+known Devstill artifacts and preserve unrelated sibling files.
 Configuration discovery
 Devstill searches upward for `devstill.json`.
 For example:
@@ -210,7 +238,10 @@ Example `devstill.json`
   },
   "index": {
     "path": ".devstill/chroma",
-    "collection": "devstill_code"
+    "collection": "devstill_code",
+    "max_chunk_chars": 8000,
+    "max_chunk_lines": 400,
+    "fallback_overlap_lines": 20
   },
   "embedding": {
     "model": "/home/USER/.local/share/devstill/models/jina-embeddings-v2-base-code",
@@ -221,12 +252,22 @@ Example `devstill.json`
   },
   "files": {
     "use_gitignore": true,
+    "scan_all_text": true,
+    "index_noisy_files": false,
     "include": [
       "**/*.py",
       "**/*.js",
       "**/*.jsx",
       "**/*.ts",
       "**/*.tsx",
+      "**/*.go",
+      "**/*.rs",
+      "**/*.rb",
+      "**/*.rake",
+      "**/*.gemspec",
+      "**/*.sh",
+      "**/*.bash",
+      "**/*.java",
       "**/*.json",
       "**/*.toml",
       "**/*.yaml",
@@ -234,7 +275,9 @@ Example `devstill.json`
       "**/*.sql",
       "**/*.html",
       "**/*.css",
-      "**/*.md"
+      "**/*.md",
+      "Gemfile",
+      "Rakefile"
     ],
     "exclude": [
       ".git/**",
@@ -265,6 +308,9 @@ Tracked files
 Untracked files not ignored by Git
 Files permitted by repository ignore rules
 Devstill should additionally apply the `files.include` and `files.exclude` patterns from `devstill.json`.
+By default, `files.scan_all_text` makes every Git-visible path eligible after
+built-in and configured exclusions. Set it to `false` to use `files.include`
+as an allowlist. `files.exclude` always wins.
 The indexer must not scan:
 `.git/`
 `.devstill/`
@@ -275,8 +321,10 @@ Generated caches
 Binary files
 Intended chunking rules
 Chunks must follow source structure, not arbitrary character length.
-Python uses deterministic `ast` parsing. JavaScript, JSX, TypeScript, and TSX
-use their corresponding Tree-sitter grammars.
+Python uses deterministic `ast` parsing. JavaScript, JSX, TypeScript, TSX, Go,
+Rust, Ruby, SQL, Bash, HTML, CSS, and Java use their corresponding Tree-sitter
+grammars. Extensionless Bash, Ruby, and Python scripts can be routed by
+shebang, and common files such as `Gemfile` are routed by basename.
 Candidate chunk types include:
 Module
 Function
@@ -299,6 +347,13 @@ Named nested handlers and named arrow functions receive their own chunks.
 Anonymous callbacks remain inside their owning function or component. Each
 JavaScript-family file retains a non-searchable module record, while its exact
 structural chunks receive search vectors.
+Every searchable record is bounded by both `index.max_chunk_chars` and
+`index.max_chunk_lines`. Oversized structural records retain a complete
+non-searchable canonical parent and receive exact bounded child segments.
+Unknown UTF-8 formats retain a complete canonical document and receive
+paragraph/heading-aware bounded segments. Lockfiles, source maps, minified
+bundles, vendored/generated paths, and generated-do-not-edit files are reported
+as `MEH` and skipped unless `files.index_noisy_files` is enabled.
 The local LLM may later review ambiguous comment attachment, but deterministic parsers remain the authority for source boundaries.
 Canonical chunks versus search units
 Devstill should distinguish between exact source records and embedding records.
@@ -362,6 +417,8 @@ Recommended per-repository storage:
 ├── cache/
 ├── logs/
 └── manifests/
+    ├── index.json
+    └── quality.json
 ```
 Intended Chroma records
 A Chroma record should include:
@@ -452,6 +509,10 @@ Current commands
 devstill
 devstill init
 devstill init --force
+devstill remove
+devstill remove --dry-run
+devstill remove --index-only
+devstill remove --yes
 devstill doctor
 devstill doctor --load-model
 devstill files
@@ -461,6 +522,7 @@ devstill parse path/to/file.py
 devstill parse path/to/file.py --json
 devstill parse frontend/src/App.tsx
 devstill parse frontend/src/App.tsx --json
+devstill parse src/main.rs --json
 devstill index
 devstill index --rebuild
 devstill index --verbose
@@ -481,6 +543,12 @@ reviewable formats, regardless of which format is printed to stdout.
 Parser versions are tracked per language family. After installing a parser
 upgrade, a normal `devstill index` reparses only files whose parser changed;
 `--rebuild` is not required.
+
+Every index run prints colored `GOOD`, `MEH`, `BAD`, and binary-skipped totals.
+`devstill index --verbose` also summarizes good files by parser and lists every
+yellow/red file with its reason on stderr. The complete per-file report is
+written to `.devstill/manifests/quality.json`; `index --json` adds the four
+quality totals without changing its existing fields.
 
 Development commands
 ```bash

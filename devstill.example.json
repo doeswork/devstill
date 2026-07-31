@@ -5,7 +5,10 @@
   },
   "index": {
     "path": ".devstill/chroma",
-    "collection": "devstill_code"
+    "collection": "devstill_code",
+    "max_chunk_chars": 8000,
+    "max_chunk_lines": 400,
+    "fallback_overlap_lines": 20
   },
   "embedding": {
     "model": "~/.local/share/devstill/models/jina-embeddings-v2-base-code",
@@ -16,12 +19,22 @@
   },
   "files": {
     "use_gitignore": true,
+    "scan_all_text": true,
+    "index_noisy_files": false,
     "include": [
       "**/*.py",
       "**/*.js",
       "**/*.jsx",
       "**/*.ts",
       "**/*.tsx",
+      "**/*.go",
+      "**/*.rs",
+      "**/*.rb",
+      "**/*.rake",
+      "**/*.gemspec",
+      "**/*.sh",
+      "**/*.bash",
+      "**/*.java",
       "**/*.json",
       "**/*.toml",
       "**/*.yaml",
@@ -29,7 +42,9 @@
       "**/*.sql",
       "**/*.html",
       "**/*.css",
-      "**/*.md"
+      "**/*.md",
+      "Gemfile",
+      "Rakefile"
     ],
     "exclude": [
       ".git/**",

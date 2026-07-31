@@ -5,6 +5,7 @@ import json
 from devstill import cli
 from devstill.cli import parser
 from devstill.config import DevstillConfig
+from devstill.models import IndexSummary
 from tests.test_context import make_result
 
 
@@ -127,3 +128,63 @@ def test_search_json_keeps_diagnostic_schema(monkeypatch, tmp_path, capsys) -> N
     assert "content_hash" in payload[0]
     assert "parser_metadata" in payload[0]
     assert "scores" in payload[0]
+
+
+def test_parse_json_includes_parser_and_quality(monkeypatch, tmp_path, capsys) -> None:
+    path = tmp_path / "notes.custom"
+    path.write_text("# Notes\n\nUseful context.\n", encoding="utf-8")
+    monkeypatch.setattr(
+        cli,
+        "_configured",
+        lambda: (tmp_path / "devstill.json", DevstillConfig()),
+    )
+
+    assert cli.parse_command(str(path), as_json=True) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["parser"] == "plain_text"
+    assert payload["binary"] is False
+    assert payload["quality"]["status"] == "MEH"
+    assert payload["quality"]["path"] == "notes.custom"
+
+
+def test_index_quality_human_and_json_output(monkeypatch, tmp_path, capsys) -> None:
+    summary = IndexSummary(
+        repository=str(tmp_path),
+        good_files=7,
+        meh_files=2,
+        bad_files=1,
+        binary_files_skipped=3,
+        index_path=str(tmp_path / ".devstill"),
+    )
+
+    class FakeIndexer:
+        def __init__(self, config_path, config):
+            pass
+
+        def run(self, rebuild=False, verbose=False):
+            return summary
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        cli,
+        "_configured",
+        lambda: (tmp_path / "devstill.json", DevstillConfig()),
+    )
+    monkeypatch.setattr(cli, "RepositoryIndexer", FakeIndexer)
+
+    assert cli.index_command(False, False, False) == 0
+    human = capsys.readouterr().out
+    assert "Index quality:" in human
+    assert "GOOD: 7" in human
+    assert "MEH:  2" in human
+    assert "BAD:   1" in human
+    assert "Binary skipped: 3" in human
+
+    assert cli.index_command(False, True, True) == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["good_files"] == 7
+    assert payload["binary_files_skipped"] == 3

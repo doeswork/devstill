@@ -114,7 +114,14 @@ class PythonChunker:
         comments, comment_meta = self._leading_comments(
             first_line, getattr(node, "col_offset", 0)
         )
-        meta = {"parser": "python_ast", **comment_meta, **(metadata or {})}
+        body = getattr(node, "body", [])
+        split_points = [value.lineno for value in body if isinstance(value, ast.stmt)]
+        meta = {
+            "parser": "python_ast",
+            "split_points": split_points,
+            **comment_meta,
+            **(metadata or {}),
+        }
         base = f"{self.relative}::{qualname or name or first_line}::{kind}"
         chunk = SourceChunk(
             id=self._unique_id(base),
