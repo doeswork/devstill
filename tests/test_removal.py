@@ -91,6 +91,9 @@ def test_custom_layout_removes_known_artifacts_and_preserves_unrelated_files(
     (root / "chroma" / "data.sqlite").write_text("db", encoding="utf-8")
     (root / "metadata.sqlite").write_text("db", encoding="utf-8")
     (root / ".context.md").write_text("context", encoding="utf-8")
+    (root / ".context.json").write_text("context", encoding="utf-8")
+    (root / ".plan.md").write_text("plan", encoding="utf-8")
+    (root / ".plan.json").write_text("plan", encoding="utf-8")
     unrelated = root / "keep-me.txt"
     unrelated.write_text("mine", encoding="utf-8")
 
@@ -102,6 +105,9 @@ def test_custom_layout_removes_known_artifacts_and_preserves_unrelated_files(
     assert not (root / "cache").exists()
     assert not (root / "metadata.sqlite").exists()
     assert not (root / ".context.md").exists()
+    assert not (root / ".context.json").exists()
+    assert not (root / ".plan.md").exists()
+    assert not (root / ".plan.json").exists()
     assert unrelated.read_text(encoding="utf-8") == "mine"
     assert result.preserved == [root]
     assert config_path.exists()

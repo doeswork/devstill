@@ -1,7 +1,7 @@
 devstill
 `devstill` is a standalone, local-first repository-intelligence TUI for developers and AI coding agents.
 Run `devstill` from any directory inside a configured codebase. It searches upward through parent directories until it finds a `devstill.json`, then opens the TUI for that repository.
-The long-term goal is to make `devstill` the fastest and most useful way for a human or local AI agent to understand, search, and navigate a Git repository without sending source code to an external service.
+The long-term goal is to make `devstill` the fastest and most useful way for a human or local AI agent to understand, search, and navigate a Git repository. Indexing and retrieval stay local; `devstill plan` transmits selected source only to the endpoint the user explicitly configures.
 Project goals
 `devstill` should provide several complementary search modes:
 Exact symbol lookup for known functions, classes, methods, fields, and paths
@@ -10,7 +10,7 @@ Full-text and lexical search for exact code phrases
 Semantic vector search for natural-language questions
 Relationship traversal between routes, views, models, functions, imports, callers, and tests
 LLM-ready context assembly that returns only relevant source chunks
-Optional local-LLM enrichment for labels, summaries, and ambiguous chunk decisions
+Optional OpenAI-compatible agent workflows for plans, labels, summaries, and ambiguous chunk decisions
 Embeddings are only one part of the system. The intended architecture combines deterministic parsing, exact indexes, lexical search, vector search, and code relationships.
 Current status
 The current starter implements:
@@ -34,6 +34,8 @@ Canonical SQLite and FTS5 storage
 Persistent Chroma vector storage
 Hybrid `devstill search`
 Compact Markdown and JSON `devstill context`
+OpenAI-compatible repository agent configuration and connectivity testing
+Advisory, validated `devstill plan` file-impact classification
 Upward discovery of `devstill.json`
 Initial Textual TUI shell
 Per-repository configuration
@@ -42,7 +44,7 @@ Per-repository `.devstill/` data directory
 The following major features are not implemented yet:
 Search screens in the TUI
 Code relationship graph
-Local-LLM enrichment
+Broader local-LLM enrichment beyond file-impact planning
 Token-budgeted and relationship-aware context expansion
 Additional native parsers for C/C++, C#, PHP, Kotlin, and Swift
 File watching
@@ -131,6 +133,10 @@ JavaScript-family parsing uses compatible Tree-sitter language ABI versions:
 "tree-sitter-rust>=0.24.2,<0.25"
 "tree-sitter-sql>=0.3.11,<0.4"
 "tree-sitter-typescript>=0.23.2,<0.24"
+```
+Agent requests use a directly pinned HTTP client:
+```toml
+"httpx>=0.28,<1"
 ```
 The environment currently uses:
 ```text
@@ -310,7 +316,10 @@ Example `devstill.json`
   "llm": {
     "enabled": false,
     "base_url": "http://127.0.0.1:8080/v1",
-    "model": ""
+    "model": "",
+    "api_key_env": "DEVSTILL_AGENT_API_KEY",
+    "timeout_seconds": 300,
+    "max_output_tokens": 2048
   }
 }
 ```
@@ -449,6 +458,8 @@ Recommended per-repository storage:
 ├── metadata.sqlite
 ├── .context.md
 ├── .context.json
+├── .plan.md
+├── .plan.json
 ├── cache/
 ├── logs/
 └── manifests/
@@ -501,8 +512,29 @@ Relationship expansion
 Result deduplication
 Per-file diversity limits
 Local LLM integration
-The local LLM will be called through an HTTP API later.
-Its responsibilities should include:
+`devstill plan` calls a configured OpenAI-compatible Chat Completions endpoint.
+Configuration is repository-local, while the API key is read only from the named
+environment variable and is never saved or displayed. Embedded URL credentials are
+rejected. The client requests strict JSON Schema output first, then retries once
+without `response_format` when a compatible local server reports that structured
+output is unsupported.
+
+Configure and verify an agent from anywhere beneath the repository:
+```bash
+devstill agent configure \
+  --base-url http://127.0.0.1:8080/v1 \
+  --model local-model
+export DEVSTILL_AGENT_API_KEY="your-key-if-required"
+devstill agent
+devstill agent test
+```
+`devstill agent enable` and `devstill agent disable` change only the repository
+configuration. Any HTTP(S) endpoint is accepted, so review the displayed network
+destination before sending repository context. Requests use
+`POST {base_url}/chat/completions`, following the
+[OpenAI Chat Completions structured-output shape](https://platform.openai.com/docs/api-reference/chat).
+
+The agent's broader future responsibilities can include:
 Generating concise source-grounded summaries
 Producing natural-language labels and concepts
 Reviewing ambiguous comment attachment
@@ -519,7 +551,7 @@ Decorators
 Imports
 AST-confirmed references
 LLM output should use strict JSON, be validated with Pydantic, and be cached by content hash, model name, and prompt version.
-No LLM work is required for the first working indexer.
+File-impact plans are validated now; enrichment caching remains future work.
 Venv rule
 Keep all Devstill client-side functionality in the single dedicated venv:
 ```text
@@ -531,7 +563,7 @@ SQLite
 fuzzy search
 indexer
 search engine
-future LLM HTTP client
+LLM HTTP client
 ```
 Do not install Devstill into each scanned repository's environment.
 A future Python/CUDA LLM server should use a separate venv or container.
@@ -570,11 +602,29 @@ devstill search "where is the profile stored?" --semantic-only
 devstill context "explain the authentication flow"
 devstill context "explain the authentication flow" --path src/ --json
 devstill context "explain test coverage" --include-tests
+devstill agent
+devstill agent configure --base-url http://127.0.0.1:8080/v1 --model local-model
+devstill agent test
+devstill agent enable
+devstill agent disable
+devstill plan "add an activation code to registered users"
+devstill plan "add an activation code" --path core/ --limit 5 --json
+devstill plan "audit authentication" --include-tests --lexical-only
 devstill --version
 ```
 `devstill context` returns five records by default. Every successful context command
 also overwrites `.devstill/.context.md` and `.devstill/.context.json` with both
 reviewable formats, regardless of which format is printed to stdout.
+
+`devstill plan` retrieves the same compact context, groups chunks by repository
+path, and asks the configured model to classify file impact. It returns `Read`,
+`Modify`, `Delete`, `Add`, `Search`, and `New File` items with one short reason.
+The command is advisory: it never changes source files. Every successful run
+overwrites `.devstill/.plan.md` and `.devstill/.plan.json` without changing the
+`.context.*` artifacts. Invalid model output receives one repair request; if that
+also fails, the command exits nonzero and preserves the previous plan artifacts.
+The network destination and transmitted chunk count are written to stderr, so
+`--json` keeps stdout machine-readable.
 
 Parser versions are tracked per language family. After installing a parser
 upgrade, a normal `devstill index` reparses only files whose parser changed;

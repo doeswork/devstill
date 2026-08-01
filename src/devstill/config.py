@@ -2,10 +2,21 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import stat
+import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 CONFIG_FILENAME = "devstill.json"
 
@@ -105,6 +116,47 @@ class LlmConfig(StrictModel):
     enabled: bool = False
     base_url: str = "http://127.0.0.1:8080/v1"
     model: str = ""
+    api_key_env: str = "DEVSTILL_AGENT_API_KEY"
+    timeout_seconds: float = Field(default=300.0, ge=1, le=3600)
+    max_output_tokens: int = Field(default=2048, ge=64, le=65536)
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        if any(character.isspace() for character in normalized):
+            raise ValueError("base_url must not contain whitespace")
+        parsed = urlsplit(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("base_url must be an HTTP(S) URL with a host")
+        try:
+            _ = parsed.port
+        except ValueError as exc:
+            raise ValueError("base_url contains an invalid port") from exc
+        if parsed.username or parsed.password:
+            raise ValueError("base_url must not contain credentials")
+        if parsed.query or parsed.fragment:
+            raise ValueError("base_url must not contain a query string or fragment")
+        return normalized
+
+    @field_validator("model")
+    @classmethod
+    def normalize_model(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("api_key_env")
+    @classmethod
+    def validate_api_key_env(cls, value: str) -> str:
+        normalized = value.strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", normalized):
+            raise ValueError("api_key_env must be a valid environment variable name")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_enabled_model(self) -> LlmConfig:
+        if self.enabled and not self.model:
+            raise ValueError("model is required when the agent is enabled")
+        return self
 
 
 class DevstillConfig(StrictModel):
@@ -201,7 +253,14 @@ def default_config_dict() -> dict[str, Any]:
             "include": FilesConfig().include,
             "exclude": FilesConfig().exclude,
         },
-        "llm": {"enabled": False, "base_url": "http://127.0.0.1:8080/v1", "model": ""},
+        "llm": {
+            "enabled": False,
+            "base_url": "http://127.0.0.1:8080/v1",
+            "model": "",
+            "api_key_env": "DEVSTILL_AGENT_API_KEY",
+            "timeout_seconds": 300,
+            "max_output_tokens": 2048,
+        },
     }
 
 
@@ -215,3 +274,53 @@ def write_default_config(destination: Path, force: bool = False) -> Path:
         json.dumps(default_config_dict(), indent=2) + "\n", encoding="utf-8"
     )
     return destination
+
+
+def write_config(config_path: Path, config: DevstillConfig) -> Path:
+    if config_path.is_symlink():
+        raise ValueError(f"Refusing to update symlinked configuration: {config_path}")
+    if not config_path.is_file():
+        raise FileNotFoundError(config_path)
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    raw["llm"] = config.llm.model_dump(mode="json")
+    validated = DevstillConfig.model_validate(raw)
+    rendered = (
+        json.dumps(
+            {**raw, "llm": validated.llm.model_dump(mode="json")},
+            indent=2,
+        )
+        + "\n"
+    )
+    mode = stat.S_IMODE(config_path.stat().st_mode)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=config_path.parent,
+            prefix=f".{config_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            handle.write(rendered)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary = Path(handle.name)
+        temporary.chmod(mode)
+        temporary.replace(config_path)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
+    return config_path
+
+
+def update_llm_config(
+    config_path: Path,
+    config: DevstillConfig,
+    **updates: Any,
+) -> DevstillConfig:
+    raw = config.model_dump(mode="json")
+    raw["llm"] = {**raw["llm"], **updates}
+    updated = DevstillConfig.model_validate(raw)
+    write_config(config_path, updated)
+    return updated

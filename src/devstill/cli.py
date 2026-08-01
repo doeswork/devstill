@@ -9,6 +9,7 @@ from pathlib import Path
 from rich.console import Console
 
 from devstill import __version__
+from devstill.agent import AgentClient
 from devstill.config import (
     CONFIG_FILENAME,
     DevstillConfig,
@@ -17,6 +18,7 @@ from devstill.config import (
     resolve_index_path,
     resolve_model_path,
     resolve_repo_root,
+    update_llm_config,
     write_default_config,
 )
 from devstill.context import (
@@ -30,12 +32,20 @@ from devstill.indexer import RepositoryIndexer
 from devstill.models import ChunkPolicy
 from devstill.parsers import parse_source_file
 from devstill.paths import relative_repo_path
+from devstill.planning import (
+    LABEL_STYLES,
+    generate_plan,
+    render_plan_json,
+    render_plan_markdown,
+    write_plan_artifacts,
+)
 from devstill.removal import build_removal_plan, execute_removal
 from devstill.repository import ensure_devstill_gitignore
 from devstill.search import HybridSearch
 from devstill.tui import DevstillApp
 
 console = Console()
+diagnostic_console = Console(stderr=True)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -110,6 +120,38 @@ def parser() -> argparse.ArgumentParser:
     context_mode.add_argument("--exact", action="store_true")
     context_mode.add_argument("--semantic-only", action="store_true")
     context_mode.add_argument("--lexical-only", action="store_true")
+
+    agent = sub.add_parser(
+        "agent",
+        help="Configure and test the repository's OpenAI-compatible agent.",
+    )
+    agent_actions = agent.add_subparsers(dest="agent_action")
+    configure = agent_actions.add_parser(
+        "configure", help="Save agent endpoint settings and enable the agent."
+    )
+    configure.add_argument("--base-url")
+    configure.add_argument("--model")
+    configure.add_argument("--api-key-env")
+    configure.add_argument("--timeout", type=float)
+    configure.add_argument("--max-output-tokens", type=int)
+    agent_actions.add_parser("test", help="Send a small structured agent request.")
+    agent_actions.add_parser("enable", help="Enable the configured agent.")
+    agent_actions.add_parser("disable", help="Disable the configured agent.")
+
+    plan = sub.add_parser(
+        "plan",
+        help="Classify retrieved files for an advisory implementation plan.",
+    )
+    plan.add_argument("query")
+    plan.add_argument("--limit", type=int, default=5)
+    plan.add_argument("--json", action="store_true")
+    plan.add_argument("--kind")
+    plan.add_argument("--path")
+    plan.add_argument("--include-tests", action="store_true")
+    plan_mode = plan.add_mutually_exclusive_group()
+    plan_mode.add_argument("--exact", action="store_true")
+    plan_mode.add_argument("--semantic-only", action="store_true")
+    plan_mode.add_argument("--lexical-only", action="store_true")
     return command
 
 
@@ -499,6 +541,119 @@ def context_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_agent(config: DevstillConfig) -> None:
+    llm = config.llm
+    key_state = "set" if os.environ.get(llm.api_key_env) else "not set"
+    labels = (
+        ("Enabled", llm.enabled),
+        ("Base URL", llm.base_url),
+        ("Model", llm.model or "not configured"),
+        ("Timeout", f"{llm.timeout_seconds:g} seconds"),
+        ("Max output tokens", llm.max_output_tokens),
+        ("API key environment", f"{llm.api_key_env} ({key_state})"),
+    )
+    for label, value in labels:
+        console.print(f"{label}: [bold]{value}[/bold]")
+
+
+def agent_command(args: argparse.Namespace) -> int:
+    config_path, config = _configured()
+    action = args.agent_action or "show"
+    if action == "configure":
+        updates: dict[str, object] = {"enabled": True}
+        values = {
+            "base_url": args.base_url,
+            "model": args.model,
+            "api_key_env": args.api_key_env,
+            "timeout_seconds": args.timeout,
+            "max_output_tokens": args.max_output_tokens,
+        }
+        updates.update(
+            {key: value for key, value in values.items() if value is not None}
+        )
+        config = update_llm_config(config_path, config, **updates)
+        console.print(f"[green]Updated agent configuration in {config_path}[/green]")
+        _print_agent(config)
+        return 0
+    if action == "enable":
+        config = update_llm_config(config_path, config, enabled=True)
+        console.print("[green]Agent enabled.[/green]")
+        return 0
+    if action == "disable":
+        update_llm_config(config_path, config, enabled=False)
+        console.print("[yellow]Agent disabled.[/yellow]")
+        return 0
+    if action == "test":
+        if not config.llm.enabled:
+            raise ValueError("Agent is disabled. Run `devstill agent enable`.")
+        with AgentClient(config.llm) as client:
+            result = client.test()
+        console.print(
+            f"[green]Agent OK[/green]: [bold]{result.model}[/bold] at "
+            f"[cyan]{result.endpoint}[/cyan] ({result.elapsed_seconds:.3f}s)"
+        )
+        return 0
+    _print_agent(config)
+    return 0
+
+
+def plan_command(args: argparse.Namespace) -> int:
+    if args.limit < 1:
+        raise ValueError("--limit must be at least 1")
+    config_path, config = _configured()
+    if not config.llm.enabled:
+        raise ValueError(
+            "Agent is disabled. Run `devstill agent configure --base-url URL --model MODEL`."
+        )
+    repo_root = resolve_repo_root(config_path, config)
+    engine = HybridSearch(config_path, config)
+    try:
+        candidates = engine.query(
+            args.query,
+            limit=max(args.limit * 4, 32),
+            kind=args.kind,
+            path=args.path,
+            exact_only=args.exact,
+            semantic_only=args.semantic_only,
+            lexical_only=args.lexical_only,
+        )
+    finally:
+        engine.close()
+    results = select_context_results(candidates, args.limit, args.include_tests)
+    client = AgentClient(config.llm)
+    try:
+        diagnostic_console.print(
+            f"Sending {len(results)} source chunks to {client.endpoint}"
+        )
+        plan = generate_plan(
+            client,
+            query=args.query,
+            repository=str(repo_root),
+            repo_root=repo_root,
+            results=results,
+        )
+    finally:
+        client.close()
+    json_output = render_plan_json(plan)
+    markdown_output = render_plan_markdown(plan)
+    write_plan_artifacts(
+        resolve_index_path(config_path, config).parent,
+        markdown_output,
+        json_output,
+    )
+    if args.json:
+        print(json_output)
+    else:
+        for item in plan.items:
+            style = LABEL_STYLES[item.label]
+            console.print(
+                f"[{style}]{item.label.value.upper()}[/{style}] "
+                f"[bold]{item.target}[/bold]"
+            )
+            console.print(f"  {item.reason}")
+    return 0
+
+
 def main() -> None:
     args = parser().parse_args()
     try:
@@ -518,6 +673,10 @@ def main() -> None:
             raise SystemExit(search_command(args))
         if args.command == "context":
             raise SystemExit(context_command(args))
+        if args.command == "agent":
+            raise SystemExit(agent_command(args))
+        if args.command == "plan":
+            raise SystemExit(plan_command(args))
         config_path, config = _configured()
         DevstillApp(config_path, config).run()
     except (FileNotFoundError, RuntimeError, ValueError) as exc:

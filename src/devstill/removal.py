@@ -110,6 +110,8 @@ def build_removal_plan(
                     index_paths.sqlite.with_name(index_paths.sqlite.name + "-shm"),
                     index_paths.root / ".context.md",
                     index_paths.root / ".context.json",
+                    index_paths.root / ".plan.md",
+                    index_paths.root / ".plan.json",
                     index_paths.dirty_marker,
                 )
             )

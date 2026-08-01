@@ -12,6 +12,7 @@ license = "Apache-2.0"
 dependencies = [
     "chromadb>=1,<2",
     "huggingface-hub>=0.34,<2",
+    "httpx>=0.28,<1",
     "numpy<3",
     "orjson>=3.10,<4",
     "pydantic>=2.7,<3",
