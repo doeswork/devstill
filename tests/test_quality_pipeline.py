@@ -123,7 +123,8 @@ def test_noisy_and_binary_detection(tmp_path: Path) -> None:
     skipped = parse_source_file(lockfile, tmp_path)
     assert skipped.skipped
     assert skipped.quality is not None
-    assert skipped.quality.status == "MEH"
+    assert skipped.quality.status == "SKIPPED"
+    assert skipped.quality.disposition == "ignored"
     assert skipped.quality.noisy
     assert not skipped.chunks
 
@@ -138,7 +139,9 @@ def test_noisy_and_binary_detection(tmp_path: Path) -> None:
     result = parse_source_file(binary, tmp_path)
     assert result.binary
     assert result.skipped
-    assert result.quality is None
+    assert result.quality is not None
+    assert result.quality.status == "SKIPPED"
+    assert result.quality.category == "binary"
 
 
 def test_all_noisy_file_categories_are_detected(tmp_path: Path) -> None:
@@ -229,26 +232,29 @@ def test_index_quality_persists_and_unchanged_run_reuses_it(
     second = indexer.run()
 
     assert first.good_files == 1
-    assert first.meh_files == 2
+    assert first.meh_files == 1
     assert first.bad_files == 0
+    assert first.ignored_files == 1
     assert first.binary_files_skipped == 1
-    assert "GOOD files by parser:" in diagnostics
-    assert "python_ast: 1" in diagnostics
+    assert "GOOD files by category/parser:" in diagnostics
+    assert "code / python_ast: 1" in diagnostics
     assert "MEH notes.custom: generic text fallback" in diagnostics
-    assert "MEH package-lock.json: skipped noisy file: lockfile" in diagnostics
-    assert second.unchanged_files == 3
+    assert "SKIPPED package-lock.json (generated): lockfile" in diagnostics
+    assert second.unchanged_files == 4
     assert second.parsed_files == 0
     assert second.search_units_embedded == 0
-    assert (second.good_files, second.meh_files, second.bad_files) == (1, 2, 0)
+    assert (second.good_files, second.meh_files, second.bad_files) == (1, 1, 0)
     report = json.loads(
         (repo / ".devstill/manifests/quality.json").read_text(encoding="utf-8")
     )
     assert report["binary_files_skipped"] == 1
     assert report["binary_files"] == ["image.bin"]
+    assert {item["path"] for item in report["skipped"]} == {"image.bin"}
     assert {item["path"] for item in report["files"]} == {
         "good.py",
         "notes.custom",
         "package-lock.json",
+        "image.bin",
     }
-    assert len(indexer.store.list_quality()) == 3
+    assert len(indexer.store.list_quality()) == 4
     indexer.close()

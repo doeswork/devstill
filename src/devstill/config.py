@@ -44,6 +44,7 @@ class FilesConfig(StrictModel):
     use_gitignore: bool = True
     scan_all_text: bool = True
     index_noisy_files: bool = False
+    include_ignored: list[str] = Field(default_factory=list)
     include: list[str] = Field(
         default_factory=lambda: [
             "**/*.py",
@@ -67,6 +68,21 @@ class FilesConfig(StrictModel):
             "**/*.html",
             "**/*.css",
             "**/*.md",
+            "**/*.markdown",
+            "**/*.rst",
+            "**/*.adoc",
+            "**/*.txt",
+            "**/*.jsonc",
+            "**/*.ini",
+            "**/*.cfg",
+            "**/*.conf",
+            "**/*.service",
+            "Dockerfile",
+            "Makefile",
+            ".gitignore",
+            ".env*.example",
+            ".env*.sample",
+            ".env*.template",
             "Gemfile",
             "Rakefile",
         ]
@@ -181,6 +197,7 @@ def default_config_dict() -> dict[str, Any]:
             "use_gitignore": True,
             "scan_all_text": True,
             "index_noisy_files": False,
+            "include_ignored": [],
             "include": FilesConfig().include,
             "exclude": FilesConfig().exclude,
         },

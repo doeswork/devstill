@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from devstill.config import DevstillConfig, FilesConfig
+from devstill.content_policy import ContentDecision, classify_content
 from devstill.models import ChunkPolicy, FileQuality
 from devstill.parsers.base import ParseResult
 from devstill.parsers.bounded import bounded_chunks, chunk_line_count
-from devstill.parsers.detection import is_binary, noisy_reason
-from devstill.parsers.registry import FALLBACK_SPEC, parser_spec_for
+from devstill.parsers.registry import FALLBACK_SPEC
 from devstill.paths import relative_repo_path
 
 
@@ -17,6 +18,8 @@ def _quality(
     fallback_segments: int,
     *,
     structural: bool,
+    category: str,
+    disposition: str = "indexed",
     noisy: bool = False,
     reasons: list[str] | None = None,
 ) -> FileQuality:
@@ -30,16 +33,21 @@ def _quality(
         all_reasons.extend(error.message for error in result.errors)
     if not result.chunks and not result.errors and not result.skipped:
         all_reasons.append("empty file")
-    if result.errors:
+    forced_windows = any(
+        chunk.parser_metadata.get("fallback_window") for chunk in searchable
+    )
+    if disposition != "indexed":
+        status = "SKIPPED"
+    elif result.errors:
         status = "BAD"
-    elif noisy or result.skipped or not result.chunks:
-        status = "MEH"
-    elif not structural:
+    elif result.skipped or not result.chunks:
+        status = "SKIPPED"
+    elif category == "unknown_text":
         status = "MEH"
         all_reasons.append("generic text fallback")
-    elif fallback_segments:
+    elif fallback_segments and (category == "code" or forced_windows):
         status = "MEH"
-        all_reasons.append("oversized structural chunks required segmentation")
+        all_reasons.append("oversized chunks required fallback segmentation")
     elif not searchable:
         status = "MEH"
         all_reasons.append("no useful searchable structural chunks")
@@ -49,6 +57,8 @@ def _quality(
         path=relative,
         status=status,
         parser=parser,
+        category=category,
+        disposition=disposition,
         reasons=list(dict.fromkeys(all_reasons)),
         canonical_chunks=len(result.chunks),
         searchable_chunks=len(searchable),
@@ -68,28 +78,44 @@ def parse_with_policy(
     policy: ChunkPolicy,
     *,
     index_noisy_files: bool,
+    include_ignored: list[str],
+    decision: ContentDecision | None = None,
 ) -> ParseResult:
     relative = relative_repo_path(repo_root, path)
     raw = path.read_bytes()
-    if is_binary(raw):
-        return ParseResult(skipped=True, binary=True, parser="binary")
-
-    spec = parser_spec_for(path)
-    noisy = noisy_reason(path, relative, raw)
-    if noisy and not index_noisy_files:
-        result = ParseResult(skipped=True, parser=spec.name)
+    if decision is None:
+        files = FilesConfig(
+            index_noisy_files=index_noisy_files,
+            include_ignored=include_ignored,
+        )
+        decision = classify_content(
+            path,
+            relative,
+            raw,
+            DevstillConfig(files=files),
+        )
+    spec = decision.parser_spec
+    if decision.disposition != "indexed":
+        parser = "binary" if decision.category == "binary" else "content_policy"
+        result = ParseResult(
+            skipped=True,
+            binary=decision.category == "binary",
+            parser=parser,
+        )
         result.quality = _quality(
             relative,
-            spec.name,
+            parser,
             result,
             0,
             structural=spec.structural,
-            noisy=True,
-            reasons=[f"skipped noisy file: {noisy}"],
+            category=decision.category,
+            disposition=decision.disposition,
+            noisy=decision.noisy,
+            reasons=[decision.reason] if decision.reason else None,
         )
         return result
 
-    active_spec = FALLBACK_SPEC if noisy else spec
+    active_spec = FALLBACK_SPEC if decision.noisy else spec
     result = active_spec.parse(path, repo_root)
     result.parser = active_spec.name
     chunks, boundary_errors, fallback_segments = bounded_chunks(result.chunks, policy)
@@ -106,7 +132,7 @@ def parse_with_policy(
             if chunk.parser_metadata.get("searchable", True)
         ),
     )
-    if noisy:
+    if decision.noisy:
         for chunk in result.chunks:
             chunk.parser_metadata["noisy"] = True
     result.quality = _quality(
@@ -115,7 +141,8 @@ def parse_with_policy(
         result,
         fallback_segments,
         structural=active_spec.structural,
-        noisy=bool(noisy),
-        reasons=[f"noisy file indexed by override: {noisy}"] if noisy else None,
+        category=decision.category,
+        noisy=decision.noisy,
+        reasons=[decision.reason] if decision.reason else None,
     )
     return result

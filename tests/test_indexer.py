@@ -193,8 +193,12 @@ def test_file_becoming_binary_removes_stale_chunks_and_quality(
     binary = indexer.run()
 
     assert binary.binary_files_skipped == 1
-    assert binary.deleted_files == 1
+    assert binary.deleted_files == 0
     assert indexer.store.list_chunks_for_file("accounts.py") == []
-    assert indexer.store.list_quality() == []
+    quality = indexer.store.list_quality()
+    assert len(quality) == 1
+    assert quality[0].status == "SKIPPED"
+    assert quality[0].category == "binary"
+    assert quality[0].disposition == "skipped"
     assert not chroma.records
     indexer.close()

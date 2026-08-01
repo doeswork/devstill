@@ -11,6 +11,7 @@ from devstill.parsers import (
     parse_source_file,
     parser_version_for,
 )
+from devstill.parsers.base import MARKUP_TEXT_PARSER_VERSION
 from devstill.parsers.javascript_tree_sitter import parse_javascript_family
 
 
@@ -198,7 +199,8 @@ def test_entrypoint_and_default_export_expressions_are_searchable(
 
 def test_parser_versions_only_migrate_javascript_family(tmp_path: Path) -> None:
     assert parser_version_for(tmp_path / "module.py") == PARSER_VERSION
-    assert parser_version_for(tmp_path / "notes.md") == FALLBACK_PARSER_VERSION
+    assert parser_version_for(tmp_path / "notes.md") == MARKUP_TEXT_PARSER_VERSION
+    assert parser_version_for(tmp_path / "notes.unknown") == FALLBACK_PARSER_VERSION
     for suffix in (".js", ".jsx", ".ts", ".tsx"):
         assert (
             parser_version_for(tmp_path / f"module{suffix}")

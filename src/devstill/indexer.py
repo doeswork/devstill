@@ -14,10 +14,11 @@ from devstill.config import (
     resolve_model_path,
     resolve_repo_root,
 )
+from devstill.content_policy import CONTENT_POLICY_VERSION
 from devstill.context import build_search_unit
 from devstill.embeddings import EmbeddingBackend
-from devstill.git_files import discover_repository_files
-from devstill.hashing import hash_file
+from devstill.git_files import RepositoryFile, discover_repository_inventory
+from devstill.hashing import hash_file, hash_text
 from devstill.models import (
     ChunkPolicy,
     FileQuality,
@@ -28,9 +29,8 @@ from devstill.models import (
     SourceChunk,
 )
 from devstill.parsers import parse_source_file, parser_version_for
-from devstill.parsers.detection import path_is_binary
 from devstill.parsers.registry import language_for
-from devstill.paths import IndexPaths, relative_repo_path
+from devstill.paths import IndexPaths
 from devstill.storage import ChromaStore, SQLiteStore
 
 
@@ -93,28 +93,23 @@ class RepositoryIndexer:
                 self.store.reset_all()
             self.chroma.reset_collection()
 
-        discovered = discover_repository_files(self.repo_root, self.config)
+        inventory = discover_repository_inventory(self.repo_root, self.config)
         policy = ChunkPolicy(
             max_chars=self.config.index.max_chunk_chars,
             max_lines=self.config.index.max_chunk_lines,
             overlap_lines=self.config.index.fallback_overlap_lines,
         )
         previous = self.store.get_files()
-        text_files: list[Path] = []
-        binary_paths: list[str] = []
-        for path in discovered:
-            if path_is_binary(path):
-                binary_paths.append(relative_repo_path(self.repo_root, path))
-            else:
-                text_files.append(path)
-        current_paths = {
-            relative_repo_path(self.repo_root, path) for path in text_files
-        }
+        current_paths = {item.relative for item in inventory.files}
         deleted = sorted(set(previous) - current_paths)
-        changed: list[tuple[Path, str, FileRecord]] = []
+        changed: list[tuple[RepositoryFile, FileRecord]] = []
         unchanged = 0
-        for path in text_files:
-            relative = relative_repo_path(self.repo_root, path)
+        override_fingerprint = hash_text(
+            json.dumps(sorted(self.config.files.include_ignored))
+        )[:12]
+        for item in inventory.files:
+            path = item.path
+            relative = item.relative
             digest = hash_file(path)
             stat = path.stat()
             record = FileRecord(
@@ -124,10 +119,13 @@ class RepositoryIndexer:
                 modified_ns=stat.st_mtime_ns,
                 language=language_for(path),
                 parser_version=(
-                    f"{parser_version_for(path)}|pipeline:2"
+                    f"{parser_version_for(path)}|{CONTENT_POLICY_VERSION}|pipeline:3"
                     f"|chars:{policy.max_chars}|lines:{policy.max_lines}"
                     f"|overlap:{policy.overlap_lines}"
                     f"|noisy:{int(self.config.files.index_noisy_files)}"
+                    f"|ignored:{override_fingerprint}"
+                    f"|category:{item.decision.category}"
+                    f"|disposition:{item.decision.disposition}"
                 ),
             )
             old = previous.get(relative)
@@ -138,7 +136,7 @@ class RepositoryIndexer:
             ):
                 unchanged += 1
             else:
-                changed.append((path, relative, record))
+                changed.append((item, record))
 
         parsed: list[
             tuple[
@@ -151,19 +149,22 @@ class RepositoryIndexer:
         ] = []
         all_new_units: list[SearchUnit] = []
         new_chunks_by_id: dict[str, SourceChunk] = {}
-        for path, relative, record in changed:
+        for item, record in changed:
+            path = item.path
+            relative = item.relative
             if verbose:
-                print(f"Parsing {relative}", file=sys.stderr)
+                action = (
+                    "Parsing" if item.decision.disposition == "indexed" else "Assessing"
+                )
+                print(f"{action} {relative}", file=sys.stderr)
             result = parse_source_file(
                 path,
                 self.repo_root,
                 policy=policy,
                 index_noisy_files=self.config.files.index_noisy_files,
+                include_ignored=self.config.files.include_ignored,
+                decision=item.decision,
             )
-            if result.binary:
-                # Binary detection is repeated defensively inside the parse pipeline.
-                binary_paths.append(relative)
-                continue
             if result.quality is None:
                 raise RuntimeError(
                     f"Parser did not assess index quality for {relative}"
@@ -202,20 +203,50 @@ class RepositoryIndexer:
         quality = self.store.list_quality()
         summary = IndexSummary(
             repository=str(self.repo_root),
-            discovered_files=len(discovered),
+            discovered_files=len(inventory.files),
             unchanged_files=unchanged,
-            parsed_files=len(parsed),
+            parsed_files=sum(
+                item.disposition == "indexed" for _, _, _, _, item in parsed
+            ),
             deleted_files=len(deleted),
             canonical_chunks=self.store.count_chunks(),
             search_units_embedded=len(all_new_units),
             parse_errors=len(errors),
-            good_files=sum(item.status == "GOOD" for item in quality),
-            meh_files=sum(item.status == "MEH" for item in quality),
-            bad_files=sum(item.status == "BAD" for item in quality),
-            binary_files_skipped=len(binary_paths),
+            eligible_files=sum(item.disposition == "indexed" for item in quality),
+            code_files=sum(
+                item.disposition == "indexed" and item.category == "code"
+                for item in quality
+            ),
+            documentation_files=sum(
+                item.disposition == "indexed" and item.category == "documentation"
+                for item in quality
+            ),
+            configuration_files=sum(
+                item.disposition == "indexed" and item.category == "configuration"
+                for item in quality
+            ),
+            good_files=sum(
+                item.disposition == "indexed" and item.status == "GOOD"
+                for item in quality
+            ),
+            meh_files=sum(
+                item.disposition == "indexed" and item.status == "MEH"
+                for item in quality
+            ),
+            bad_files=sum(
+                item.disposition == "indexed" and item.status == "BAD"
+                for item in quality
+            ),
+            ignored_files=sum(item.disposition == "ignored" for item in quality),
+            noisy_files_skipped=sum(
+                item.disposition == "ignored" and item.category == "generated"
+                for item in quality
+            ),
+            empty_files_skipped=sum(item.category == "empty" for item in quality),
+            binary_files_skipped=sum(item.category == "binary" for item in quality),
             index_path=str(self.paths.root),
         )
-        self._write_outputs(summary, errors, quality, sorted(set(binary_paths)))
+        self._write_outputs(summary, errors, quality)
         if verbose:
             self._write_verbose_quality(quality)
         self.paths.dirty_marker.unlink()
@@ -231,10 +262,9 @@ class RepositoryIndexer:
         summary: IndexSummary,
         errors: list[ParseError],
         quality: list[FileQuality],
-        binary_paths: list[str],
     ) -> None:
         manifest = {
-            "version": 1,
+            "version": 2,
             "indexed_at": datetime.now(UTC).isoformat(),
             **summary.to_dict(),
         }
@@ -248,13 +278,25 @@ class RepositoryIndexer:
             encoding="utf-8",
         )
         quality_manifest = {
-            "version": 1,
+            "version": 2,
             "indexed_at": manifest["indexed_at"],
             "good_files": summary.good_files,
             "meh_files": summary.meh_files,
             "bad_files": summary.bad_files,
+            "eligible_files": summary.eligible_files,
+            "ignored_files": summary.ignored_files,
+            "noisy_files_skipped": summary.noisy_files_skipped,
+            "empty_files_skipped": summary.empty_files_skipped,
             "binary_files_skipped": summary.binary_files_skipped,
-            "binary_files": binary_paths,
+            "binary_files": [
+                item.path for item in quality if item.category == "binary"
+            ],
+            "ignored": [
+                item.to_dict() for item in quality if item.disposition == "ignored"
+            ],
+            "skipped": [
+                item.to_dict() for item in quality if item.disposition == "skipped"
+            ],
             "files": [item.to_dict() for item in quality],
         }
         (self.paths.manifests / "quality.json").write_text(
@@ -265,18 +307,26 @@ class RepositoryIndexer:
     @staticmethod
     def _write_verbose_quality(quality: list[FileQuality]) -> None:
         diagnostic_console = Console(stderr=True)
-        good_by_parser: dict[str, int] = {}
+        good_by_parser: dict[tuple[str, str], int] = {}
         for item in quality:
             if item.status == "GOOD":
-                good_by_parser[item.parser] = good_by_parser.get(item.parser, 0) + 1
+                key = (item.category, item.parser)
+                good_by_parser[key] = good_by_parser.get(key, 0) + 1
         if good_by_parser:
-            diagnostic_console.print("[green]GOOD files by parser:[/green]")
-            for parser, count in sorted(good_by_parser.items()):
-                diagnostic_console.print(f"  [green]{parser}: {count}[/green]")
+            diagnostic_console.print("[green]GOOD files by category/parser:[/green]")
+            for (category, parser), count in sorted(good_by_parser.items()):
+                diagnostic_console.print(
+                    f"  [green]{category} / {parser}: {count}[/green]"
+                )
         for item in quality:
             if item.status == "GOOD":
                 continue
             reasons = "; ".join(item.reasons) or "no reason recorded"
+            if item.disposition != "indexed":
+                diagnostic_console.print(
+                    f"[dim]{item.status} {item.path} ({item.category}): {reasons}[/dim]"
+                )
+                continue
             color = "yellow" if item.status == "MEH" else "red"
             diagnostic_console.print(
                 f"[{color}]{item.status} {item.path}: {reasons}[/{color}]"

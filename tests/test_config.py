@@ -20,6 +20,7 @@ def test_config_upward_discovery_and_strict_validation(tmp_path) -> None:
     assert config.index.fallback_overlap_lines == 20
     assert config.files.scan_all_text is True
     assert config.files.index_noisy_files is False
+    assert config.files.include_ignored == []
 
     raw = json.loads(config_path.read_text(encoding="utf-8"))
     raw["unexpected"] = True

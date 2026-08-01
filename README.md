@@ -26,8 +26,9 @@ Git-aware `devstill files`
 Deterministic structural parsing for Python, JavaScript, JSX, TypeScript, TSX,
 Go, Rust, Ruby, SQL, Bash, HTML, CSS, and Java
 Bounded generic text fallback for unknown UTF-8 formats
-Binary and noisy/generated-file detection
-Persistent GOOD/MEH/BAD index-quality reporting
+Content-aware documentation and configuration parsing
+Built-in asset, sensitive-file, binary, and noisy/generated-file exclusion
+Persistent GOOD/MEH/BAD/SKIPPED index-quality reporting
 Incremental `devstill index`
 Canonical SQLite and FTS5 storage
 Persistent Chroma vector storage
@@ -254,6 +255,7 @@ Example `devstill.json`
     "use_gitignore": true,
     "scan_all_text": true,
     "index_noisy_files": false,
+    "include_ignored": [],
     "include": [
       "**/*.py",
       "**/*.js",
@@ -276,6 +278,21 @@ Example `devstill.json`
       "**/*.html",
       "**/*.css",
       "**/*.md",
+      "**/*.markdown",
+      "**/*.rst",
+      "**/*.adoc",
+      "**/*.txt",
+      "**/*.jsonc",
+      "**/*.ini",
+      "**/*.cfg",
+      "**/*.conf",
+      "**/*.service",
+      "Dockerfile",
+      "Makefile",
+      ".gitignore",
+      ".env*.example",
+      ".env*.sample",
+      ".env*.template",
       "Gemfile",
       "Rakefile"
     ],
@@ -311,6 +328,18 @@ Devstill should additionally apply the `files.include` and `files.exclude` patte
 By default, `files.scan_all_text` makes every Git-visible path eligible after
 built-in and configured exclusions. Set it to `false` to use `files.include`
 as an allowlist. `files.exclude` always wins.
+
+After configured exclusions, Devstill applies its own content policy. Source
+code, recognized documentation, and useful configuration are eligible for
+indexing. Images (including SVG), fonts, media, archives, compiled artifacts,
+databases, key material, tracked secret environment files, Devstill metadata,
+lockfiles, source maps, and generated/minified files are ignored by default.
+Use `devstill files --ignored` to see exact paths and reasons.
+
+`files.include_ignored` can rescue specific paths, such as an architecture SVG
+whose embedded text is intentionally useful. It cannot override
+`files.exclude` or hard safety exclusions. `files.index_noisy_files` remains a
+compatibility switch for noisy/generated files only; it does not enable assets.
 The indexer must not scan:
 `.git/`
 `.devstill/`
@@ -350,10 +379,16 @@ structural chunks receive search vectors.
 Every searchable record is bounded by both `index.max_chunk_chars` and
 `index.max_chunk_lines`. Oversized structural records retain a complete
 non-searchable canonical parent and receive exact bounded child segments.
+Markdown, reStructuredText, AsciiDoc, and plain text retain complete canonical
+documents and receive exact heading-aware sections. JSON/JSONC, YAML, TOML,
+INI-style files, manifests, dependency lists, service files, web-server
+configuration, `.gitignore`, Dockerfiles, and Makefiles receive exact logical
+configuration sections. These recognized formats can be `GOOD`.
+
 Unknown UTF-8 formats retain a complete canonical document and receive
-paragraph/heading-aware bounded segments. Lockfiles, source maps, minified
-bundles, vendored/generated paths, and generated-do-not-edit files are reported
-as `MEH` and skipped unless `files.index_noisy_files` is enabled.
+paragraph/heading-aware bounded segments as `MEH`. Ignored assets and noisy
+files have no canonical chunks or embeddings. Empty and binary files are
+tracked as `SKIPPED`, outside the GOOD/MEH/BAD totals.
 The local LLM may later review ambiguous comment attachment, but deterministic parsers remain the authority for source boundaries.
 Canonical chunks versus search units
 Devstill should distinguish between exact source records and embedding records.
@@ -518,6 +553,7 @@ devstill doctor --load-model
 devstill files
 devstill files --count
 devstill files --json
+devstill files --ignored
 devstill parse path/to/file.py
 devstill parse path/to/file.py --json
 devstill parse frontend/src/App.tsx
@@ -544,11 +580,12 @@ Parser versions are tracked per language family. After installing a parser
 upgrade, a normal `devstill index` reparses only files whose parser changed;
 `--rebuild` is not required.
 
-Every index run prints colored `GOOD`, `MEH`, `BAD`, and binary-skipped totals.
-`devstill index --verbose` also summarizes good files by parser and lists every
-yellow/red file with its reason on stderr. The complete per-file report is
-written to `.devstill/manifests/quality.json`; `index --json` adds the four
-quality totals without changing its existing fields.
+Every index run prints content coverage, colored `GOOD`, `MEH`, and `BAD`
+totals, plus separate ignored, noisy/generated, empty, and binary counts.
+`devstill index --verbose` summarizes good files by category/parser and lists
+all ignored, skipped, yellow, and red files with reasons on stderr. The complete
+per-file report is written to `.devstill/manifests/quality.json`; `index --json`
+adds the same counts without removing existing fields.
 
 Development commands
 ```bash

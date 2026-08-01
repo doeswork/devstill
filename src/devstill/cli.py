@@ -25,7 +25,7 @@ from devstill.context import (
     select_context_results,
     write_context_artifacts,
 )
-from devstill.git_files import discover_repository_files
+from devstill.git_files import discover_repository_inventory
 from devstill.indexer import RepositoryIndexer
 from devstill.models import ChunkPolicy
 from devstill.parsers import parse_source_file
@@ -69,6 +69,11 @@ def parser() -> argparse.ArgumentParser:
     files_output = files.add_mutually_exclusive_group()
     files_output.add_argument("--json", action="store_true")
     files_output.add_argument("--count", action="store_true")
+    files.add_argument(
+        "--ignored",
+        action="store_true",
+        help="Show paths excluded by Devstill's built-in content policy.",
+    )
 
     parse = sub.add_parser("parse", help="Parse one configured repository file.")
     parse.add_argument("path")
@@ -255,11 +260,27 @@ def _configured() -> tuple[Path, DevstillConfig]:
     return config_path, load_config(config_path)
 
 
-def files_command(as_json: bool, count: bool) -> int:
+def files_command(as_json: bool, count: bool, ignored: bool = False) -> int:
     config_path, config = _configured()
     repo_root = resolve_repo_root(config_path, config)
-    paths = discover_repository_files(repo_root, config)
-    relative = [relative_repo_path(repo_root, path) for path in paths]
+    inventory = discover_repository_inventory(repo_root, config)
+    relative = [item.relative for item in inventory.eligible]
+    ignored_records = [
+        {
+            "path": item.relative,
+            "category": item.decision.category,
+            "reason": item.decision.reason,
+        }
+        for item in inventory.ignored
+    ]
+    skipped_records = [
+        {
+            "path": item.relative,
+            "category": item.decision.category,
+            "reason": item.decision.reason,
+        }
+        for item in inventory.skipped
+    ]
     if as_json:
         print(
             json.dumps(
@@ -267,11 +288,22 @@ def files_command(as_json: bool, count: bool) -> int:
                     "repository": str(repo_root),
                     "count": len(relative),
                     "files": relative,
+                    "ignored_count": len(ignored_records),
+                    "ignored_files": ignored_records,
+                    "skipped_count": len(skipped_records),
+                    "skipped_files": skipped_records,
                 }
             )
         )
     elif count:
-        print(len(relative))
+        print(len(ignored_records) if ignored else len(relative))
+    elif ignored:
+        print(
+            "\n".join(
+                f"{item['path']}\t{item['category']}\t{item['reason']}"
+                for item in ignored_records
+            )
+        )
     else:
         print("\n".join(relative))
     return 0
@@ -295,6 +327,7 @@ def parse_command(value: str, as_json: bool) -> int:
             overlap_lines=config.index.fallback_overlap_lines,
         ),
         index_noisy_files=config.files.index_noisy_files,
+        include_ignored=config.files.include_ignored,
     )
     if as_json:
         print(
@@ -315,12 +348,17 @@ def parse_command(value: str, as_json: bool) -> int:
         if result.binary:
             console.print("[yellow]BINARY[/yellow] [dim]skipped[/dim]")
         elif result.quality:
-            color = {"GOOD": "green", "MEH": "yellow", "BAD": "red"}[
-                result.quality.status
-            ]
+            color = {
+                "GOOD": "green",
+                "MEH": "yellow",
+                "BAD": "red",
+                "SKIPPED": "dim",
+            }[result.quality.status]
             console.print(
                 f"[{color}]{result.quality.status}[/{color}] "
-                f"[bold]{result.quality.parser}[/bold]"
+                f"[bold]{result.quality.parser}[/bold] "
+                f"[cyan]{result.quality.category}[/cyan] "
+                f"[dim]{result.quality.disposition}[/dim]"
             )
             for reason in result.quality.reasons:
                 console.print(f"  [dim]{reason}[/dim]")
@@ -359,11 +397,27 @@ def index_command(rebuild: bool, verbose: bool, as_json: bool) -> int:
         )
         for label, value in labels:
             console.print(f"{label}: [bold]{value}[/bold]")
+        console.print("Index coverage:")
+        console.print(f"  [green]Code: {summary.code_files}[/green]")
+        console.print(f"  [green]Documentation: {summary.documentation_files}[/green]")
+        console.print(f"  [green]Configuration: {summary.configuration_files}[/green]")
+        unclassified = max(
+            0,
+            summary.eligible_files
+            - summary.code_files
+            - summary.documentation_files
+            - summary.configuration_files,
+        )
+        console.print(f"  [yellow]Unknown text: {unclassified}[/yellow]")
         console.print("Index quality:")
         console.print(f"  [green]GOOD: {summary.good_files}[/green]")
         console.print(f"  [yellow]MEH:  {summary.meh_files}[/yellow]")
         console.print(f"  [red]BAD:   {summary.bad_files}[/red]")
-        console.print(f"  [dim]Binary skipped: {summary.binary_files_skipped}[/dim]")
+        console.print("Skipped:")
+        console.print(f"  [dim]Ignored: {summary.ignored_files}[/dim]")
+        console.print(f"  [dim]Noisy/generated: {summary.noisy_files_skipped}[/dim]")
+        console.print(f"  [dim]Empty: {summary.empty_files_skipped}[/dim]")
+        console.print(f"  [dim]Binary: {summary.binary_files_skipped}[/dim]")
     return 0
 
 
@@ -455,7 +509,7 @@ def main() -> None:
         if args.command == "doctor":
             raise SystemExit(doctor(args.load_model))
         if args.command == "files":
-            raise SystemExit(files_command(args.json, args.count))
+            raise SystemExit(files_command(args.json, args.count, args.ignored))
         if args.command == "parse":
             raise SystemExit(parse_command(args.path, args.json))
         if args.command == "index":

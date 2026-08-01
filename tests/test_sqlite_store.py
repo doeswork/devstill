@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import replace
 from pathlib import Path
 
@@ -124,6 +125,40 @@ def test_quality_records_persist_replace_and_delete(tmp_path: Path) -> None:
         with store.transaction():
             store.delete_file("auth.py")
         assert store.list_quality() == []
+
+
+def test_quality_schema_migrates_category_and_disposition(tmp_path: Path) -> None:
+    path = tmp_path / "metadata.sqlite"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        """
+        CREATE TABLE file_quality (
+            path TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            parser TEXT NOT NULL,
+            reasons_json TEXT NOT NULL,
+            canonical_chunks INTEGER NOT NULL,
+            searchable_chunks INTEGER NOT NULL,
+            max_chunk_chars INTEGER NOT NULL,
+            max_chunk_lines INTEGER NOT NULL,
+            fallback_segments INTEGER NOT NULL,
+            noisy INTEGER NOT NULL,
+            skipped INTEGER NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "INSERT INTO file_quality VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("legacy.txt", "MEH", "plain_text", "[]", 2, 1, 10, 1, 0, 0, 0),
+    )
+    connection.commit()
+    connection.close()
+
+    with SQLiteStore(path) as store:
+        quality = store.list_quality()[0]
+
+    assert quality.category == "unknown_text"
+    assert quality.disposition == "indexed"
 
 
 def test_language_module_declarations_remain_searchable(tmp_path: Path) -> None:

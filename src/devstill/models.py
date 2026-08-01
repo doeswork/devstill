@@ -79,6 +79,8 @@ class FileQuality:
     fallback_segments: int = 0
     noisy: bool = False
     skipped: bool = False
+    category: str = "unknown_text"
+    disposition: str = "indexed"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -94,9 +96,16 @@ class IndexSummary:
     canonical_chunks: int = 0
     search_units_embedded: int = 0
     parse_errors: int = 0
+    eligible_files: int = 0
+    code_files: int = 0
+    documentation_files: int = 0
+    configuration_files: int = 0
     good_files: int = 0
     meh_files: int = 0
     bad_files: int = 0
+    ignored_files: int = 0
+    noisy_files_skipped: int = 0
+    empty_files_skipped: int = 0
     binary_files_skipped: int = 0
     index_path: str = ""
 

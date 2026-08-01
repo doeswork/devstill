@@ -33,6 +33,11 @@ def test_cli_exposes_index_and_search_options() -> None:
     assert search.path == "src/"
     assert search.limit == 5
 
+    files = parser().parse_args(["files", "--ignored", "--json"])
+    assert files.command == "files"
+    assert files.ignored
+    assert files.json
+
 
 def test_cli_exposes_context_defaults_and_options() -> None:
     context = parser().parse_args(
@@ -181,7 +186,7 @@ def test_index_quality_human_and_json_output(monkeypatch, tmp_path, capsys) -> N
     assert "GOOD: 7" in human
     assert "MEH:  2" in human
     assert "BAD:   1" in human
-    assert "Binary skipped: 3" in human
+    assert "Binary: 3" in human
 
     assert cli.index_command(False, True, True) == 0
     captured = capsys.readouterr()

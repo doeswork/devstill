@@ -11,7 +11,7 @@ from typing import Self
 
 from devstill.models import FileQuality, FileRecord, ParseError, SearchUnit, SourceChunk
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class SQLiteStore:
@@ -101,6 +101,8 @@ class SQLiteStore:
                 path TEXT PRIMARY KEY,
                 status TEXT NOT NULL,
                 parser TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'unknown_text',
+                disposition TEXT NOT NULL DEFAULT 'indexed',
                 reasons_json TEXT NOT NULL,
                 canonical_chunks INTEGER NOT NULL,
                 searchable_chunks INTEGER NOT NULL,
@@ -121,8 +123,24 @@ class SQLiteStore:
             );
             """
         )
+        self._ensure_column(
+            "file_quality", "category", "TEXT NOT NULL DEFAULT 'unknown_text'"
+        )
+        self._ensure_column(
+            "file_quality", "disposition", "TEXT NOT NULL DEFAULT 'indexed'"
+        )
         self.connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self.connection.commit()
+
+    def _ensure_column(self, table: str, column: str, declaration: str) -> None:
+        columns = {
+            row[1]
+            for row in self.connection.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in columns:
+            self.connection.execute(
+                f"ALTER TABLE {table} ADD COLUMN {column} {declaration}"
+            )
 
     def get_files(self) -> dict[str, FileRecord]:
         rows = self.connection.execute("SELECT * FROM files").fetchall()
@@ -280,13 +298,15 @@ class SQLiteStore:
         self.connection.execute(
             """
             INSERT INTO file_quality(
-                path, status, parser, reasons_json, canonical_chunks,
+                path, status, parser, category, disposition, reasons_json, canonical_chunks,
                 searchable_chunks, max_chunk_chars, max_chunk_lines,
                 fallback_segments, noisy, skipped
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
                 status=excluded.status,
                 parser=excluded.parser,
+                category=excluded.category,
+                disposition=excluded.disposition,
                 reasons_json=excluded.reasons_json,
                 canonical_chunks=excluded.canonical_chunks,
                 searchable_chunks=excluded.searchable_chunks,
@@ -300,6 +320,8 @@ class SQLiteStore:
                 quality.path,
                 quality.status,
                 quality.parser,
+                quality.category,
+                quality.disposition,
                 json.dumps(quality.reasons),
                 quality.canonical_chunks,
                 quality.searchable_chunks,
@@ -320,6 +342,8 @@ class SQLiteStore:
                 path=row["path"],
                 status=row["status"],
                 parser=row["parser"],
+                category=row["category"],
+                disposition=row["disposition"],
                 reasons=json.loads(row["reasons_json"]),
                 canonical_chunks=row["canonical_chunks"],
                 searchable_chunks=row["searchable_chunks"],

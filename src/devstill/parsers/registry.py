@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import fnmatch
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from devstill.parsers.base import (
+    CONFIG_TEXT_PARSER_VERSION,
     FALLBACK_PARSER_VERSION,
     JAVASCRIPT_FAMILY_PARSER_VERSION,
+    MARKUP_TEXT_PARSER_VERSION,
+    PROSE_TEXT_PARSER_VERSION,
     PYTHON_PARSER_VERSION,
     ParseResult,
 )
@@ -23,6 +27,8 @@ class ParserSpec:
     basenames: frozenset[str] = frozenset()
     shebangs: frozenset[str] = frozenset()
     structural: bool = True
+    category: str = "code"
+    patterns: frozenset[str] = frozenset()
 
     def parse(self, path: Path, repo_root: Path) -> ParseResult:
         if self.name == "python_ast":
@@ -37,6 +43,10 @@ class ParserSpec:
             from devstill.parsers.plain_text import parse_plain_text
 
             return parse_plain_text(path, repo_root)
+        if self.name in {"markup_text", "prose_text", "config_text"}:
+            from devstill.parsers.structured_text import parse_structured_text
+
+            return parse_structured_text(path, repo_root, self.name)
         from devstill.parsers.tree_sitter_languages import parse_tree_sitter_language
 
         return parse_tree_sitter_language(path, repo_root, self.language)
@@ -108,6 +118,72 @@ PARSER_SPECS = (
         "tree-sitter-java:1",
         frozenset({".java"}),
     ),
+    ParserSpec(
+        "config_text",
+        "config",
+        CONFIG_TEXT_PARSER_VERSION,
+        frozenset(
+            {
+                ".cfg",
+                ".conf",
+                ".editorconfig",
+                ".gradle",
+                ".ini",
+                ".json",
+                ".jsonc",
+                ".properties",
+                ".props",
+                ".service",
+                ".toml",
+                ".yaml",
+                ".yml",
+            }
+        ),
+        frozenset(
+            {
+                ".dockerignore",
+                ".editorconfig",
+                ".env.example",
+                ".env.sample",
+                ".env.template",
+                ".gitattributes",
+                ".gitignore",
+                ".npmrc",
+                ".nvmrc",
+                "dockerfile",
+                "makefile",
+                "procfile",
+            }
+        ),
+        structural=False,
+        category="configuration",
+        patterns=frozenset(
+            {
+                ".env*.example",
+                ".env*.sample",
+                ".env*.template",
+                "requirements*.txt",
+                "dockerfile.*",
+                "makefile.*",
+            }
+        ),
+    ),
+    ParserSpec(
+        "markup_text",
+        "markdown",
+        MARKUP_TEXT_PARSER_VERSION,
+        frozenset({".adoc", ".asciidoc", ".markdown", ".md", ".rst"}),
+        structural=False,
+        category="documentation",
+    ),
+    ParserSpec(
+        "prose_text",
+        "text",
+        PROSE_TEXT_PARSER_VERSION,
+        frozenset({".txt"}),
+        structural=False,
+        category="documentation",
+    ),
 )
 
 FALLBACK_SPEC = ParserSpec(
@@ -116,6 +192,7 @@ FALLBACK_SPEC = ParserSpec(
     FALLBACK_PARSER_VERSION,
     frozenset(),
     structural=False,
+    category="unknown_text",
 )
 
 
@@ -136,8 +213,13 @@ def _shebang(path: Path) -> str | None:
 
 def parser_spec_for(path: Path) -> ParserSpec:
     suffix = path.suffix.casefold()
+    name = path.name.casefold()
     for spec in PARSER_SPECS:
-        if suffix in spec.extensions or path.name in spec.basenames:
+        if (
+            suffix in spec.extensions
+            or any(name == value.casefold() for value in spec.basenames)
+            or any(fnmatch.fnmatchcase(name, pattern) for pattern in spec.patterns)
+        ):
             return spec
     detected = _shebang(path)
     if detected:

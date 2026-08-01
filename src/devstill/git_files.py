@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import fnmatch
 import os
 import subprocess
 import warnings
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from devstill.config import DevstillConfig
+from devstill.content_policy import ContentDecision, classify_content, matches_patterns
 
 ALWAYS_EXCLUDED_DIRS = {
     ".git",
@@ -26,16 +27,6 @@ ALWAYS_EXCLUDED_DIRS = {
 }
 
 
-def _matches(path: str, patterns: list[str]) -> bool:
-    candidate = PurePosixPath(path)
-    return any(
-        candidate.match(pattern)
-        or fnmatch.fnmatchcase(path, pattern)
-        or (pattern.startswith("**/") and fnmatch.fnmatchcase(path, pattern[3:]))
-        for pattern in patterns
-    )
-
-
 def _always_excluded(path: str) -> bool:
     return any(part in ALWAYS_EXCLUDED_DIRS for part in PurePosixPath(path).parts)
 
@@ -43,9 +34,33 @@ def _always_excluded(path: str) -> bool:
 def _configured(path: str, config: DevstillConfig) -> bool:
     return (
         not _always_excluded(path)
-        and (config.files.scan_all_text or _matches(path, config.files.include))
-        and not _matches(path, config.files.exclude)
+        and (config.files.scan_all_text or matches_patterns(path, config.files.include))
+        and not matches_patterns(path, config.files.exclude)
     )
+
+
+@dataclass(frozen=True, slots=True)
+class RepositoryFile:
+    path: Path
+    relative: str
+    decision: ContentDecision
+
+
+@dataclass(frozen=True, slots=True)
+class RepositoryInventory:
+    files: list[RepositoryFile]
+
+    @property
+    def eligible(self) -> list[RepositoryFile]:
+        return [item for item in self.files if item.decision.disposition == "indexed"]
+
+    @property
+    def ignored(self) -> list[RepositoryFile]:
+        return [item for item in self.files if item.decision.disposition == "ignored"]
+
+    @property
+    def skipped(self) -> list[RepositoryFile]:
+        return [item for item in self.files if item.decision.disposition == "skipped"]
 
 
 def _git_files(repo_root: Path, use_gitignore: bool) -> list[str] | None:
@@ -89,16 +104,34 @@ def _fallback_files(repo_root: Path) -> list[str]:
     return paths
 
 
-def discover_repository_files(repo_root: Path, config: DevstillConfig) -> list[Path]:
+def discover_repository_inventory(
+    repo_root: Path, config: DevstillConfig
+) -> RepositoryInventory:
     root = repo_root.expanduser().resolve()
     raw_paths = _git_files(root, config.files.use_gitignore)
     if raw_paths is None:
         raw_paths = _fallback_files(root)
-    selected: list[Path] = []
+    selected: list[RepositoryFile] = []
     for relative in sorted(set(raw_paths)):
         if not _configured(relative, config):
             continue
         path = root / relative
-        if path.is_file() and path.resolve().is_relative_to(root):
-            selected.append(path)
-    return selected
+        if (
+            not path.is_file()
+            or path.is_symlink()
+            or not path.resolve().is_relative_to(root)
+        ):
+            continue
+        raw = path.read_bytes()
+        selected.append(
+            RepositoryFile(
+                path, relative, classify_content(path, relative, raw, config)
+            )
+        )
+    return RepositoryInventory(selected)
+
+
+def discover_repository_files(repo_root: Path, config: DevstillConfig) -> list[Path]:
+    return [
+        item.path for item in discover_repository_inventory(repo_root, config).eligible
+    ]
