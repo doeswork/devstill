@@ -13,7 +13,7 @@ LLM-ready context assembly that returns only relevant source chunks
 Optional OpenAI-compatible agent workflows for plans, labels, summaries, and ambiguous chunk decisions
 Embeddings are only one part of the system. The intended architecture combines deterministic parsing, exact indexes, lexical search, vector search, and code relationships.
 Current status
-The current starter implements:
+The current release implements:
 Global `devstill` console command
 Dedicated Python virtual environment
 CPU-only PyTorch installation
@@ -37,18 +37,17 @@ Compact Markdown and JSON `devstill context`
 OpenAI-compatible repository agent configuration and connectivity testing
 Advisory, validated `devstill plan` file-impact classification
 Upward discovery of `devstill.json`
-Initial Textual TUI shell
+Interactive Textual workspace with a prompt, session feed, command palette, and sidebar
 Per-repository configuration
 Shared global embedding model
 Per-repository `.devstill/` data directory
 The following major features are not implemented yet:
-Search screens in the TUI
 Code relationship graph
 Broader local-LLM enrichment beyond file-impact planning
 Token-budgeted and relationship-aware context expansion
 Additional native parsers for C/C++, C#, PHP, Kotlin, and Swift
 File watching
-Running `devstill` still opens the starter TUI shell. Use the CLI for indexing and search until TUI integration is implemented.
+Running `devstill` opens the interactive repository workspace. The manual CLI remains available for scripts, advanced filters, rebuilds, configuration, and removal.
 Development repository layout
 The current development checkout is expected to look like:
 ```text
@@ -65,6 +64,7 @@ The current development checkout is expected to look like:
         ├── __init__.py
         ├── cli.py
         ├── config.py
+        ├── tui_commands.py
         └── tui.py
 ```
 The development checkout currently happens to be nested under:
@@ -513,11 +513,20 @@ Result deduplication
 Per-file diversity limits
 Local LLM integration
 `devstill plan` calls a configured OpenAI-compatible Chat Completions endpoint.
-Configuration is repository-local, while the API key is read only from the named
-environment variable and is never saved or displayed. Embedded URL credentials are
-rejected. The client requests strict JSON Schema output first, then retries once
-without `response_format` when a compatible local server reports that structured
-output is unsupported.
+Endpoint and model configuration are repository-local. API tokens are never written
+to `devstill.json` or displayed. The interactive TUI can remember a token in
+`~/.config/devstill/credentials.json`, an atomic user-only file with `0600`
+permissions. The configured environment variable remains supported and takes
+precedence over a remembered token. Embedded URL credentials are rejected. The
+client requests strict JSON Schema output first, then retries once without
+`response_format` when a compatible local server reports that structured output is
+unsupported.
+
+Every HTTP attempt appends a sanitized diagnostic record to
+`.devstill/logs/agent.jsonl`. The log includes response status, elapsed time,
+finish reason, usage, and the complete response body so empty or malformed local
+model output can be diagnosed. It records message roles and character counts rather
+than transmitted source, and never records authorization headers or API keys.
 
 Configure and verify an agent from anywhere beneath the repository:
 ```bash
@@ -528,6 +537,12 @@ export DEVSTILL_AGENT_API_KEY="your-key-if-required"
 devstill agent
 devstill agent test
 ```
+Alternatively, run `devstill`, choose **Agent setup** in the right sidebar, or type
+`/agent configure`. Enter the endpoint, model, and token, leave **Remember** enabled,
+then choose **Save & Test**. The password field is always blank when reopened and the
+saved token is never rendered back to the terminal. **Forget saved token** removes
+the credential for the current endpoint; it does not unset an environment variable.
+
 `devstill agent enable` and `devstill agent disable` change only the repository
 configuration. Any HTTP(S) endpoint is accepted, so review the displayed network
 destination before sending repository context. Requests use
@@ -612,6 +627,84 @@ devstill plan "add an activation code" --path core/ --limit 5 --json
 devstill plan "audit authentication" --include-tests --lexical-only
 devstill --version
 ```
+
+Interactive TUI
+
+Run `devstill` from anywhere beneath an initialized repository. The prompt accepts
+ordinary natural-language searches and slash commands:
+
+```text
+where is authentication checked?
+/search registration flow
+/context explain the login session
+/plan add account activation
+/index
+/files
+/agent
+/agent configure
+/agent test
+/help
+/clear
+/quit
+```
+
+Typing `/` opens command suggestions. Use Up and Down to highlight one and Tab to
+complete it in the prompt without executing it. The right sidebar offers the same
+commands and also prefills the prompt. Search runs locally; only `/plan` and
+`/agent test` contact the configured endpoint. Context and plan commands keep the
+same `.context.*` and `.plan.*` artifact behavior as the CLI.
+
+`/agent configure` opens an in-app setup form for the OpenAI-compatible base URL,
+model, token, environment-variable name, timeout, and output-token limit. **Save &
+Test** remembers the settings and immediately verifies the connection. Remembered
+credentials are global to the current operating-system user and are intentionally
+outside repository removal; use **Forget saved token** to remove one. Setting the
+configured API-key environment variable overrides the remembered value for that
+process.
+
+Keyboard shortcuts are `Ctrl+C` or `Ctrl+Q` to quit, `Ctrl+L` to clear the session,
+`Ctrl+B` to toggle the responsive sidebar, and `Ctrl+R` to refresh status. The
+high-priority `Ctrl+C` binding works while the prompt is focused in VS Code's
+integrated terminal; use `Ctrl+Shift+C` for the terminal's copy action. Up and Down
+recall commands when the slash palette is closed. The feed retains the latest 50
+commands in memory and is not persisted.
+
+During `/index`, the composer displays the active discovery, reconciliation,
+parsing, embedding, or persistence stage. Stages with measurable work show a
+progress bar, percentage, and current/total count; the final session entry retains
+the incremental-index and quality summary. CPU embedding is grouped for structured
+progress updates, so large repositories advance throughout the encoder run and show
+an ETA instead of remaining at zero until the whole model call returns.
+
+A separate compact `FILES` row remains visible throughout indexing. It reports total,
+checked, changed, unchanged, and parsed file counts while the stage row independently
+tracks items such as search units or Chroma vectors. Dirty-index reconciliation seeds
+the total from canonical SQLite files before vector rebuilding begins. Repository
+checking is throttled to roughly 200 UI updates even for very large inventories.
+
+Chroma writes and deletes are split using the database client's runtime maximum
+batch size. If an index update is interrupted or a Chroma batch fails, Devstill
+retains `.indexing-dirty`, reports the repository as requiring recovery, and refuses
+search/context/plan retrieval from the incomplete cross-store state. Running
+`devstill index` or `/index` reconciles vectors from canonical SQLite records; the
+summary reports reconciled units separately from newly embedded changed-file units.
+
+The TUI opens Chroma and warms the local query encoder in a startup worker whenever
+the repository already has an index. Startup may spend several seconds loading the
+CPU model and raises Devstill's memory use by roughly 1.1 GiB, but the first search,
+context, or plan then avoids that cold-start delay. The sidebar reports the encoder
+as `cold`, `loading`, or `warm`. The same encoder and Chroma client are reused for
+the rest of that TUI session, while each command keeps its own lightweight SQLite
+connection. Missing indexes remain cold until `/index` builds them. Closing Devstill
+releases the session cache. One-shot CLI commands remain independent and therefore
+still pay their own cold-start cost.
+
+`/plan` renders in two stages. As soon as local vector retrieval finishes, the feed
+shows each unique retrieved file with a white pending marker and its matched symbols.
+That same entry is replaced in place with the agent's colored impact labels and
+one-sentence reasons after validation succeeds. Agent failures keep the retrieved
+file list visible, attach the error and response-log path, and do not replace
+`.plan.*`.
 `devstill context` returns five records by default. Every successful context command
 also overwrites `.devstill/.context.md` and `.devstill/.context.json` with both
 reviewable formats, regardless of which format is printed to stdout.

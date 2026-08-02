@@ -95,6 +95,7 @@ class IndexSummary:
     deleted_files: int = 0
     canonical_chunks: int = 0
     search_units_embedded: int = 0
+    reconciled_search_units: int = 0
     parse_errors: int = 0
     eligible_files: int = 0
     code_files: int = 0
@@ -111,6 +112,24 @@ class IndexSummary:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(slots=True, frozen=True)
+class IndexFileProgress:
+    total: int = 0
+    checked: int = 0
+    changed: int = 0
+    unchanged: int = 0
+    parsed: int = 0
+
+
+@dataclass(slots=True, frozen=True)
+class IndexProgress:
+    stage: str
+    message: str
+    current: int | None = None
+    total: int | None = None
+    files: IndexFileProgress | None = None
 
 
 @dataclass(slots=True)

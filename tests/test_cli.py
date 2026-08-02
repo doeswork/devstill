@@ -139,7 +139,7 @@ def test_agent_configure_from_nested_directory_and_secret_redaction(
     assert configured.llm.base_url == "http://localhost:9000/v1"
     assert configured.llm.model == "local-12b"
     output = capsys.readouterr().out
-    assert "LOCAL_AGENT_KEY (set)" in output
+    assert "LOCAL_AGENT_KEY (environment)" in output
     assert "do-not-print-this-secret" not in output
 
     assert cli.agent_command(parser().parse_args(["agent", "disable"])) == 0
@@ -159,7 +159,7 @@ def test_agent_test_uses_configured_client(monkeypatch, tmp_path, capsys) -> Non
     calls: dict[str, object] = {}
 
     class FakeAgentClient:
-        def __init__(self, llm):
+        def __init__(self, llm, **_kwargs):
             calls["config"] = llm
 
         def __enter__(self):
@@ -295,7 +295,7 @@ def test_plan_command_outputs_json_writes_artifacts_and_preserves_context(
             calls["search_closed"] = True
 
     class FakeAgentClient:
-        def __init__(self, llm):
+        def __init__(self, llm, **_kwargs):
             self.config = llm
             self.endpoint = "http://localhost:8080/v1/chat/completions"
 
@@ -378,7 +378,7 @@ def test_failed_plan_preserves_previous_artifacts(monkeypatch, tmp_path: Path) -
     class FakeAgentClient:
         endpoint = "http://localhost/v1/chat/completions"
 
-        def __init__(self, llm):
+        def __init__(self, llm, **_kwargs):
             self.config = llm
 
         def close(self):

@@ -13,6 +13,7 @@ from devstill.config import (
     update_llm_config,
     write_default_config,
 )
+from devstill.credentials import store_api_key
 
 
 def llm_config(**updates: object) -> LlmConfig:
@@ -132,6 +133,23 @@ def test_chat_uses_strict_schema_auth_and_configured_limits(monkeypatch) -> None
     http.close()
 
 
+def test_chat_uses_remembered_token_when_environment_is_unset() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return completion('{"status":"ok"}')
+
+    config = llm_config()
+    store_api_key(config, "remembered-secret")
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+
+    AgentClient(config, client=http).chat([])
+
+    assert requests[0].headers["Authorization"] == "Bearer remembered-secret"
+    http.close()
+
+
 def test_chat_retries_without_response_format_for_compatible_server() -> None:
     payloads: list[dict[str, object]] = []
 
@@ -195,3 +213,50 @@ def test_chat_reports_timeout_and_agent_test_validates_output() -> None:
     with pytest.raises(AgentError, match="status=ok"):
         AgentClient(llm_config(), client=bad_http).test()
     bad_http.close()
+
+
+def test_agent_diagnostic_log_preserves_raw_response_without_secret(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("LOCAL_AGENT_SECRET", "never-write-this-token")
+    response_payload = {
+        "choices": [
+            {
+                "message": {"content": "", "reasoning_content": "thinking"},
+                "finish_reason": "length",
+            }
+        ],
+        "usage": {"completion_tokens": 2048},
+    }
+    http = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, json=response_payload)
+        )
+    )
+    log_path = tmp_path / ".devstill/logs/agent.jsonl"
+    client = AgentClient(
+        llm_config(api_key_env="LOCAL_AGENT_SECRET"),
+        client=http,
+        log_path=log_path,
+    )
+
+    with pytest.raises(AgentError, match=r"Agent response log: .*agent\.jsonl"):
+        client.chat(
+            [{"role": "user", "content": "private source context"}],
+            schema={"type": "object"},
+            schema_name="diagnostic_test",
+        )
+
+    records = [
+        json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(records) == 1
+    assert records[0]["status_code"] == 200
+    assert records[0]["schema_name"] == "diagnostic_test"
+    assert records[0]["messages"] == [{"role": "user", "characters": 22}]
+    assert records[0]["response"] == response_payload
+    log_text = log_path.read_text(encoding="utf-8")
+    assert "never-write-this-token" not in log_text
+    assert "private source context" not in log_text
+    http.close()

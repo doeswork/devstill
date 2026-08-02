@@ -19,9 +19,21 @@ We need to include other major coding laguanges like rust, ruby, go, sql, etc to
 - `devstill index --verbose` summarizes good files by category/parser and lists ignored, skipped, yellow, and red files with reasons.
 - Parser and pipeline versions are tracked so the first index migrates affected files and the next unchanged index embeds nothing.
 - `devstill remove` safely removes a repository integration with preview, confirmation, index-only cleanup, custom-layout preservation, and managed `.gitignore` cleanup.
-- `devstill agent` now stores and reports repository-local OpenAI-compatible endpoint settings, reads secrets only from a named environment variable, and tests strict structured connectivity.
+- `devstill agent` stores and reports repository-local OpenAI-compatible endpoint settings and tests strict structured connectivity without revealing secrets.
+- `/agent configure` now provides an in-TUI setup form with Save, Save & Test, and Forget actions. Tokens can persist in a user-only `0600` credential file outside the repository, while the configured environment variable remains the higher-priority override.
 - `devstill plan` now retrieves five context chunks by default and produces a validated six-label file-impact plan without editing source.
 - Successful plans overwrite `.devstill/.plan.md` and `.devstill/.plan.json`; validation failures preserve prior artifacts and receive at most one repair request.
+- Agent HTTP attempts append sanitized diagnostics and complete raw response bodies to `.devstill/logs/agent.jsonl`; API keys and transmitted source content are never logged.
+- Running `devstill` now opens a prompt-focused Textual workspace with a scrollable session feed, responsive command sidebar, slash-command completion, and command history.
+- Tab completes the highlighted slash-command suggestion, and `/index` displays its current stage plus determinate current/total progress when available.
+- `Ctrl+C` copies selected TUI text and exits when nothing is selected; `Ctrl+Q` remains an unconditional quit binding.
+- The TUI opens Chroma and warms one shared query encoder during startup, then reuses both across search, context, plan, and index commands; the sidebar exposes cold/loading/warm state and shutdown releases the session cache.
+- `/plan` immediately shows locally retrieved files as white pending items, then replaces that entry in place with validated colored labels and one-sentence agent reasons.
+- Large embedding runs now emit real grouped current/total progress with an ETA, and Chroma upserts/deletes respect its runtime batch limit.
+- Dirty cross-store indexes are marked as requiring recovery, block incomplete retrieval, and reconcile canonical SQLite search units through the same batched progress path.
+- `/index` keeps a compact repository file-count row visible beside the independent active-stage unit progress, including during embedding and dirty recovery.
+- Plain TUI input performs local hybrid search; `/context`, `/plan`, `/index`, `/files`, `/agent`, `/agent configure`, and `/agent test` expose the daily workflow without replacing the manual CLI.
+- CPU, database, and network commands run through one background worker with visible index progress and recoverable in-session errors.
 
 ## Next user checkpoint
 
@@ -44,6 +56,10 @@ devstill agent test
 devstill plan "add an activation code to registered users" --json
 cat .devstill/.plan.md
 cat .devstill/.plan.json
+
+devstill
+# In the TUI, use /agent configure to save and test the endpoint, model, and token.
+# Then type /help or start with a normal search question.
 ```
 
 Future parser registry additions include C/C++, C#, PHP, Kotlin, and Swift.

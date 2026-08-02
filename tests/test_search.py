@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import subprocess
 
+import pytest
+
 from devstill.indexer import RepositoryIndexer
 from devstill.search import HybridSearch
 
@@ -43,3 +45,18 @@ def test_hybrid_exact_lexical_semantic_and_filters(configured_repo: tuple) -> No
     assert semantic[0].chunk.name == "UserProfile"
     assert search.query("profile", path="missing/") == []
     search.close()
+
+
+def test_dirty_index_rejects_search_until_reconciled(configured_repo: tuple) -> None:
+    repo, config_path, config = configured_repo
+    index_root = repo / ".devstill"
+    index_root.mkdir()
+    (index_root / ".indexing-dirty").write_text("interrupted\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="index recovery is required"):
+        HybridSearch(
+            config_path,
+            config,
+            embedder=FakeEmbedder(),
+            chroma_store=FakeChroma(),
+        )

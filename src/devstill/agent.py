@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Self
+from uuid import uuid4
 
 import httpx
 from pydantic import BaseModel, ConfigDict
 
 from devstill.config import LlmConfig
+from devstill.credentials import CredentialError, resolve_api_key
 
 
 class AgentError(RuntimeError):
@@ -76,9 +79,11 @@ class AgentClient:
         config: LlmConfig,
         *,
         client: httpx.Client | None = None,
+        log_path: Path | None = None,
     ) -> None:
         self.config = config
         self.endpoint = completion_url(config.base_url)
+        self.log_path = log_path
         self._owns_client = client is None
         self.client = client or httpx.Client(
             timeout=config.timeout_seconds,
@@ -97,10 +102,93 @@ class AgentClient:
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
-        api_key = os.environ.get(self.config.api_key_env)
+        try:
+            api_key = resolve_api_key(self.config)
+        except CredentialError as exc:
+            raise AgentError(str(exc)) from exc
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         return headers
+
+    def _write_diagnostic(self, entry: dict[str, Any]) -> bool:
+        """Append a sanitized request result without ever logging authorization."""
+        if self.log_path is None:
+            return False
+        record = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "endpoint": self.endpoint,
+            "model": self.config.model,
+            **entry,
+        }
+        try:
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.log_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except OSError:
+            return False
+        return True
+
+    def _post_logged(
+        self,
+        payload: dict[str, Any],
+        *,
+        request_id: str,
+        attempt: int,
+        mode: str,
+    ) -> httpx.Response:
+        started = time.monotonic()
+        message_summary = [
+            {
+                "role": message.get("role", "unknown"),
+                "characters": len(str(message.get("content", ""))),
+            }
+            for message in payload.get("messages", [])
+            if isinstance(message, dict)
+        ]
+        base_entry = {
+            "request_id": request_id,
+            "attempt": attempt,
+            "mode": mode,
+            "schema_name": (
+                payload.get("response_format", {}).get("json_schema", {}).get("name")
+            ),
+            "max_tokens": payload.get("max_tokens"),
+            "messages": message_summary,
+        }
+        try:
+            response = self.client.post(
+                self.endpoint,
+                headers=self._headers(),
+                json=payload,
+            )
+        except Exception as exc:
+            self._write_diagnostic(
+                {
+                    **base_entry,
+                    "elapsed_seconds": round(time.monotonic() - started, 3),
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+            )
+            raise
+        try:
+            response_body: Any = response.json()
+        except ValueError:
+            response_body = response.text
+        self._write_diagnostic(
+            {
+                **base_entry,
+                "elapsed_seconds": round(time.monotonic() - started, 3),
+                "status_code": response.status_code,
+                "response": response_body,
+            }
+        )
+        return response
+
+    def _diagnostic_error(self, message: str) -> AgentError:
+        if self.log_path is not None:
+            return AgentError(f"{message}. Agent response log: {self.log_path}")
+        return AgentError(message)
 
     @staticmethod
     def _schema_unsupported(response: httpx.Response) -> bool:
@@ -161,33 +249,43 @@ class AgentClient:
                     "schema": schema,
                 },
             }
+        request_id = uuid4().hex
         try:
-            response = self.client.post(
-                self.endpoint,
-                headers=self._headers(),
-                json=payload,
+            response = self._post_logged(
+                payload,
+                request_id=request_id,
+                attempt=1,
+                mode="json_schema" if schema is not None else "plain",
             )
             if schema is not None and self._schema_unsupported(response):
                 payload.pop("response_format", None)
-                response = self.client.post(
-                    self.endpoint,
-                    headers=self._headers(),
-                    json=payload,
+                response = self._post_logged(
+                    payload,
+                    request_id=request_id,
+                    attempt=2,
+                    mode="schema_fallback",
                 )
             response.raise_for_status()
+        except AgentError as exc:
+            raise self._diagnostic_error(str(exc)) from exc
         except httpx.TimeoutException as exc:
-            raise AgentError(
+            raise self._diagnostic_error(
                 f"agent request timed out after {self.config.timeout_seconds:g} seconds"
             ) from exc
         except httpx.HTTPStatusError as exc:
             body = exc.response.text.strip().replace("\n", " ")[:500]
             detail = f": {body}" if body else ""
-            raise AgentError(
+            raise self._diagnostic_error(
                 f"agent returned HTTP {exc.response.status_code}{detail}"
             ) from exc
         except httpx.RequestError as exc:
-            raise AgentError(f"could not reach agent endpoint: {exc}") from exc
-        return self._content(response)
+            raise self._diagnostic_error(
+                f"could not reach agent endpoint: {exc}"
+            ) from exc
+        try:
+            return self._content(response)
+        except AgentError as exc:
+            raise self._diagnostic_error(str(exc)) from exc
 
     def test(self) -> AgentTestResult:
         schema = {

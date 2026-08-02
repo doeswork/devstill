@@ -32,6 +32,11 @@ class HybridSearch:
         chroma_store: Any | None = None,
     ) -> None:
         paths = IndexPaths.from_chroma_path(resolve_index_path(config_path, config))
+        if paths.dirty_marker.exists():
+            raise RuntimeError(
+                f"Devstill index recovery is required at {paths.root}. "
+                "Run `devstill index` before searching."
+            )
         if not paths.sqlite.is_file():
             raise FileNotFoundError(
                 f"No Devstill index found at {paths.root}. Run `devstill index`."

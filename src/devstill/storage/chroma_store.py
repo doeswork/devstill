@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +19,13 @@ class ChromaStore:
             metadata={"hnsw:space": "cosine"},
         )
 
+    @property
+    def max_batch_size(self) -> int:
+        value = int(self.client.get_max_batch_size())
+        if value < 1:
+            raise RuntimeError("Chroma returned an invalid maximum batch size")
+        return value
+
     def reset_collection(self) -> None:
         if self.collection_name in {
             item.name for item in self.client.list_collections()
@@ -34,9 +41,12 @@ class ChromaStore:
         units: Sequence[SearchUnit],
         embeddings: Sequence[Sequence[float]],
         chunks: dict[str, SourceChunk],
+        progress: Callable[[int, int], None] | None = None,
     ) -> None:
         if not units:
             return
+        if len(units) != len(embeddings):
+            raise ValueError("search units and embeddings must have the same length")
         documents: list[str] = []
         metadatas: list[dict[str, Any]] = []
         for unit in units:
@@ -56,17 +66,32 @@ class ChromaStore:
                     "chunk_id": chunk.id,
                 }
             )
-        self.collection.upsert(
-            ids=[unit.id for unit in units],
-            embeddings=[list(vector) for vector in embeddings],
-            documents=documents,
-            metadatas=metadatas,
-        )
+        ids = [unit.id for unit in units]
+        vectors = [list(vector) for vector in embeddings]
+        total = len(ids)
+        for start in range(0, total, self.max_batch_size):
+            end = min(start + self.max_batch_size, total)
+            self.collection.upsert(
+                ids=ids[start:end],
+                embeddings=vectors[start:end],
+                documents=documents[start:end],
+                metadatas=metadatas[start:end],
+            )
+            if progress is not None:
+                progress(end, total)
 
-    def delete_search_units(self, unit_ids: Iterable[str]) -> None:
+    def delete_search_units(
+        self,
+        unit_ids: Iterable[str],
+        progress: Callable[[int, int], None] | None = None,
+    ) -> None:
         ids = list(dict.fromkeys(unit_ids))
-        if ids:
-            self.collection.delete(ids=ids)
+        total = len(ids)
+        for start in range(0, total, self.max_batch_size):
+            end = min(start + self.max_batch_size, total)
+            self.collection.delete(ids=ids[start:end])
+            if progress is not None:
+                progress(end, total)
 
     def query_embedding(
         self, embedding: Sequence[float], limit: int

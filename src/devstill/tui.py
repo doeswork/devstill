@@ -1,71 +1,836 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import ClassVar
 
+from rich.markup import escape
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Footer, Header, Label, Static
-
-from devstill.config import (
-    DevstillConfig,
-    resolve_index_path,
-    resolve_model_path,
-    resolve_repo_root,
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widgets import (
+    Footer,
+    Header,
+    Input,
+    LoadingIndicator,
+    Markdown,
+    OptionList,
+    ProgressBar,
+    Static,
 )
+from textual.widgets.option_list import Option
+from textual.worker import Worker, WorkerState
+
+from devstill.config import DevstillConfig, update_llm_config
+from devstill.credentials import (
+    api_key_source,
+    credential_id,
+    credentials_path,
+    delete_api_key,
+    store_api_key,
+)
+from devstill.models import IndexProgress
+from devstill.tui_agent import AgentSetupAction, AgentSetupResult, AgentSetupScreen
+from devstill.tui_commands import (
+    COMMAND_SPECS,
+    TuiCommand,
+    TuiCommandKind,
+    TuiPreview,
+    TuiResult,
+    TuiWorkflow,
+    help_markdown,
+    matching_commands,
+    parse_tui_command,
+    safe_status,
+)
+
+MAX_SESSION_ENTRIES = 50
+SIDEBAR_BREAKPOINT = 100
+
+
+class SessionEntry(Vertical):
+    def __init__(
+        self,
+        command: str,
+        markdown: str,
+        *,
+        error: bool = False,
+    ) -> None:
+        super().__init__(classes="session-entry error" if error else "session-entry")
+        self.command = command
+        self.markdown = markdown
+        self.error = error
+
+    def compose(self) -> ComposeResult:
+        marker = "ERROR" if self.error else "COMMAND"
+        yield Static(
+            f"[b]{marker}[/b]  [dim]{escape(self.command)}[/dim]",
+            classes="entry-heading",
+        )
+        yield Markdown(self.markdown, classes="entry-body")
+
+    def update_markdown(self, markdown: str, *, error: bool = False) -> None:
+        self.markdown = markdown
+        self.error = error
+        self.set_class(error, "error")
+        marker = "ERROR" if error else "COMMAND"
+        self.query_one(".entry-heading", Static).update(
+            f"[b]{marker}[/b]  [dim]{escape(self.command)}[/dim]"
+        )
+        self.query_one(".entry-body", Markdown).update(markdown)
 
 
 class DevstillApp(App[None]):
     TITLE = "devstill"
     SUB_TITLE = "local repository intelligence"
     CSS = """
-    #status-row { height: auto; padding: 1 2; }
-    .card { width: 1fr; min-height: 7; margin: 0 1; padding: 1 2; border: round $accent; }
-    #main { height: 1fr; margin: 0 2 1 2; padding: 1 2; border: round $primary; }
-    .good { color: $success; }
-    .bad { color: $error; }
-    .dim { color: $text-muted; }
+    Screen {
+        background: $background;
+    }
+
+    #workspace-status {
+        height: 3;
+        padding: 1 2;
+        background: $surface;
+        color: $text-muted;
+        border-bottom: solid $primary 35%;
+    }
+
+    #workspace {
+        height: 1fr;
+    }
+
+    #content {
+        width: 1fr;
+        height: 1fr;
+    }
+
+    #session-feed {
+        width: 1fr;
+        height: 1fr;
+        padding: 1 2;
+        scrollbar-gutter: stable;
+    }
+
+    #welcome {
+        height: auto;
+        margin-bottom: 1;
+        padding: 1 2;
+        border: round $primary 45%;
+        background: $surface;
+    }
+
+    .session-entry {
+        height: auto;
+        margin-bottom: 1;
+        border-left: thick $accent;
+        background: $surface;
+    }
+
+    .session-entry.error {
+        border-left: thick $error;
+    }
+
+    .entry-heading {
+        height: 3;
+        padding: 1 2;
+        color: $accent;
+        background: $boost;
+    }
+
+    .error .entry-heading {
+        color: $error;
+    }
+
+    .entry-body {
+        height: auto;
+        padding: 0 2 1 2;
+    }
+
+    #composer {
+        height: auto;
+        padding: 0 1 1 1;
+        background: $surface;
+        border-top: solid $primary 35%;
+    }
+
+    #command-palette {
+        display: none;
+        height: auto;
+        max-height: 10;
+        margin: 0 1;
+        border: round $accent;
+    }
+
+    #command-palette.visible {
+        display: block;
+    }
+
+    #prompt-row {
+        height: 3;
+        align-vertical: middle;
+    }
+
+    #prompt-marker {
+        width: 3;
+        height: 3;
+        padding: 1 0 0 1;
+        color: $accent;
+        text-style: bold;
+    }
+
+    #command-input {
+        width: 1fr;
+        border: none;
+        background: transparent;
+    }
+
+    #busy {
+        display: none;
+        width: 5;
+        height: 3;
+    }
+
+    #activity {
+        height: 1;
+        padding: 0 1;
+        color: $text-muted;
+    }
+
+    #file-progress {
+        display: none;
+        height: 1;
+        padding: 0 1;
+        color: $text-muted;
+    }
+
+    #command-progress {
+        display: none;
+        height: 1;
+        margin: 0 1;
+    }
+
+    #sidebar {
+        width: 34;
+        height: 1fr;
+        padding: 1;
+        border-left: solid $primary 35%;
+        background: $surface;
+    }
+
+    #sidebar-title {
+        height: 2;
+        padding: 0 1;
+        text-style: bold;
+        color: $accent;
+    }
+
+    #sidebar-commands {
+        height: 1fr;
+        border: none;
+        background: transparent;
+    }
+
+    #sidebar-info {
+        height: auto;
+        min-height: 9;
+        padding: 1;
+        border: round $primary 40%;
+        color: $text-muted;
+    }
     """
     BINDINGS: ClassVar = [
-        Binding("q", "quit", "Quit"),
-        Binding("r", "refresh", "Refresh"),
+        Binding("ctrl+c", "copy_or_quit", "Copy / quit", priority=True),
+        Binding("ctrl+q", "quit", "Quit"),
+        Binding("ctrl+l", "clear_feed", "Clear"),
+        Binding("ctrl+b", "toggle_sidebar", "Sidebar"),
+        Binding("ctrl+r", "refresh", "Refresh"),
     ]
 
-    def __init__(self, config_path: Path, config: DevstillConfig) -> None:
+    def __init__(
+        self,
+        config_path: Path,
+        config: DevstillConfig,
+        *,
+        workflow: TuiWorkflow | None = None,
+    ) -> None:
         super().__init__()
         self.config_path = config_path
         self.config = config
+        self._workflow_injected = workflow is not None
+        self.workflow = workflow or TuiWorkflow(config_path, config)
+        self._active_worker: Worker[TuiResult | None] | None = None
+        self._active_command: TuiCommand | None = None
+        self._busy = False
+        self._live_entry: SessionEntry | None = None
+        self._history: list[str] = []
+        self._history_index: int | None = None
+        self._palette_specs = []
+        self._sidebar_manual: bool | None = None
 
     def compose(self) -> ComposeResult:
-        repo = resolve_repo_root(self.config_path, self.config)
-        model = resolve_model_path(self.config)
-        index = resolve_index_path(self.config_path, self.config)
         yield Header(show_clock=True)
-        with Horizontal(id="status-row"):
-            yield Static(self.card("Repository", repo, repo.is_dir()), classes="card")
-            yield Static(
-                self.card("Embedding model", model, model.is_dir()), classes="card"
-            )
-            yield Static(
-                self.card("Chroma index", index, index.is_dir(), "Not built yet"),
-                classes="card",
-            )
-        with VerticalScroll(id="main"):
-            yield Label("[b]devstill is ready.[/b]")
-            yield Label(f"Config: {self.config_path}")
-            yield Label(f"Collection: {self.config.index.collection}")
-            yield Label("")
-            yield Label(
-                "CLI indexing and hybrid search are available. Search screens and index "
-                "controls will be added to this TUI in the next milestone."
-            )
+        yield Static(id="workspace-status")
+        with Horizontal(id="workspace"):
+            with Vertical(id="content"):
+                with VerticalScroll(id="session-feed"):
+                    yield Static(
+                        "[b]Devstill is ready.[/b]\n"
+                        "Type a question for local hybrid search, or type [b]/[/b] "
+                        "for commands. Only [b]/plan[/b] and [b]/agent test[/b] "
+                        "use the network.",
+                        id="welcome",
+                    )
+                with Vertical(id="composer"):
+                    yield OptionList(id="command-palette", compact=True)
+                    with Horizontal(id="prompt-row"):
+                        yield Static("❯", id="prompt-marker")
+                        yield Input(
+                            placeholder="Search the repository or type / for commands",
+                            id="command-input",
+                            select_on_focus=False,
+                        )
+                        yield LoadingIndicator(id="busy")
+                    yield Static("", id="file-progress")
+                    yield Static("Ready", id="activity")
+                    yield ProgressBar(
+                        total=100,
+                        show_eta=True,
+                        id="command-progress",
+                    )
+            with Vertical(id="sidebar"):
+                yield Static("COMMANDS", id="sidebar-title")
+                yield OptionList(
+                    *[
+                        Option(
+                            f"[b]{spec.template.rstrip()}[/b]\n[dim]{spec.description}[/dim]",
+                            id=spec.template,
+                        )
+                        for spec in COMMAND_SPECS
+                    ],
+                    id="sidebar-commands",
+                    compact=True,
+                )
+                yield Static(id="sidebar-info")
         yield Footer()
 
-    @staticmethod
-    def card(title: str, value: Path, ready: bool, missing: str = "Missing") -> str:
-        status = "[good]Ready[/good]" if ready else f"[bad]{missing}[/bad]"
-        return f"[b]{title}[/b]\n{status}\n[dim]{value}[/dim]"
+    def on_mount(self) -> None:
+        self.query_one("#busy", LoadingIndicator).display = False
+        self.refresh_repository_status()
+        self._apply_sidebar_visibility(self.size.width)
+        self.query_one("#command-input", Input).focus()
+        warm = getattr(self.workflow, "warm", None)
+        if callable(warm):
+            self._start_warmup(warm)
+
+    def on_unmount(self) -> None:
+        if self._busy:
+            return
+        close = getattr(self.workflow, "close", None)
+        if callable(close):
+            close()
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._apply_sidebar_visibility(event.size.width)
+
+    def _apply_sidebar_visibility(self, width: int) -> None:
+        sidebar = self.query_one("#sidebar", Vertical)
+        if self._sidebar_manual is None:
+            sidebar.display = width >= SIDEBAR_BREAKPOINT
+        else:
+            sidebar.display = self._sidebar_manual
+
+    def refresh_repository_status(self) -> None:
+        status = safe_status(self.config_path, self.config)
+        if status["index_dirty"]:
+            index = "[red]recovery required[/red]"
+        elif status["index_ready"]:
+            index = "[green]ready[/green]"
+        else:
+            index = "[yellow]missing[/yellow]"
+        model = (
+            f"[green]{escape(str(status['model_name']))}[/green]"
+            if status["model_ready"]
+            else "[yellow]missing[/yellow]"
+        )
+        agent = (
+            f"[green]{escape(str(status['agent_model']))}[/green]"
+            if status["agent_enabled"]
+            else "[dim]disabled[/dim]"
+        )
+        self.query_one("#workspace-status", Static).update(
+            f"[b]{escape(str(status['repository']))}[/b]  •  Index {index}  •  "
+            f"Embeddings {model}  •  Agent {agent}"
+        )
+        key_state = str(status["key_source"])
+        runtime_state = str(getattr(self.workflow, "runtime_state", "external"))
+        runtime_color = {
+            "cold": "yellow",
+            "loading": "cyan",
+            "warm": "green",
+        }.get(runtime_state, "dim")
+        self.query_one("#sidebar-info", Static).update(
+            "[b]DEFAULTS[/b]\n"
+            "Search: hybrid × 10\n"
+            "Context/plan: 5\n"
+            "Tests: excluded\n\n"
+            f"[b]INDEX[/b]\n{escape(str(status['quality']))}\n\n"
+            f"[b]ENCODER[/b]\n[{runtime_color}]"
+            f"{escape(runtime_state)}[/{runtime_color}]\n"
+            "[dim]Startup warm · ~1.1 GiB[/dim]\n\n"
+            f"[b]AGENT KEY[/b]\n{key_state}\n\n"
+            "[b]CLIPBOARD[/b]\n"
+            "Select + Ctrl+C: copy\n"
+            "Ctrl+Shift+V: paste\n\n"
+            "[dim]Ctrl+B sidebar\nCtrl+L clear[/dim]"
+        )
+
+    def action_copy_or_quit(self) -> None:
+        """Copy selected TUI text, or retain Ctrl+C's interrupt-to-exit behavior."""
+        focused = self.focused
+        if isinstance(focused, Input) and focused.selected_text:
+            self.copy_to_clipboard(focused.selected_text)
+            self.query_one("#activity", Static).update("Selected text copied")
+            return
+        selected = self.screen.get_selected_text()
+        if selected:
+            self.copy_to_clipboard(selected)
+            self.query_one("#activity", Static).update("Selected text copied")
+            return
+        self.exit()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "command-input":
+            return
+        self._update_palette(event.value)
+
+    def _update_palette(self, value: str) -> None:
+        palette = self.query_one("#command-palette", OptionList)
+        self._palette_specs = matching_commands(value)
+        palette.clear_options()
+        for spec in self._palette_specs:
+            palette.add_option(
+                Option(
+                    f"[b]{spec.template.rstrip()}[/b]  [dim]{spec.description}[/dim]",
+                    id=spec.template,
+                )
+            )
+        visible = bool(self._palette_specs)
+        palette.set_class(visible, "visible")
+        palette.highlighted = 0 if visible else None
+
+    def _hide_palette(self) -> None:
+        palette = self.query_one("#command-palette", OptionList)
+        palette.remove_class("visible")
+        palette.highlighted = None
+        self._palette_specs = []
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id != "command-input" or self._busy:
+            return
+        value = event.value.strip()
+        palette = self.query_one("#command-palette", OptionList)
+        exact_immediate = any(
+            not spec.template.endswith(" ") and spec.template == value
+            for spec in self._palette_specs
+        )
+        if palette.has_class("visible") and not exact_immediate:
+            highlighted = palette.highlighted
+            if highlighted is not None and highlighted < len(self._palette_specs):
+                self._prefill(self._palette_specs[highlighted].template)
+                return
+        await self.submit_text(value)
+
+    async def submit_text(self, value: str) -> None:
+        prompt = self.query_one("#command-input", Input)
+        if self._busy:
+            self.query_one("#activity", Static).update(
+                "Wait for the current command to finish"
+            )
+            return
+        self._hide_palette()
+        if not value.strip():
+            return
+        try:
+            command = parse_tui_command(value)
+        except ValueError as exc:
+            await self._append_entry(value, str(exc), error=True)
+            prompt.value = ""
+            prompt.focus()
+            return
+
+        self._remember(value)
+        prompt.value = ""
+        if command.kind is TuiCommandKind.HELP:
+            await self._append_entry(value, help_markdown())
+            prompt.focus()
+            return
+        if command.kind is TuiCommandKind.AGENT_CONFIGURE:
+            self.push_screen(
+                AgentSetupScreen(
+                    self.config.llm,
+                    api_key_source(self.config.llm),
+                ),
+                self._agent_setup_complete,
+            )
+            return
+        if command.kind is TuiCommandKind.CLEAR:
+            await self.clear_feed()
+            prompt.focus()
+            return
+        if command.kind is TuiCommandKind.QUIT:
+            self.exit()
+            return
+        self._start_worker(command)
+
+    async def _agent_setup_complete(
+        self,
+        result: AgentSetupResult | None,
+    ) -> None:
+        prompt = self.query_one("#command-input", Input)
+        if result is None:
+            prompt.focus()
+            return
+        if result.action is AgentSetupAction.FORGET:
+            try:
+                removed = delete_api_key(self.config.llm)
+            except RuntimeError as exc:
+                await self._append_entry("/agent configure", str(exc), error=True)
+            else:
+                message = (
+                    "# Saved token removed\n\n"
+                    "The environment variable may still provide a token for this session."
+                    if removed
+                    else "# No saved token\n\nThere was no remembered token to remove."
+                )
+                await self._append_entry("/agent configure", message)
+            self.refresh_repository_status()
+            prompt.focus()
+            return
+
+        if result.config is None:
+            await self._append_entry(
+                "/agent configure",
+                "Agent setup did not return a configuration.",
+                error=True,
+            )
+            prompt.focus()
+            return
+
+        previous = self.config.llm
+        try:
+            updated = update_llm_config(
+                self.config_path,
+                self.config,
+                **result.config.model_dump(mode="json"),
+            )
+        except (OSError, ValueError) as exc:
+            await self._append_entry("/agent configure", str(exc), error=True)
+            prompt.focus()
+            return
+
+        self.config = updated
+        if not self._workflow_injected:
+            self.workflow.update_config(self.config)
+        try:
+            if result.api_key:
+                if result.remember:
+                    store_api_key(self.config.llm, result.api_key)
+                else:
+                    delete_api_key(self.config.llm)
+                os.environ[self.config.llm.api_key_env] = result.api_key
+            if credential_id(previous) != credential_id(self.config.llm):
+                delete_api_key(previous)
+        except (OSError, RuntimeError, ValueError) as exc:
+            await self._append_entry(
+                "/agent configure",
+                f"Configuration was saved, but the token could not be updated: {exc}",
+                error=True,
+            )
+            self.refresh_repository_status()
+            prompt.focus()
+            return
+
+        source = api_key_source(self.config.llm)
+        remembered = (
+            f" The remembered token file is `{credentials_path()}`."
+            if result.api_key and result.remember
+            else ""
+        )
+        await self._append_entry(
+            "/agent configure",
+            "# Agent configuration saved\n\n"
+            f"- Endpoint: `{self.config.llm.base_url}`\n"
+            f"- Model: `{self.config.llm.model}`\n"
+            f"- Token source: **{source}**\n\n"
+            f"The token value is never displayed.{remembered}",
+        )
+        self.refresh_repository_status()
+        prompt.focus()
+        if result.action is AgentSetupAction.SAVE_AND_TEST:
+            await self.submit_text("/agent test")
+
+    def _start_worker(self, command: TuiCommand) -> None:
+        self._busy = True
+        self._active_command = command
+        self._live_entry = None
+        prompt = self.query_one("#command-input", Input)
+        prompt.disabled = True
+        self.query_one("#busy", LoadingIndicator).display = True
+        file_progress = self.query_one("#file-progress", Static)
+        file_progress.display = command.kind is TuiCommandKind.INDEX
+        file_progress.update("FILES · discovering repository inventory")
+        progress_bar = self.query_one("#command-progress", ProgressBar)
+        progress_bar.display = command.kind is TuiCommandKind.INDEX
+        progress_bar.update(total=100, progress=0)
+        self.query_one("#activity", Static).update(f"Running {escape(command.raw)}")
+        self._active_worker = self.run_worker(
+            lambda: self.workflow.execute(command, self._thread_progress),
+            name=command.kind.value,
+            group="commands",
+            exit_on_error=False,
+            thread=True,
+        )
+
+    def _start_warmup(self, warm: object) -> None:
+        self._busy = True
+        self._active_command = None
+        prompt = self.query_one("#command-input", Input)
+        prompt.disabled = True
+        self.query_one("#busy", LoadingIndicator).display = True
+        self.query_one("#activity", Static).update(
+            "Opening vector index and warming query encoder (~1.1 GiB RAM)"
+        )
+        self._active_worker = self.run_worker(
+            lambda: warm(self._thread_progress),
+            name="startup-warmup",
+            group="commands",
+            exit_on_error=False,
+            thread=True,
+        )
+
+    def _thread_progress(self, update: str | IndexProgress | TuiPreview) -> None:
+        try:
+            if isinstance(update, TuiPreview):
+                self.call_from_thread(self._show_preview, update)
+            else:
+                self.call_from_thread(self._set_progress, update)
+        except RuntimeError:
+            # The terminal may close while a non-cancellable CPU worker is finishing.
+            pass
+
+    async def _show_preview(self, preview: TuiPreview) -> None:
+        if (
+            self._active_command is None
+            or self._active_command.kind is not TuiCommandKind.PLAN
+        ):
+            return
+        if self._live_entry is None:
+            self._live_entry = await self._append_entry(
+                self._active_command.raw,
+                preview.markdown,
+            )
+        else:
+            self._live_entry.update_markdown(preview.markdown)
+        self.query_one("#activity", Static).update(
+            "Retrieved files are ready; waiting for the agent"
+        )
+
+    def _set_progress(self, update: str | IndexProgress) -> None:
+        if isinstance(update, str):
+            self.query_one("#activity", Static).update(escape(update))
+        else:
+            if update.files is not None:
+                files = update.files
+                file_progress = self.query_one("#file-progress", Static)
+                file_progress.display = True
+                file_progress.update(
+                    "FILES · "
+                    f"{files.total} total · "
+                    f"{files.checked} checked · "
+                    f"{files.changed} changed · "
+                    f"{files.unchanged} unchanged · "
+                    f"{files.parsed} parsed"
+                )
+            suffix = ""
+            if update.current is not None and update.total is not None:
+                suffix = f" ({update.current}/{update.total})"
+            message = f"{update.stage.upper()} · {update.message}{suffix}"
+            self.query_one("#activity", Static).update(escape(message))
+
+            progress_bar = self.query_one("#command-progress", ProgressBar)
+            progress_bar.display = True
+            if update.total is not None and update.total > 0:
+                progress_bar.update(
+                    total=update.total,
+                    progress=max(0, min(update.current or 0, update.total)),
+                )
+            elif update.stage == "complete":
+                progress_bar.update(total=1, progress=1)
+            else:
+                progress_bar.update(total=100, progress=0)
+        self.refresh_repository_status()
+
+    async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.worker is not self._active_worker:
+            return
+        if event.state is WorkerState.SUCCESS:
+            result = event.worker.result
+            if result is not None and self._active_command is not None:
+                if self._live_entry is not None:
+                    self._live_entry.update_markdown(result.markdown)
+                else:
+                    await self._append_entry(self._active_command.raw, result.markdown)
+            self.refresh_repository_status()
+            activity = (
+                "Ready · vector index open · query encoder warm"
+                if self._active_command is None
+                and str(getattr(self.workflow, "runtime_state", "")) == "warm"
+                else "Ready"
+            )
+            self._finish_worker(activity)
+        elif event.state is WorkerState.ERROR:
+            error = event.worker.error or RuntimeError("Command failed")
+            raw = (
+                self._active_command.raw if self._active_command else "startup warm-up"
+            )
+            if self._live_entry is not None:
+                self._live_entry.update_markdown(
+                    f"{self._live_entry.markdown.rstrip()}\n\n"
+                    f"## Agent request failed\n\n{error}",
+                    error=True,
+                )
+            else:
+                await self._append_entry(raw, str(error), error=True)
+            self.refresh_repository_status()
+            activity = (
+                "Warm-up failed; the first semantic command will retry"
+                if self._active_command is None
+                else "Command failed"
+            )
+            self._finish_worker(activity)
+        elif event.state is WorkerState.CANCELLED:
+            if self._live_entry is not None:
+                self._live_entry.update_markdown(
+                    f"{self._live_entry.markdown.rstrip()}\n\n"
+                    "## Agent request cancelled",
+                    error=True,
+                )
+            self._finish_worker("Command cancelled")
+
+    def _finish_worker(self, activity: str) -> None:
+        self._busy = False
+        self._active_worker = None
+        self._active_command = None
+        self._live_entry = None
+        prompt = self.query_one("#command-input", Input)
+        prompt.disabled = False
+        self.query_one("#busy", LoadingIndicator).display = False
+        file_progress = self.query_one("#file-progress", Static)
+        file_progress.display = False
+        file_progress.update("")
+        self.query_one("#command-progress", ProgressBar).display = False
+        self.query_one("#activity", Static).update(activity)
+        prompt.focus()
+
+    async def _append_entry(
+        self,
+        command: str,
+        markdown: str,
+        *,
+        error: bool = False,
+    ) -> SessionEntry:
+        feed = self.query_one("#session-feed", VerticalScroll)
+        entries = list(feed.query(SessionEntry))
+        while len(entries) >= MAX_SESSION_ENTRIES:
+            await entries.pop(0).remove()
+        entry = SessionEntry(command, markdown, error=error)
+        await feed.mount(entry)
+        feed.scroll_end(animate=False)
+        return entry
+
+    async def clear_feed(self) -> None:
+        feed = self.query_one("#session-feed", VerticalScroll)
+        for entry in list(feed.query(SessionEntry)):
+            await entry.remove()
+        self.query_one("#activity", Static).update("Session cleared")
+
+    def _remember(self, value: str) -> None:
+        if not self._history or self._history[-1] != value:
+            self._history.append(value)
+            self._history = self._history[-MAX_SESSION_ENTRIES:]
+        self._history_index = None
+
+    def _history_move(self, direction: int) -> None:
+        if not self._history:
+            return
+        if self._history_index is None:
+            self._history_index = len(self._history)
+        self._history_index = max(
+            0,
+            min(len(self._history), self._history_index + direction),
+        )
+        value = (
+            ""
+            if self._history_index == len(self._history)
+            else self._history[self._history_index]
+        )
+        prompt = self.query_one("#command-input", Input)
+        prompt.value = value
+        prompt.cursor_position = len(value)
+
+    def on_key(self, event: events.Key) -> None:
+        prompt = self.query_one("#command-input", Input)
+        if not prompt.has_focus or self._busy:
+            return
+        palette = self.query_one("#command-palette", OptionList)
+        if event.key == "escape" and palette.has_class("visible"):
+            self._hide_palette()
+            event.stop().prevent_default()
+            return
+        if event.key == "tab" and palette.has_class("visible"):
+            highlighted = palette.highlighted
+            if highlighted is not None and highlighted < len(self._palette_specs):
+                self._prefill(self._palette_specs[highlighted].template)
+            event.stop().prevent_default()
+            return
+        if event.key in {"up", "down"} and palette.has_class("visible"):
+            if event.key == "up":
+                palette.action_cursor_up()
+            else:
+                palette.action_cursor_down()
+            event.stop().prevent_default()
+            return
+        if event.key == "up" and not palette.has_class("visible"):
+            self._history_move(-1)
+            event.stop().prevent_default()
+        elif event.key == "down" and not palette.has_class("visible"):
+            self._history_move(1)
+            event.stop().prevent_default()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option_id is None:
+            return
+        if event.option_list.id in {"command-palette", "sidebar-commands"}:
+            self._prefill(event.option_id)
+
+    def _prefill(self, value: str) -> None:
+        prompt = self.query_one("#command-input", Input)
+        prompt.value = value
+        prompt.cursor_position = len(value)
+        self._hide_palette()
+        prompt.focus()
+
+    async def action_clear_feed(self) -> None:
+        await self.clear_feed()
+        self.query_one("#command-input", Input).focus()
+
+    def action_toggle_sidebar(self) -> None:
+        sidebar = self.query_one("#sidebar", Vertical)
+        self._sidebar_manual = not sidebar.display
+        sidebar.display = self._sidebar_manual
 
     def action_refresh(self) -> None:
-        self.notify("Restart devstill to reload config.")
+        self.refresh_repository_status()
+        self.query_one("#activity", Static).update("Repository status refreshed")

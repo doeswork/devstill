@@ -27,6 +27,7 @@ from devstill.context import (
     select_context_results,
     write_context_artifacts,
 )
+from devstill.credentials import api_key_source
 from devstill.git_files import discover_repository_inventory
 from devstill.indexer import RepositoryIndexer
 from devstill.models import ChunkPolicy
@@ -434,6 +435,7 @@ def index_command(rebuild: bool, verbose: bool, as_json: bool) -> int:
             ("Deleted files", summary.deleted_files),
             ("Canonical chunks", summary.canonical_chunks),
             ("Search units embedded", summary.search_units_embedded),
+            ("Reconciled search units", summary.reconciled_search_units),
             ("Parse errors", summary.parse_errors),
             ("Index path", summary.index_path),
         )
@@ -543,7 +545,7 @@ def context_command(args: argparse.Namespace) -> int:
 
 def _print_agent(config: DevstillConfig) -> None:
     llm = config.llm
-    key_state = "set" if os.environ.get(llm.api_key_env) else "not set"
+    key_state = api_key_source(llm)
     labels = (
         ("Enabled", llm.enabled),
         ("Base URL", llm.base_url),
@@ -586,7 +588,9 @@ def agent_command(args: argparse.Namespace) -> int:
     if action == "test":
         if not config.llm.enabled:
             raise ValueError("Agent is disabled. Run `devstill agent enable`.")
-        with AgentClient(config.llm) as client:
+        agent_log = resolve_index_path(config_path, config).parent / "logs/agent.jsonl"
+        diagnostic_console.print(f"Agent response log: {agent_log}")
+        with AgentClient(config.llm, log_path=agent_log) as client:
             result = client.test()
         console.print(
             f"[green]Agent OK[/green]: [bold]{result.model}[/bold] at "
@@ -620,8 +624,10 @@ def plan_command(args: argparse.Namespace) -> int:
     finally:
         engine.close()
     results = select_context_results(candidates, args.limit, args.include_tests)
-    client = AgentClient(config.llm)
+    agent_log = resolve_index_path(config_path, config).parent / "logs/agent.jsonl"
+    client = AgentClient(config.llm, log_path=agent_log)
     try:
+        diagnostic_console.print(f"Agent response log: {agent_log}")
         diagnostic_console.print(
             f"Sending {len(results)} source chunks to {client.endpoint}"
         )

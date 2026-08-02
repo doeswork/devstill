@@ -9,15 +9,31 @@ import pytest
 from devstill.config import load_config
 
 
+@pytest.fixture(autouse=True)
+def isolated_credentials(tmp_path: Path, monkeypatch):
+    path = Path.cwd() / ".pytest_cache" / "credentials" / f"{tmp_path.name}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.unlink(missing_ok=True)
+    monkeypatch.setenv(
+        "DEVSTILL_CREDENTIALS_PATH",
+        str(path),
+    )
+    yield
+    path.unlink(missing_ok=True)
+
+
 class FakeEmbedder:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
 
     def encode(
-        self, texts: list[str], show_progress: bool = False
+        self,
+        texts: list[str],
+        show_progress: bool = False,
+        progress=None,
     ) -> list[list[float]]:
         self.calls.append(list(texts))
-        return [
+        values = [
             [
                 float("authentication" in text.casefold()),
                 float("profile" in text.casefold()),
@@ -25,6 +41,9 @@ class FakeEmbedder:
             ]
             for text in texts
         ]
+        if progress is not None and texts:
+            progress(len(texts), len(texts))
+        return values
 
 
 class FakeChroma:
@@ -39,13 +58,18 @@ class FakeChroma:
         units: list[Any],
         embeddings: list[list[float]],
         chunks: dict[str, Any],
+        progress=None,
     ) -> None:
         for unit, vector in zip(units, embeddings, strict=True):
             self.records[unit.id] = (vector, unit.source_chunk_ids[0])
+        if progress is not None and units:
+            progress(len(units), len(units))
 
-    def delete_search_units(self, unit_ids: list[str]) -> None:
+    def delete_search_units(self, unit_ids: list[str], progress=None) -> None:
         for unit_id in unit_ids:
             self.records.pop(unit_id, None)
+        if progress is not None and unit_ids:
+            progress(len(unit_ids), len(unit_ids))
 
     def query_embedding(
         self, embedding: list[float], limit: int
