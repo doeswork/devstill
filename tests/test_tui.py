@@ -9,7 +9,7 @@ from textual.widgets import Input, OptionList, ProgressBar, Static
 from devstill.config import DevstillConfig, load_config
 from devstill.credentials import saved_api_key, store_api_key
 from devstill.models import IndexFileProgress, IndexProgress
-from devstill.tui import DevstillApp, SessionEntry
+from devstill.tui import DevstillApp, PromptTextArea, SessionEntry
 from devstill.tui_agent import AgentSetupScreen
 from devstill.tui_commands import TuiCommandKind, TuiPreview, TuiResult
 
@@ -59,7 +59,7 @@ def test_tui_layout_autofocus_and_responsive_sidebar(tmp_path: Path) -> None:
         app = build_app(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
-            assert app.query_one("#command-input", Input).has_focus
+            assert app.query_one("#command-input", PromptTextArea).has_focus
             assert app.query_one("#session-feed")
             assert app.query_one("#sidebar").display
             assert app.query_one("#workspace-status").content
@@ -99,8 +99,8 @@ def test_tui_warms_retrieval_runtime_on_startup(tmp_path: Path) -> None:
                 "encoder warm"
                 in str(app.query_one("#activity", Static).content).lower()
             )
-            assert app.query_one("#command-input", Input).has_focus
-            assert not app.query_one("#command-input", Input).disabled
+            assert app.query_one("#command-input", PromptTextArea).has_focus
+            assert not app.query_one("#command-input", PromptTextArea).disabled
 
     asyncio.run(scenario())
 
@@ -110,7 +110,7 @@ def test_ctrl_c_exits_even_when_prompt_is_focused(tmp_path: Path) -> None:
         workflow = FakeWorkflow()
         app = build_app(tmp_path, workflow)
         async with app.run_test(size=(120, 40)) as pilot:
-            assert app.query_one("#command-input", Input).has_focus
+            assert app.query_one("#command-input", PromptTextArea).has_focus
             assert app.is_running
             await pilot.press("ctrl+c")
             await pilot.pause()
@@ -125,9 +125,9 @@ def test_ctrl_c_copies_prompt_selection_without_exiting(tmp_path: Path) -> None:
         workflow = FakeWorkflow()
         app = build_app(tmp_path, workflow)
         async with app.run_test(size=(120, 40)) as pilot:
-            prompt = app.query_one("#command-input", Input)
-            prompt.value = "copy this"
-            prompt.select_all()
+            prompt = app.query_one("#command-input", PromptTextArea)
+            prompt.text = "copy this"
+            prompt.action_select_all()
 
             await pilot.press("ctrl+c")
             await pilot.pause()
@@ -150,16 +150,39 @@ def test_plain_text_runs_local_search_and_history(tmp_path: Path) -> None:
             assert workflow.calls[0].kind is TuiCommandKind.SEARCH
             assert workflow.calls[0].query == "login"
             assert len(app.query(SessionEntry)) == 1
-            assert app.query_one("#command-input", Input).has_focus
+            assert app.query_one("#command-input", PromptTextArea).has_focus
 
             await pilot.press(*list("register"), "enter")
             await wait_until_idle(app, pilot)
             await pilot.press("up")
-            assert app.query_one("#command-input", Input).value == "register"
+            assert app.query_one("#command-input", PromptTextArea).text == "register"
             await pilot.press("up")
-            assert app.query_one("#command-input", Input).value == "login"
+            assert app.query_one("#command-input", PromptTextArea).text == "login"
             await pilot.press("down")
-            assert app.query_one("#command-input", Input).value == "register"
+            assert app.query_one("#command-input", PromptTextArea).text == "register"
+
+    asyncio.run(scenario())
+
+
+def test_multiline_prompt_alignment_growth_and_shift_enter(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        workflow = FakeWorkflow()
+        app = build_app(tmp_path, workflow)
+        async with app.run_test(size=(120, 40)) as pilot:
+            prompt = app.query_one("#command-input", PromptTextArea)
+            marker = app.query_one("#prompt-marker", Static)
+            assert marker.content_region.y == prompt.content_region.y
+
+            await pilot.press(*list("first line"), "shift+enter", *list("second line"))
+            await pilot.pause()
+            assert prompt.text == "first line\nsecond line"
+            assert prompt.size.height == 2
+            assert marker.content_region.y == prompt.content_region.y
+
+            await pilot.press("enter")
+            await wait_until_idle(app, pilot)
+            assert len(workflow.calls) == 1
+            assert workflow.calls[0].query == "first line\nsecond line"
 
     asyncio.run(scenario())
 
@@ -177,10 +200,10 @@ def test_tab_completes_slash_palette_without_execution(tmp_path: Path) -> None:
             assert palette.get_option_at_index(0).id == "/context "
             await pilot.press("tab")
             await pilot.pause()
-            assert app.query_one("#command-input", Input).value == "/context "
+            assert app.query_one("#command-input", PromptTextArea).text == "/context "
             assert workflow.calls == []
 
-            app.query_one("#command-input", Input).value = "/a"
+            app.query_one("#command-input", PromptTextArea).text = "/a"
             await pilot.pause()
             assert palette.option_count == 3
             await pilot.press("escape")
@@ -441,8 +464,8 @@ def test_sidebar_selection_prefills_and_exact_command_executes(tmp_path: Path) -
             sidebar.focus()
             await pilot.press("enter")
             await pilot.pause()
-            prompt = app.query_one("#command-input", Input)
-            assert prompt.value == "/files"
+            prompt = app.query_one("#command-input", PromptTextArea)
+            assert prompt.text == "/files"
             assert prompt.has_focus
             assert workflow.calls == []
 
@@ -479,13 +502,13 @@ def test_worker_failure_restores_prompt_and_reports_error(tmp_path: Path) -> Non
         async with app.run_test(size=(120, 40)) as pilot:
             await app.submit_text("/agent test")
             assert app._busy
-            assert app.query_one("#command-input", Input).disabled
+            assert app.query_one("#command-input", PromptTextArea).disabled
             await wait_until_idle(app, pilot)
             entries = list(app.query(SessionEntry))
             assert len(entries) == 1
             assert entries[0].error
-            assert not app.query_one("#command-input", Input).disabled
-            assert app.query_one("#command-input", Input).has_focus
+            assert not app.query_one("#command-input", PromptTextArea).disabled
+            assert app.query_one("#command-input", PromptTextArea).has_focus
 
     asyncio.run(scenario())
 

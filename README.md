@@ -654,6 +654,10 @@ commands and also prefills the prompt. Search runs locally; only `/plan` and
 `/agent test` contact the configured endpoint. Context and plan commands keep the
 same `.context.*` and `.plan.*` artifact behavior as the CLI.
 
+The prompt is a compact multiline editor aligned with its leading marker. `Enter`
+submits and `Shift+Enter` inserts a line break. It grows from one to six visible
+rows, then scrolls longer requests internally.
+
 `/agent configure` opens an in-app setup form for the OpenAI-compatible base URL,
 model, token, environment-variable name, timeout, and output-token limit. **Save &
 Test** remembers the settings and immediately verifies the connection. Remembered
@@ -662,12 +666,12 @@ outside repository removal; use **Forget saved token** to remove one. Setting th
 configured API-key environment variable overrides the remembered value for that
 process.
 
-Keyboard shortcuts are `Ctrl+C` or `Ctrl+Q` to quit, `Ctrl+L` to clear the session,
-`Ctrl+B` to toggle the responsive sidebar, and `Ctrl+R` to refresh status. The
-high-priority `Ctrl+C` binding works while the prompt is focused in VS Code's
-integrated terminal; use `Ctrl+Shift+C` for the terminal's copy action. Up and Down
-recall commands when the slash palette is closed. The feed retains the latest 50
-commands in memory and is not persisted.
+Keyboard shortcuts are `Ctrl+Q` to quit, `Ctrl+L` to clear the session, `Ctrl+B` to
+toggle the responsive sidebar, and `Ctrl+R` to refresh status. `Ctrl+C` copies when
+text is selected and exits when there is no selection. Up and Down recall commands
+for a single-line prompt when the slash palette is closed; multiline prompts retain
+normal vertical cursor movement. The feed keeps the latest 50 commands in memory
+and is not persisted.
 
 During `/index`, the composer displays the active discovery, reconciliation,
 parsing, embedding, or persistence stage. Stages with measurable work show a

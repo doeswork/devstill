@@ -9,6 +9,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.message import Message
 from textual.widgets import (
     Footer,
     Header,
@@ -18,6 +19,7 @@ from textual.widgets import (
     OptionList,
     ProgressBar,
     Static,
+    TextArea,
 )
 from textual.widgets.option_list import Option
 from textual.worker import Worker, WorkerState
@@ -79,6 +81,27 @@ class SessionEntry(Vertical):
             f"[b]{marker}[/b]  [dim]{escape(self.command)}[/dim]"
         )
         self.query_one(".entry-body", Markdown).update(markdown)
+
+
+class PromptTextArea(TextArea):
+    """Compact multiline prompt where Enter submits and Shift+Enter adds a line."""
+
+    BINDINGS: ClassVar = [
+        Binding("enter", "submit", show=False, priority=True),
+        Binding("shift+enter", "newline", show=False, priority=True),
+    ]
+
+    class Submitted(Message):
+        def __init__(self, prompt: PromptTextArea) -> None:
+            super().__init__()
+            self.prompt = prompt
+
+    def action_submit(self) -> None:
+        self.post_message(self.Submitted(self))
+
+    def action_newline(self) -> None:
+        start, end = self.selection
+        self.replace("\n", start, end, maintain_selection_offset=False)
 
 
 class DevstillApp(App[None]):
@@ -168,28 +191,34 @@ class DevstillApp(App[None]):
     }
 
     #prompt-row {
-        height: 3;
-        align-vertical: middle;
+        height: auto;
+        min-height: 1;
+        max-height: 6;
+        align-vertical: top;
     }
 
     #prompt-marker {
         width: 3;
-        height: 3;
-        padding: 1 0 0 1;
+        height: 1;
+        padding: 0 0 0 1;
         color: $accent;
         text-style: bold;
     }
 
     #command-input {
         width: 1fr;
+        height: 1;
+        min-height: 1;
+        max-height: 6;
         border: none;
+        padding: 0;
         background: transparent;
     }
 
     #busy {
         display: none;
         width: 5;
-        height: 3;
+        height: 1;
     }
 
     #activity {
@@ -286,10 +315,11 @@ class DevstillApp(App[None]):
                     yield OptionList(id="command-palette", compact=True)
                     with Horizontal(id="prompt-row"):
                         yield Static("❯", id="prompt-marker")
-                        yield Input(
+                        yield PromptTextArea(
                             placeholder="Search the repository or type / for commands",
                             id="command-input",
-                            select_on_focus=False,
+                            soft_wrap=True,
+                            compact=True,
                         )
                         yield LoadingIndicator(id="busy")
                     yield Static("", id="file-progress")
@@ -319,7 +349,7 @@ class DevstillApp(App[None]):
         self.query_one("#busy", LoadingIndicator).display = False
         self.refresh_repository_status()
         self._apply_sidebar_visibility(self.size.width)
-        self.query_one("#command-input", Input).focus()
+        self.query_one("#command-input", PromptTextArea).focus()
         warm = getattr(self.workflow, "warm", None)
         if callable(warm):
             self._start_warmup(warm)
@@ -383,13 +413,16 @@ class DevstillApp(App[None]):
             "[b]CLIPBOARD[/b]\n"
             "Select + Ctrl+C: copy\n"
             "Ctrl+Shift+V: paste\n\n"
+            "[b]COMPOSER[/b]\n"
+            "Enter: send\n"
+            "Shift+Enter: new line\n\n"
             "[dim]Ctrl+B sidebar\nCtrl+L clear[/dim]"
         )
 
     def action_copy_or_quit(self) -> None:
         """Copy selected TUI text, or retain Ctrl+C's interrupt-to-exit behavior."""
         focused = self.focused
-        if isinstance(focused, Input) and focused.selected_text:
+        if isinstance(focused, (Input, TextArea)) and focused.selected_text:
             self.copy_to_clipboard(focused.selected_text)
             self.query_one("#activity", Static).update("Selected text copied")
             return
@@ -400,10 +433,12 @@ class DevstillApp(App[None]):
             return
         self.exit()
 
-    def on_input_changed(self, event: Input.Changed) -> None:
-        if event.input.id != "command-input":
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        if event.text_area.id != "command-input":
             return
-        self._update_palette(event.value)
+        prompt = event.text_area
+        prompt.styles.height = max(1, min(6, prompt.text.count("\n") + 1))
+        self._update_palette(prompt.text)
 
     def _update_palette(self, value: str) -> None:
         palette = self.query_one("#command-palette", OptionList)
@@ -426,10 +461,13 @@ class DevstillApp(App[None]):
         palette.highlighted = None
         self._palette_specs = []
 
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id != "command-input" or self._busy:
+    async def on_prompt_text_area_submitted(
+        self,
+        event: PromptTextArea.Submitted,
+    ) -> None:
+        if event.prompt.id != "command-input" or self._busy:
             return
-        value = event.value.strip()
+        value = event.prompt.text.strip()
         palette = self.query_one("#command-palette", OptionList)
         exact_immediate = any(
             not spec.template.endswith(" ") and spec.template == value
@@ -443,7 +481,7 @@ class DevstillApp(App[None]):
         await self.submit_text(value)
 
     async def submit_text(self, value: str) -> None:
-        prompt = self.query_one("#command-input", Input)
+        prompt = self.query_one("#command-input", PromptTextArea)
         if self._busy:
             self.query_one("#activity", Static).update(
                 "Wait for the current command to finish"
@@ -456,12 +494,12 @@ class DevstillApp(App[None]):
             command = parse_tui_command(value)
         except ValueError as exc:
             await self._append_entry(value, str(exc), error=True)
-            prompt.value = ""
+            prompt.text = ""
             prompt.focus()
             return
 
         self._remember(value)
-        prompt.value = ""
+        prompt.text = ""
         if command.kind is TuiCommandKind.HELP:
             await self._append_entry(value, help_markdown())
             prompt.focus()
@@ -488,7 +526,7 @@ class DevstillApp(App[None]):
         self,
         result: AgentSetupResult | None,
     ) -> None:
-        prompt = self.query_one("#command-input", Input)
+        prompt = self.query_one("#command-input", PromptTextArea)
         if result is None:
             prompt.focus()
             return
@@ -575,7 +613,7 @@ class DevstillApp(App[None]):
         self._busy = True
         self._active_command = command
         self._live_entry = None
-        prompt = self.query_one("#command-input", Input)
+        prompt = self.query_one("#command-input", PromptTextArea)
         prompt.disabled = True
         self.query_one("#busy", LoadingIndicator).display = True
         file_progress = self.query_one("#file-progress", Static)
@@ -596,7 +634,7 @@ class DevstillApp(App[None]):
     def _start_warmup(self, warm: object) -> None:
         self._busy = True
         self._active_command = None
-        prompt = self.query_one("#command-input", Input)
+        prompt = self.query_one("#command-input", PromptTextArea)
         prompt.disabled = True
         self.query_one("#busy", LoadingIndicator).display = True
         self.query_one("#activity", Static).update(
@@ -724,7 +762,7 @@ class DevstillApp(App[None]):
         self._active_worker = None
         self._active_command = None
         self._live_entry = None
-        prompt = self.query_one("#command-input", Input)
+        prompt = self.query_one("#command-input", PromptTextArea)
         prompt.disabled = False
         self.query_one("#busy", LoadingIndicator).display = False
         file_progress = self.query_one("#file-progress", Static)
@@ -776,12 +814,12 @@ class DevstillApp(App[None]):
             if self._history_index == len(self._history)
             else self._history[self._history_index]
         )
-        prompt = self.query_one("#command-input", Input)
-        prompt.value = value
-        prompt.cursor_position = len(value)
+        prompt = self.query_one("#command-input", PromptTextArea)
+        prompt.text = value
+        prompt.cursor_location = prompt.document.end
 
     def on_key(self, event: events.Key) -> None:
-        prompt = self.query_one("#command-input", Input)
+        prompt = self.query_one("#command-input", PromptTextArea)
         if not prompt.has_focus or self._busy:
             return
         palette = self.query_one("#command-palette", OptionList)
@@ -802,10 +840,11 @@ class DevstillApp(App[None]):
                 palette.action_cursor_down()
             event.stop().prevent_default()
             return
-        if event.key == "up" and not palette.has_class("visible"):
+        single_line = "\n" not in prompt.text
+        if event.key == "up" and not palette.has_class("visible") and single_line:
             self._history_move(-1)
             event.stop().prevent_default()
-        elif event.key == "down" and not palette.has_class("visible"):
+        elif event.key == "down" and not palette.has_class("visible") and single_line:
             self._history_move(1)
             event.stop().prevent_default()
 
@@ -816,15 +855,15 @@ class DevstillApp(App[None]):
             self._prefill(event.option_id)
 
     def _prefill(self, value: str) -> None:
-        prompt = self.query_one("#command-input", Input)
-        prompt.value = value
-        prompt.cursor_position = len(value)
+        prompt = self.query_one("#command-input", PromptTextArea)
+        prompt.text = value
+        prompt.cursor_location = prompt.document.end
         self._hide_palette()
         prompt.focus()
 
     async def action_clear_feed(self) -> None:
         await self.clear_feed()
-        self.query_one("#command-input", Input).focus()
+        self.query_one("#command-input", PromptTextArea).focus()
 
     def action_toggle_sidebar(self) -> None:
         sidebar = self.query_one("#sidebar", Vertical)

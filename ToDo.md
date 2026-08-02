@@ -25,6 +25,7 @@ We need to include other major coding laguanges like rust, ruby, go, sql, etc to
 - Successful plans overwrite `.devstill/.plan.md` and `.devstill/.plan.json`; validation failures preserve prior artifacts and receive at most one repair request.
 - Agent HTTP attempts append sanitized diagnostics and complete raw response bodies to `.devstill/logs/agent.jsonl`; API keys and transmitted source content are never logged.
 - Running `devstill` now opens a prompt-focused Textual workspace with a scrollable session feed, responsive command sidebar, slash-command completion, and command history.
+- The TUI prompt is an aligned multiline composer: Enter submits, Shift+Enter inserts a line break, and the editor grows to six rows before scrolling.
 - Tab completes the highlighted slash-command suggestion, and `/index` displays its current stage plus determinate current/total progress when available.
 - `Ctrl+C` copies selected TUI text and exits when nothing is selected; `Ctrl+Q` remains an unconditional quit binding.
 - The TUI opens Chroma and warms one shared query encoder during startup, then reuses both across search, context, plan, and index commands; the sidebar exposes cold/loading/warm state and shutdown releases the session cache.

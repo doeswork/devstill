@@ -252,6 +252,7 @@ def help_markdown() -> str:
             "",
             "Select text and press `Ctrl+C` to copy it. With no selection, `Ctrl+C` exits.",
             "Use your terminal's `Ctrl+Shift+V` or right-click Paste for external clipboard text.",
+            "The TUI composer sends with `Enter` and inserts a line break with `Shift+Enter`.",
         ]
     )
     return "\n".join(lines)
