@@ -165,6 +165,32 @@ def test_javascript_syntax_and_encoding_errors(tmp_path: Path) -> None:
     assert "UTF-8" in result.errors[0].message
 
 
+@pytest.mark.parametrize("label", ["Save & Send", "Privacy & Safety"])
+def test_tsx_visible_ampersand_recovers_to_exact_bounded_fallback(
+    tmp_path: Path, label: str
+) -> None:
+    path = tmp_path / "Page.tsx"
+    source = f"export function Page() {{ return <button>{label}</button> }}\n"
+    path.write_text(source, encoding="utf-8")
+
+    result = parse_source_file(path, tmp_path)
+
+    assert result.errors
+    assert result.quality is not None
+    assert result.quality.status == "MEH"
+    assert path.read_text(encoding="utf-8") == source
+    assert result.chunks[0].code == source
+    searchable = [
+        chunk
+        for chunk in result.chunks
+        if chunk.parser_metadata.get("searchable", True)
+    ]
+    assert [chunk.code for chunk in searchable] == [source]
+    assert searchable[0].parser_metadata["structural_fallback"] == (
+        "javascript_tree_sitter"
+    )
+
+
 def test_entrypoint_and_default_export_expressions_are_searchable(
     tmp_path: Path,
 ) -> None:

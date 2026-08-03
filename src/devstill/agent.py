@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Literal, Self
 from uuid import uuid4
 
 import httpx
@@ -148,7 +148,9 @@ class AgentClient:
         base_entry = {
             "request_id": request_id,
             "attempt": attempt,
+            "fallback_attempts": attempt - 1,
             "mode": mode,
+            "reasoning_mode": ("off" if "chat_template_kwargs" in payload else "auto"),
             "schema_name": (
                 payload.get("response_format", {}).get("json_schema", {}).get("name")
             ),
@@ -175,11 +177,20 @@ class AgentClient:
             response_body: Any = response.json()
         except ValueError:
             response_body = response.text
+        finish_reason: Any = None
+        usage: Any = None
+        if isinstance(response_body, dict):
+            usage = response_body.get("usage")
+            choices = response_body.get("choices")
+            if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                finish_reason = choices[0].get("finish_reason")
         self._write_diagnostic(
             {
                 **base_entry,
                 "elapsed_seconds": round(time.monotonic() - started, 3),
                 "status_code": response.status_code,
+                "finish_reason": finish_reason,
+                "usage": usage,
                 "response": response_body,
             }
         )
@@ -191,30 +202,51 @@ class AgentClient:
         return AgentError(message)
 
     @staticmethod
-    def _schema_unsupported(response: httpx.Response) -> bool:
+    def _unsupported_feature(
+        response: httpx.Response,
+        payload: dict[str, Any],
+    ) -> Literal["reasoning", "schema"] | None:
         if response.status_code not in {400, 404, 415, 422, 501}:
-            return False
+            return None
         body = response.text.casefold()
-        return any(
+        if "chat_template_kwargs" in payload and any(
             marker in body
-            for marker in (
-                "response_format",
-                "json_schema",
-                "structured output",
-                "unknown field",
-                "unsupported",
-            )
-        )
+            for marker in ("chat_template_kwargs", "enable_thinking", "thinking")
+        ):
+            return "reasoning"
+        if "response_format" in payload and any(
+            marker in body
+            for marker in ("response_format", "json_schema", "structured output")
+        ):
+            return "schema"
+        if any(marker in body for marker in ("unknown field", "unsupported")):
+            if "chat_template_kwargs" in payload:
+                return "reasoning"
+            if "response_format" in payload:
+                return "schema"
+        return None
 
     @staticmethod
-    def _content(response: httpx.Response) -> str:
+    def _content(response: httpx.Response, max_output_tokens: int) -> str:
         try:
             payload = response.json()
-            content = payload["choices"][0]["message"]["content"]
+            choice = payload["choices"][0]
+            content = choice["message"]["content"]
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise AgentError(
                 "agent response did not use the Chat Completions shape"
             ) from exc
+        if choice.get("finish_reason") == "length":
+            completion_tokens = payload.get("usage", {}).get("completion_tokens")
+            usage = (
+                f" ({completion_tokens:,} completion tokens reported)"
+                if isinstance(completion_tokens, int)
+                else ""
+            )
+            raise AgentError(
+                f"agent output reached the {max_output_tokens:,}-token limit{usage} "
+                "before returning a complete response"
+            )
         if isinstance(content, str) and content.strip():
             return content
         if isinstance(content, list):
@@ -234,12 +266,23 @@ class AgentClient:
         *,
         schema: dict[str, Any] | None = None,
         schema_name: str = "devstill_output",
+        max_output_tokens: int | None = None,
+        reasoning: Literal["auto", "off"] = "auto",
     ) -> str:
+        token_limit = (
+            self.config.max_output_tokens
+            if max_output_tokens is None
+            else max_output_tokens
+        )
+        if not 64 <= token_limit <= 65536:
+            raise ValueError("max_output_tokens must be between 64 and 65536")
         payload: dict[str, Any] = {
             "model": self.config.model,
             "messages": messages,
-            "max_tokens": self.config.max_output_tokens,
+            "max_tokens": token_limit,
         }
+        if reasoning == "off":
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
         if schema is not None:
             payload["response_format"] = {
                 "type": "json_schema",
@@ -251,20 +294,30 @@ class AgentClient:
             }
         request_id = uuid4().hex
         try:
-            response = self._post_logged(
-                payload,
-                request_id=request_id,
-                attempt=1,
-                mode="json_schema" if schema is not None else "plain",
-            )
-            if schema is not None and self._schema_unsupported(response):
-                payload.pop("response_format", None)
+            attempt = 1
+            while True:
+                features = []
+                if "response_format" in payload:
+                    features.append("json_schema")
+                if "chat_template_kwargs" in payload:
+                    features.append("reasoning_off")
+                mode = "+".join(features) if features else "plain"
+                if attempt > 1:
+                    mode = f"compatibility_fallback:{mode}"
                 response = self._post_logged(
                     payload,
                     request_id=request_id,
-                    attempt=2,
-                    mode="schema_fallback",
+                    attempt=attempt,
+                    mode=mode,
                 )
+                unsupported = self._unsupported_feature(response, payload)
+                if unsupported is None or attempt >= 3:
+                    break
+                if unsupported == "reasoning":
+                    payload.pop("chat_template_kwargs", None)
+                else:
+                    payload.pop("response_format", None)
+                attempt += 1
             response.raise_for_status()
         except AgentError as exc:
             raise self._diagnostic_error(str(exc)) from exc
@@ -283,7 +336,7 @@ class AgentClient:
                 f"could not reach agent endpoint: {exc}"
             ) from exc
         try:
-            return self._content(response)
+            return self._content(response, token_limit)
         except AgentError as exc:
             raise self._diagnostic_error(str(exc)) from exc
 
@@ -302,7 +355,12 @@ class AgentClient:
             {"role": "user", "content": 'Return {"status":"ok"}.'},
         ]
         started = time.monotonic()
-        content = self.chat(messages, schema=schema, schema_name="devstill_agent_test")
+        content = self.chat(
+            messages,
+            schema=schema,
+            schema_name="devstill_agent_test",
+            max_output_tokens=256,
+        )
         try:
             ping = AgentPing.model_validate(extract_json_object(content))
         except (TypeError, ValueError) as exc:

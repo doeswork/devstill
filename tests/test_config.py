@@ -24,6 +24,14 @@ def test_config_upward_discovery_and_strict_validation(tmp_path) -> None:
     assert config.llm.api_key_env == "DEVSTILL_AGENT_API_KEY"
     assert config.llm.timeout_seconds == 300
     assert config.llm.max_output_tokens == 2048
+    assert config.llm.planning_max_output_tokens == 6144
+    assert config.llm.planning_reasoning == "off"
+    assert config.executor.enabled is True
+    assert config.executor.backend == "pi"
+    assert config.executor.timeout_seconds == 300
+    assert config.executor.max_output_tokens == 49152
+    assert config.executor.max_tool_calls == 16
+    assert config.executor.validation_commands == []
 
     raw = json.loads(config_path.read_text(encoding="utf-8"))
     raw["unexpected"] = True

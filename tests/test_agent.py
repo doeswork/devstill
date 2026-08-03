@@ -46,6 +46,8 @@ def test_llm_config_defaults_and_url_safety() -> None:
     assert legacy.api_key_env == "DEVSTILL_AGENT_API_KEY"
     assert legacy.timeout_seconds == 300
     assert legacy.max_output_tokens == 2048
+    assert legacy.planning_max_output_tokens == 6144
+    assert legacy.planning_reasoning == "off"
 
     for url in (
         "ftp://localhost/v1",
@@ -133,6 +135,27 @@ def test_chat_uses_strict_schema_auth_and_configured_limits(monkeypatch) -> None
     http.close()
 
 
+def test_chat_supports_planning_limit_and_reasoning_off() -> None:
+    payloads: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        return completion('{"status":"ok"}')
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    client = AgentClient(llm_config(), client=http)
+    client.chat(
+        [],
+        schema={"type": "object"},
+        max_output_tokens=6144,
+        reasoning="off",
+    )
+
+    assert payloads[0]["max_tokens"] == 6144
+    assert payloads[0]["chat_template_kwargs"] == {"enable_thinking": False}
+    http.close()
+
+
 def test_chat_uses_remembered_token_when_environment_is_unset() -> None:
     requests: list[httpx.Request] = []
 
@@ -164,6 +187,108 @@ def test_chat_retries_without_response_format_for_compatible_server() -> None:
     assert client.chat([], schema={"type": "object"}) == '{"status":"ok"}'
     assert "response_format" in payloads[0]
     assert "response_format" not in payloads[1]
+    http.close()
+
+
+def test_chat_retries_without_reasoning_extension_for_compatible_server() -> None:
+    payloads: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        if len(payloads) == 1:
+            return httpx.Response(400, text="unknown field chat_template_kwargs")
+        return completion('{"status":"ok"}')
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    client = AgentClient(llm_config(), client=http)
+    assert (
+        client.chat([], schema={"type": "object"}, reasoning="off") == '{"status":"ok"}'
+    )
+    assert "chat_template_kwargs" in payloads[0]
+    assert "chat_template_kwargs" not in payloads[1]
+    assert "response_format" in payloads[1]
+    http.close()
+
+
+def test_agent_log_records_reasoning_compatibility_fallback(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        if "chat_template_kwargs" in payload:
+            return httpx.Response(400, text="unknown field chat_template_kwargs")
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"content": '{"status":"ok"}'},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"completion_tokens": 8},
+            },
+        )
+
+    log_path = tmp_path / "agent.jsonl"
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    AgentClient(llm_config(), client=http, log_path=log_path).chat(
+        [],
+        schema={"type": "object"},
+        reasoning="off",
+        max_output_tokens=6144,
+    )
+
+    records = [
+        json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["fallback_attempts"] for record in records] == [0, 1]
+    assert [record["reasoning_mode"] for record in records] == ["off", "auto"]
+    assert records[1]["max_tokens"] == 6144
+    assert records[1]["finish_reason"] == "stop"
+    assert records[1]["usage"] == {"completion_tokens": 8}
+    http.close()
+
+
+def test_chat_negotiates_reasoning_and_schema_with_three_attempt_cap() -> None:
+    payloads: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        if len(payloads) == 1:
+            return httpx.Response(400, text="unsupported response_format")
+        if len(payloads) == 2:
+            return httpx.Response(400, text="unsupported chat_template_kwargs")
+        return completion('{"status":"ok"}')
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    client = AgentClient(llm_config(), client=http)
+    assert (
+        client.chat([], schema={"type": "object"}, reasoning="off") == '{"status":"ok"}'
+    )
+    assert len(payloads) == 3
+    assert "response_format" in payloads[0]
+    assert "chat_template_kwargs" in payloads[0]
+    assert "response_format" not in payloads[1]
+    assert "chat_template_kwargs" in payloads[1]
+    assert "response_format" not in payloads[2]
+    assert "chat_template_kwargs" not in payloads[2]
+    http.close()
+
+
+@pytest.mark.parametrize("content", ["", '{"items":['])
+def test_chat_reports_truncated_empty_or_partial_content(content: str) -> None:
+    response = httpx.Response(
+        200,
+        json={
+            "choices": [{"message": {"content": content}, "finish_reason": "length"}],
+            "usage": {"completion_tokens": 6144},
+        },
+    )
+    http = httpx.Client(transport=httpx.MockTransport(lambda _request: response))
+    with pytest.raises(
+        AgentError,
+        match=r"6,144-token limit \(6,144 completion tokens reported\)",
+    ):
+        AgentClient(llm_config(), client=http).chat([], max_output_tokens=6144)
     http.close()
 
 
@@ -215,6 +340,20 @@ def test_chat_reports_timeout_and_agent_test_validates_output() -> None:
     bad_http.close()
 
 
+def test_agent_test_uses_small_general_output_limit() -> None:
+    payloads: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        return completion('{"status":"ok"}')
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    AgentClient(llm_config(max_output_tokens=8192), client=http).test()
+    assert payloads[0]["max_tokens"] == 256
+    assert "chat_template_kwargs" not in payloads[0]
+    http.close()
+
+
 def test_agent_diagnostic_log_preserves_raw_response_without_secret(
     monkeypatch,
     tmp_path: Path,
@@ -254,6 +393,11 @@ def test_agent_diagnostic_log_preserves_raw_response_without_secret(
     assert len(records) == 1
     assert records[0]["status_code"] == 200
     assert records[0]["schema_name"] == "diagnostic_test"
+    assert records[0]["max_tokens"] == 2048
+    assert records[0]["reasoning_mode"] == "auto"
+    assert records[0]["fallback_attempts"] == 0
+    assert records[0]["finish_reason"] == "length"
+    assert records[0]["usage"] == {"completion_tokens": 2048}
     assert records[0]["messages"] == [{"role": "user", "characters": 22}]
     assert records[0]["response"] == response_payload
     log_text = log_path.read_text(encoding="utf-8")

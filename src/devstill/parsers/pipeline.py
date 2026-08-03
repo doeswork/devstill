@@ -7,6 +7,10 @@ from devstill.content_policy import ContentDecision, classify_content
 from devstill.models import ChunkPolicy, FileQuality
 from devstill.parsers.base import ParseResult
 from devstill.parsers.bounded import bounded_chunks, chunk_line_count
+from devstill.parsers.plain_text import (
+    has_django_jinja_syntax,
+    parse_template_text,
+)
 from devstill.parsers.registry import FALLBACK_SPEC
 from devstill.paths import relative_repo_path
 
@@ -22,6 +26,7 @@ def _quality(
     disposition: str = "indexed",
     noisy: bool = False,
     reasons: list[str] | None = None,
+    recovered_fallback: str | None = None,
 ) -> FileQuality:
     searchable = [
         chunk
@@ -38,6 +43,14 @@ def _quality(
     )
     if disposition != "indexed":
         status = "SKIPPED"
+    elif recovered_fallback:
+        status = "MEH"
+        if recovered_fallback == "template_text":
+            all_reasons.append(
+                "structural parser failed; exact template-aware fallback used"
+            )
+        else:
+            all_reasons.append("structural parser failed; exact bounded fallback used")
     elif result.errors:
         status = "BAD"
     elif result.skipped or not result.chunks:
@@ -117,6 +130,35 @@ def parse_with_policy(
 
     active_spec = FALLBACK_SPEC if decision.noisy else spec
     result = active_spec.parse(path, repo_root)
+    recovery_parser: str | None = None
+    recovery_errors = False
+    if active_spec.structural and result.errors and not result.skipped:
+        primary_errors = list(result.errors)
+        try:
+            source = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            source = ""
+        if active_spec.language == "html" and has_django_jinja_syntax(source):
+            fallback = parse_template_text(path, repo_root)
+            recovery_parser = "template_text"
+        else:
+            fallback = FALLBACK_SPEC.parse(path, repo_root)
+            recovery_parser = FALLBACK_SPEC.name
+        recovery_errors = bool(fallback.errors) or fallback.skipped
+        result = ParseResult(
+            chunks=fallback.chunks,
+            errors=[*primary_errors, *fallback.errors],
+            skipped=fallback.skipped,
+            binary=fallback.binary,
+        )
+        for chunk in result.chunks:
+            chunk.parser_metadata.update(
+                {
+                    "fallback": chunk.parser_metadata.get("fallback", True),
+                    "structural_fallback": active_spec.name,
+                    "recovery_parser": recovery_parser,
+                }
+            )
     result.parser = active_spec.name
     chunks, boundary_errors, fallback_segments = bounded_chunks(result.chunks, policy)
     result.chunks = chunks
@@ -135,6 +177,19 @@ def parse_with_policy(
     if decision.noisy:
         for chunk in result.chunks:
             chunk.parser_metadata["noisy"] = True
+    searchable = [
+        chunk
+        for chunk in result.chunks
+        if chunk.parser_metadata.get("searchable", True)
+    ]
+    recovered_fallback = (
+        recovery_parser
+        if recovery_parser
+        and searchable
+        and not recovery_errors
+        and not boundary_errors
+        else None
+    )
     result.quality = _quality(
         relative,
         active_spec.name,
@@ -144,5 +199,6 @@ def parse_with_policy(
         category=decision.category,
         noisy=decision.noisy,
         reasons=[decision.reason] if decision.reason else None,
+        recovered_fallback=recovered_fallback,
     )
     return result

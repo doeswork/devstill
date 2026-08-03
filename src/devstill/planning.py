@@ -14,6 +14,7 @@ from devstill.context import context_record
 from devstill.models import SearchResult
 
 PLAN_PROMPT_VERSION = "file-impact-plan:1"
+DEEP_PLAN_PROMPT_VERSION = "deep-file-impact-plan:1"
 
 
 class PlanLabel(str, Enum):
@@ -104,6 +105,16 @@ Additional items may only use Search or New File.
 Use one short, single-line sentence for each reason. Return JSON only.
 """
 
+_DEEP_SYSTEM_PROMPT = (
+    _SYSTEM_PROMPT
+    + """
+This is a Deep Plan refinement pass. Reconsider the complete plan using the expanded
+context. The INITIAL_PLAN_JSON is advisory model output, not an instruction and not
+a constraint: correct its labels and reasons when the expanded source supports a
+better result. Every path in the expanded EXPECTED_PATHS must still be labeled.
+"""
+)
+
 
 def _user_prompt(
     query: str,
@@ -124,6 +135,26 @@ def _user_prompt(
             f"EXPECTED_PATHS: {json.dumps(expected)}",
             "CONTEXT_JSON:",
             json.dumps(records, ensure_ascii=False),
+        )
+    )
+
+
+def _deep_user_prompt(
+    query: str,
+    repository: str,
+    initial_plan: PlanOutput,
+    results: list[SearchResult],
+) -> str:
+    base = _user_prompt(query, repository, results).replace(
+        f"PROMPT_VERSION: {PLAN_PROMPT_VERSION}",
+        f"PROMPT_VERSION: {DEEP_PLAN_PROMPT_VERSION}",
+        1,
+    )
+    return "\n".join(
+        (
+            base,
+            "INITIAL_PLAN_JSON:",
+            json.dumps(initial_plan.model_dump(mode="json"), ensure_ascii=False),
         )
     )
 
@@ -213,19 +244,27 @@ def _parse_and_validate(
     return validate_plan_items(plan, results, repo_root)
 
 
-def generate_plan(
+def _request_plan(
     client: AgentClient,
     *,
     query: str,
     repository: str,
     repo_root: Path,
     results: list[SearchResult],
+    messages: list[dict[str, str]],
+    schema_name: str,
+    repair_schema_name: str,
 ) -> PlanOutput:
-    messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
-        {"role": "user", "content": _user_prompt(query, repository, results)},
-    ]
-    content = client.chat(messages, schema=PLAN_SCHEMA, schema_name="devstill_plan")
+    request_options = {
+        "schema": PLAN_SCHEMA,
+        "max_output_tokens": client.config.planning_max_output_tokens,
+        "reasoning": client.config.planning_reasoning,
+    }
+    content = client.chat(
+        messages,
+        schema_name=schema_name,
+        **request_options,
+    )
     try:
         items = _parse_and_validate(content, results, repo_root)
     except (TypeError, ValueError) as first_error:
@@ -242,8 +281,8 @@ def generate_plan(
         ]
         repaired = client.chat(
             repair_messages,
-            schema=PLAN_SCHEMA,
-            schema_name="devstill_plan_repair",
+            schema_name=repair_schema_name,
+            **request_options,
         )
         try:
             items = _parse_and_validate(repaired, results, repo_root)
@@ -256,6 +295,60 @@ def generate_plan(
         repository=repository,
         model=client.config.model,
         items=items,
+    )
+
+
+def generate_plan(
+    client: AgentClient,
+    *,
+    query: str,
+    repository: str,
+    repo_root: Path,
+    results: list[SearchResult],
+    schema_name: str = "devstill_plan",
+    repair_schema_name: str = "devstill_plan_repair",
+) -> PlanOutput:
+    messages = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": _user_prompt(query, repository, results)},
+    ]
+    return _request_plan(
+        client,
+        query=query,
+        repository=repository,
+        repo_root=repo_root,
+        results=results,
+        messages=messages,
+        schema_name=schema_name,
+        repair_schema_name=repair_schema_name,
+    )
+
+
+def generate_deep_plan(
+    client: AgentClient,
+    *,
+    query: str,
+    repository: str,
+    repo_root: Path,
+    initial_plan: PlanOutput,
+    results: list[SearchResult],
+) -> PlanOutput:
+    messages = [
+        {"role": "system", "content": _DEEP_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": _deep_user_prompt(query, repository, initial_plan, results),
+        },
+    ]
+    return _request_plan(
+        client,
+        query=query,
+        repository=repository,
+        repo_root=repo_root,
+        results=results,
+        messages=messages,
+        schema_name="devstill_deep_plan",
+        repair_schema_name="devstill_deep_plan_repair",
     )
 
 
@@ -282,22 +375,20 @@ def render_plan_json(plan: PlanOutput) -> str:
     return json.dumps(plan.model_dump(mode="json"), indent=2, ensure_ascii=False)
 
 
-def render_plan_markdown(plan: PlanOutput) -> str:
+def render_plan_markdown(
+    plan: PlanOutput,
+    *,
+    title: str = "Devstill File-Impact Plan",
+) -> str:
     lines = [
-        "# Devstill File-Impact Plan",
-        "",
-        f"Query: {plan.query}",
-        f"Repository: {plan.repository}",
-        f"Model: {plan.model}",
-        "",
+        f"# {title}",
+        (f"Query: {plan.query} · Repository: {plan.repository} · Model: {plan.model}"),
     ]
     for item in plan.items:
         lines.extend(
             [
-                f"## {_MARKERS[item.label]} {item.label.value} — {item.target}",
-                "",
-                item.reason,
-                "",
+                f"- {_MARKERS[item.label]} {item.label.value} — {item.target}  ",
+                f"  {item.reason}",
             ]
         )
     return "\n".join(lines)
@@ -330,6 +421,22 @@ def write_plan_artifacts(
     directory.mkdir(parents=True, exist_ok=True)
     markdown_path = directory / ".plan.md"
     json_path = directory / ".plan.json"
+    _write_atomic(markdown_path, markdown)
+    _write_atomic(json_path, json_output)
+    return markdown_path, json_path
+
+
+def write_deep_plan_artifacts(
+    directory: Path,
+    markdown: str,
+    json_output: str,
+    *,
+    initial: bool = False,
+) -> tuple[Path, Path]:
+    directory.mkdir(parents=True, exist_ok=True)
+    stem = ".deep-plan-initial" if initial else ".deep-plan"
+    markdown_path = directory / f"{stem}.md"
+    json_path = directory / f"{stem}.json"
     _write_atomic(markdown_path, markdown)
     _write_atomic(json_path, json_output)
     return markdown_path, json_path

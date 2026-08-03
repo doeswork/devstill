@@ -17,20 +17,38 @@ from devstill.config import (
     resolve_repo_root,
 )
 from devstill.context import (
+    DEEP_PLAN_MAX_CHUNKS,
+    DEEP_PLAN_MIN_CHUNKS,
+    PLAN_MAX_CHUNKS,
+    PLAN_MIN_CHUNKS,
+    planning_retrieval_limit,
     render_context_json,
     render_context_markdown,
+    select_adaptive_context_results,
     select_context_results,
     write_context_artifacts,
 )
 from devstill.credentials import api_key_source
+from devstill.deep_planning import run_deep_plan
 from devstill.embeddings import EmbeddingBackend
+from devstill.executor import (
+    PlanSource,
+    PreparedExecution,
+    RepositoryExecutor,
+    render_execution_markdown,
+    validate_execution_plan,
+    validate_reviewed_plan,
+)
 from devstill.git_files import discover_repository_inventory
 from devstill.indexer import RepositoryIndexer
 from devstill.models import FileQuality, IndexProgress, IndexSummary, SearchResult
 from devstill.planning import (
+    PlanLabel,
+    PlanOutput,
     generate_plan,
     render_plan_json,
     render_plan_markdown,
+    write_deep_plan_artifacts,
     write_plan_artifacts,
 )
 from devstill.search import HybridSearch
@@ -41,6 +59,8 @@ class TuiCommandKind(str, Enum):
     SEARCH = "search"
     CONTEXT = "context"
     PLAN = "plan"
+    DEEP_PLAN = "deep_plan"
+    EXECUTE = "execute"
     INDEX = "index"
     FILES = "files"
     AGENT = "agent"
@@ -75,6 +95,30 @@ COMMAND_SPECS = (
         "Classify file impact with the configured agent",
         TuiCommandKind.PLAN,
     ),
+    CommandSpec(
+        "/deep-plan ",
+        "Deep Plan",
+        "Refine file impact through a second retrieval pass",
+        TuiCommandKind.DEEP_PLAN,
+    ),
+    CommandSpec(
+        "/execute",
+        "Execute",
+        "Preview and approve the newest Plan with Pi",
+        TuiCommandKind.EXECUTE,
+    ),
+    CommandSpec(
+        "/execute plan",
+        "Execute Plan",
+        "Preview the ordinary Plan with Pi",
+        TuiCommandKind.EXECUTE,
+    ),
+    CommandSpec(
+        "/execute deep-plan",
+        "Execute Deep Plan",
+        "Preview the refined Deep Plan with Pi",
+        TuiCommandKind.EXECUTE,
+    ),
     CommandSpec("/index", "Index", "Update the repository index", TuiCommandKind.INDEX),
     CommandSpec("/files", "Files", "Inspect repository coverage", TuiCommandKind.FILES),
     CommandSpec("/agent", "Agent", "Show safe agent status", TuiCommandKind.AGENT),
@@ -101,17 +145,29 @@ class TuiCommand:
     kind: TuiCommandKind
     raw: str
     query: str = ""
+    instruction: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class TuiExecutionOffer:
+    source: PlanSource
+    query: str
+    unresolved_searches: int = 0
+    plan: PlanOutput | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class TuiResult:
     title: str
     markdown: str
+    prepared_execution: PreparedExecution | None = None
+    execution_offer: TuiExecutionOffer | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class TuiPreview:
     markdown: str
+    status: str = "Retrieved files are ready; waiting for the agent"
 
 
 ProgressUpdate = str | IndexProgress | TuiPreview
@@ -194,15 +250,21 @@ def parse_tui_command(value: str) -> TuiCommand:
         "/?": "/help",
     }
     name = aliases.get(name, name)
-    if name in {"/search", "/context", "/plan"}:
+    if name in {"/search", "/context", "/plan", "/deep-plan"}:
         if not query:
             raise ValueError(f"{name} requires a query.")
         kind = {
             "/search": TuiCommandKind.SEARCH,
             "/context": TuiCommandKind.CONTEXT,
             "/plan": TuiCommandKind.PLAN,
+            "/deep-plan": TuiCommandKind.DEEP_PLAN,
         }[name]
         return TuiCommand(kind, raw, query)
+    if name == "/execute":
+        source = query.casefold()
+        if source not in {"", "plan", "deep-plan"}:
+            raise ValueError("/execute accepts `plan` or `deep-plan`.")
+        return TuiCommand(TuiCommandKind.EXECUTE, raw, source)
     if name == "/agent":
         if not query:
             return TuiCommand(TuiCommandKind.AGENT, raw)
@@ -245,7 +307,7 @@ def help_markdown() -> str:
     lines.extend(
         [
             "",
-            "Plain text runs local hybrid search. Only `/plan` and `/agent test` use the network.",
+            "Plain text runs local hybrid search. `/plan`, `/deep-plan`, `/execute`, and `/agent test` use the configured model.",
             "Advanced flags, rebuilds, configuration, and removal remain available in the CLI.",
             "",
             "## Clipboard",
@@ -267,9 +329,9 @@ def _safe_fence(code: str) -> str:
 
 
 def render_search_markdown(results: list[SearchResult], query: str) -> str:
-    lines = ["# Search", "", f"Query: {query}", ""]
+    lines = ["# Search", f"Query: {query}"]
     if not results:
-        lines.extend(["No relevant source found.", ""])
+        lines.append("No relevant source found.")
         return "\n".join(lines)
     for position, result in enumerate(results, start=1):
         chunk = result.chunk
@@ -279,15 +341,11 @@ def render_search_markdown(results: list[SearchResult], query: str) -> str:
             [
                 (
                     f"## {position}. {chunk.path}:{chunk.start_line}-{chunk.end_line} "
-                    f"— {symbol} ({chunk.kind})"
+                    f"— {symbol} ({chunk.kind}) — score {result.final_score:.4f}"
                 ),
-                "",
-                f"Score: `{result.final_score:.4f}`",
-                "",
                 f"{fence}{chunk.language}",
                 chunk.code,
                 fence,
-                "",
             ]
         )
     return "\n".join(lines)
@@ -299,7 +357,6 @@ def render_index_markdown(
 ) -> str:
     lines = [
         "# Index updated",
-        "",
         f"- Discovered files: **{summary.discovered_files}**",
         f"- Unchanged files: **{summary.unchanged_files}**",
         f"- Parsed files: **{summary.parsed_files}**",
@@ -318,7 +375,7 @@ def render_index_markdown(
         items = [item for item in indexed_quality if item.status == status]
         if not items:
             continue
-        lines.extend(["", f"## {marker} {status} files ({len(items)})", ""])
+        lines.append(f"## {marker} {status} files ({len(items)})")
         for item in items:
             reasons = "; ".join(item.reasons) or "No reason recorded."
             lines.append(f"- `{item.path}` — {reasons}")
@@ -328,6 +385,8 @@ def render_index_markdown(
 def render_plan_preview_markdown(
     results: list[SearchResult],
     query: str,
+    *,
+    title: str = "Retrieved plan context",
 ) -> str:
     grouped: dict[str, list[str]] = {}
     for result in results:
@@ -337,21 +396,58 @@ def render_plan_preview_markdown(
         if symbol and symbol not in symbols:
             symbols.append(symbol)
     lines = [
-        "# Retrieved plan context",
-        "",
+        f"# {title}",
         f"Query: {query}",
-        "",
         "These files were retrieved locally. Waiting for the agent to classify them.",
-        "",
     ]
     if not grouped:
-        lines.extend(["No source files were retrieved.", ""])
+        lines.append("No source files were retrieved.")
         return "\n".join(lines)
     for path, symbols in grouped.items():
-        lines.extend([f"## ⚪ Pending — {path}", ""])
+        line = f"- ⚪ Pending — {path}"
         if symbols:
             rendered = ", ".join(f"`{symbol}`" for symbol in symbols)
-            lines.extend([f"Retrieved chunks: {rendered}", ""])
+            line += f" — Retrieved chunks: {rendered}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def render_deep_plan_context_markdown(
+    initial_plan: PlanOutput,
+    initial_results: list[SearchResult],
+    expanded_results: list[SearchResult],
+) -> str:
+    lines = [
+        render_plan_markdown(
+            initial_plan,
+            title="Devstill Deep Plan — Initial Pass",
+        ).rstrip(),
+        "# Deepdive context",
+        (
+            f"Expanded from {len(initial_results)} to {len(expanded_results)} "
+            "source chunks. Waiting for the agent to refine the complete plan."
+        ),
+    ]
+    initial_paths = {result.chunk.path for result in initial_results}
+    grouped: dict[str, list[str]] = {}
+    for result in expanded_results:
+        if result.chunk.path in initial_paths:
+            continue
+        symbol = result.chunk.qualname or result.chunk.name
+        symbols = grouped.setdefault(result.chunk.path, [])
+        if symbol and symbol not in symbols:
+            symbols.append(symbol)
+    if not grouped:
+        lines.append(
+            "No additional repository files were discovered; existing evidence expanded."
+        )
+    for path, symbols in grouped.items():
+        line = f"- ⚪ Pending — {path}"
+        if symbols:
+            line += " — Retrieved chunks: " + ", ".join(
+                f"`{symbol}`" for symbol in symbols
+            )
+        lines.append(line)
     return "\n".join(lines)
 
 
@@ -396,6 +492,36 @@ class TuiWorkflow:
         self.config = config
         self.repo_root = resolve_repo_root(self.config_path, config)
         self.artifact_root = resolve_index_path(self.config_path, config).parent
+
+    def save_manual_plan(
+        self,
+        source: PlanSource,
+        plan: PlanOutput,
+        *,
+        allow_unresolved: bool = False,
+    ) -> tuple[TuiExecutionOffer, str]:
+        """Validate and persist user-reviewed labels for the selected final plan."""
+        if allow_unresolved:
+            validate_reviewed_plan(plan, self.repo_root)
+        else:
+            validate_execution_plan(plan, self.repo_root)
+        title = (
+            "Devstill Deep Plan"
+            if source == "deep-plan"
+            else "Devstill File-Impact Plan"
+        )
+        markdown = render_plan_markdown(plan, title=title)
+        json_output = render_plan_json(plan)
+        if source == "deep-plan":
+            write_deep_plan_artifacts(
+                self.artifact_root,
+                markdown,
+                json_output,
+            )
+        else:
+            write_plan_artifacts(self.artifact_root, markdown, json_output)
+        unresolved = sum(item.label is PlanLabel.SEARCH for item in plan.items)
+        return TuiExecutionOffer(source, plan.query, unresolved, plan), markdown
 
     def close(self) -> None:
         self._runtime.close()
@@ -473,10 +599,18 @@ class TuiWorkflow:
             report("Retrieving source before contacting the agent")
             engine = self._open_search(report)
             try:
-                candidates = engine.query(command.query, limit=32)
+                candidates = engine.query(
+                    command.query,
+                    limit=planning_retrieval_limit(PLAN_MAX_CHUNKS),
+                )
             finally:
                 engine.close()
-            results = select_context_results(candidates, 5, include_tests=False)
+            results = select_adaptive_context_results(
+                candidates,
+                min_limit=PLAN_MIN_CHUNKS,
+                max_limit=PLAN_MAX_CHUNKS,
+                include_tests=False,
+            )
             report(TuiPreview(render_plan_preview_markdown(results, command.query)))
             agent_log = self.artifact_root / "logs" / "agent.jsonl"
             client = AgentClient(self.config.llm, log_path=agent_log)
@@ -495,7 +629,160 @@ class TuiWorkflow:
             json_output = render_plan_json(plan)
             markdown = render_plan_markdown(plan)
             write_plan_artifacts(self.artifact_root, markdown, json_output)
-            return TuiResult("Plan", markdown)
+            return TuiResult(
+                "Plan",
+                markdown,
+                execution_offer=TuiExecutionOffer(
+                    "plan",
+                    plan.query,
+                    sum(item.label is PlanLabel.SEARCH for item in plan.items),
+                    plan,
+                ),
+            )
+
+        if command.kind is TuiCommandKind.DEEP_PLAN:
+            if not self.config.llm.enabled:
+                raise ValueError(
+                    "Agent is disabled. Configure it with `devstill agent configure`."
+                )
+            report("Retrieving initial Deep Plan context")
+            engine = self._open_search(report)
+            agent_log = self.artifact_root / "logs" / "agent.jsonl"
+            client = AgentClient(self.config.llm, log_path=agent_log)
+            try:
+                candidates = engine.query(
+                    command.query,
+                    limit=planning_retrieval_limit(PLAN_MAX_CHUNKS),
+                )
+                initial_results = select_adaptive_context_results(
+                    candidates,
+                    min_limit=PLAN_MIN_CHUNKS,
+                    max_limit=PLAN_MAX_CHUNKS,
+                    include_tests=False,
+                )
+                report(
+                    TuiPreview(
+                        render_plan_preview_markdown(
+                            initial_results,
+                            command.query,
+                            title="Retrieved Deep Plan context",
+                        ),
+                        status="Initial Deep Plan context ready; waiting for the agent",
+                    )
+                )
+                report(f"Agent response log: {agent_log}")
+                report(
+                    f"Sending {len(initial_results)} initial source chunks to "
+                    f"{client.endpoint}"
+                )
+
+                def search_reasons(values: list[str]) -> list[list[SearchResult]]:
+                    for value in values:
+                        report(f"Deepdive search: {value}")
+                    options = {"limit": planning_retrieval_limit(DEEP_PLAN_MAX_CHUNKS)}
+                    query_many = getattr(engine, "query_many", None)
+                    if callable(query_many):
+                        return query_many(values, **options)
+                    return [engine.query(value, **options) for value in values]
+
+                def initial_ready(initial_plan: PlanOutput) -> None:
+                    initial_markdown = render_plan_markdown(
+                        initial_plan,
+                        title="Devstill Deep Plan — Initial Pass",
+                    )
+                    write_deep_plan_artifacts(
+                        self.artifact_root,
+                        initial_markdown,
+                        render_plan_json(initial_plan),
+                        initial=True,
+                    )
+                    report(
+                        TuiPreview(
+                            initial_markdown
+                            + "\n\nDeepdive is searching up to three focused reasons for more context.",
+                            status="Initial Deep Plan ready; searching its reasons",
+                        )
+                    )
+
+                def context_ready(
+                    initial_plan: PlanOutput,
+                    expanded_results: list[SearchResult],
+                ) -> None:
+                    report(
+                        TuiPreview(
+                            render_deep_plan_context_markdown(
+                                initial_plan,
+                                initial_results,
+                                expanded_results,
+                            ),
+                            status=(
+                                f"Deepdive found {len(expanded_results)} chunks; "
+                                "waiting for the final agent plan"
+                            ),
+                        )
+                    )
+                    report(
+                        f"Sending {len(expanded_results)} Deep Plan chunks to "
+                        f"{client.endpoint}"
+                    )
+
+                run = run_deep_plan(
+                    client,
+                    query=command.query,
+                    repository=str(self.repo_root),
+                    repo_root=self.repo_root,
+                    initial_results=initial_results,
+                    search=search_reasons,
+                    deep_limit=DEEP_PLAN_MAX_CHUNKS,
+                    deep_minimum=DEEP_PLAN_MIN_CHUNKS,
+                    include_tests=False,
+                    on_initial=initial_ready,
+                    on_context=context_ready,
+                )
+            finally:
+                client.close()
+                engine.close()
+            json_output = render_plan_json(run.final_plan)
+            markdown = render_plan_markdown(
+                run.final_plan,
+                title="Devstill Deep Plan",
+            )
+            write_deep_plan_artifacts(
+                self.artifact_root,
+                markdown,
+                json_output,
+            )
+            return TuiResult(
+                "Deep Plan",
+                markdown,
+                execution_offer=TuiExecutionOffer(
+                    "deep-plan",
+                    run.final_plan.query,
+                    sum(
+                        item.label is PlanLabel.SEARCH for item in run.final_plan.items
+                    ),
+                    run.final_plan,
+                ),
+            )
+
+        if command.kind is TuiCommandKind.EXECUTE:
+            report("Preparing an isolated Pi execution workspace")
+            executor = RepositoryExecutor(
+                self.repo_root,
+                self.artifact_root,
+                self.config,
+            )
+            source = command.query or None
+            prepared = executor.prepare(
+                source=source,
+                instruction=command.instruction or None,
+                progress=report,
+            )
+            markdown = render_execution_markdown(
+                prepared.result,
+                prepared.patch,
+            )
+            return TuiResult("Execution preview", markdown, prepared)
 
         if command.kind is TuiCommandKind.INDEX:
             report("Starting incremental index")
@@ -559,7 +846,16 @@ class TuiWorkflow:
                     f"- Base URL: `{llm.base_url}`",
                     f"- Model: `{llm.model or 'not configured'}`",
                     f"- Timeout: **{llm.timeout_seconds:g} seconds**",
-                    f"- Max output tokens: **{llm.max_output_tokens}**",
+                    f"- General max output tokens: **{llm.max_output_tokens}**",
+                    (
+                        "- Planning max output tokens: "
+                        f"**{llm.planning_max_output_tokens}**"
+                    ),
+                    (
+                        "- Pi max output tokens: "
+                        f"**{self.config.executor.max_output_tokens}**"
+                    ),
+                    f"- Planning reasoning: **{llm.planning_reasoning}**",
                     f"- API key environment: `{llm.api_key_env}` (**{key_state}**)",
                     f"- Response log: `{self.artifact_root / 'logs' / 'agent.jsonl'}`",
                     "",
@@ -593,6 +889,28 @@ class TuiWorkflow:
             return TuiResult("Agent test", markdown)
 
         raise ValueError(f"{command.kind.value} is handled by the interface")
+
+    def apply_execution(
+        self,
+        prepared: PreparedExecution,
+        progress: ProgressCallback | None = None,
+    ) -> TuiResult:
+        report = progress or (lambda _message: None)
+        executor = RepositoryExecutor(
+            self.repo_root,
+            self.artifact_root,
+            self.config,
+        )
+        try:
+            result = executor.apply(prepared, progress=report)
+            if not self.config.executor.validation_commands:
+                report("No validation commands configured; validation was skipped")
+            return TuiResult(
+                "Execution applied",
+                render_execution_markdown(result, prepared.patch),
+            )
+        finally:
+            prepared.close()
 
 
 def safe_status(config_path: Path, config: DevstillConfig) -> dict[str, str | bool]:

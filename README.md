@@ -25,7 +25,8 @@ ChromaDB dependency and health check
 Git-aware `devstill files`
 Deterministic structural parsing for Python, JavaScript, JSX, TypeScript, TSX,
 Go, Rust, Ruby, SQL, Bash, HTML, CSS, and Java
-Bounded generic text fallback for unknown UTF-8 formats
+Bounded exact-text fallback for unknown formats and failed structural parses
+Template-aware Django/Jinja HTML fallback
 Content-aware documentation and configuration parsing
 Built-in asset, sensitive-file, binary, and noisy/generated-file exclusion
 Persistent GOOD/MEH/BAD/SKIPPED index-quality reporting
@@ -36,6 +37,8 @@ Hybrid `devstill search`
 Compact Markdown and JSON `devstill context`
 OpenAI-compatible repository agent configuration and connectivity testing
 Advisory, validated `devstill plan` file-impact classification
+Two-pass `devstill deep-plan` retrieval and plan refinement
+Controlled Pi-backed Plan execution with patch review and explicit approval
 Upward discovery of `devstill.json`
 Interactive Textual workspace with a prompt, session feed, command palette, and sidebar
 Per-repository configuration
@@ -81,6 +84,12 @@ chmod +x setup_wsl_cpu.sh
 ./setup_wsl_cpu.sh
 source ~/.bashrc
 ```
+This one command also installs the Pi coding executor and a compatible Node.js
+runtime when needed. Pi is installed through its official installer and is used
+only when `devstill execute` or `/execute` runs. For a search-only installation:
+```bash
+DEVSTILL_SKIP_PI=1 ./setup_wsl_cpu.sh
+```
 The installer creates one dedicated environment:
 ```text
 ~/projects/devstill/devstill/.venv/
@@ -97,6 +106,7 @@ Confirm that the command is available:
 ```bash
 which devstill
 devstill --version
+pi --version
 ```
 Expected version:
 ```text
@@ -161,6 +171,7 @@ CPU-only PyTorch
 CUDA unavailable
 embedding-model path
 Chroma heartbeat
+Pi and Node.js executor status
 ```
 Full model-loading test:
 ```bash
@@ -212,7 +223,7 @@ devstill remove
 ```
 Full removal deletes the repository's Devstill index, `devstill.json`, and only
 the exact `.gitignore` block added by `devstill init`. It does not remove the
-global command, virtual environment, shared embedding model, or another
+global Devstill/Pi commands, virtual environment, shared embedding model, or another
 repository's index. To discard only generated index data while keeping the
 repository configured, use:
 ```bash
@@ -319,7 +330,9 @@ Example `devstill.json`
     "model": "",
     "api_key_env": "DEVSTILL_AGENT_API_KEY",
     "timeout_seconds": 300,
-    "max_output_tokens": 2048
+    "max_output_tokens": 2048,
+    "planning_max_output_tokens": 6144,
+    "planning_reasoning": "off"
   }
 }
 ```
@@ -342,7 +355,8 @@ After configured exclusions, Devstill applies its own content policy. Source
 code, recognized documentation, and useful configuration are eligible for
 indexing. Images (including SVG), fonts, media, archives, compiled artifacts,
 databases, key material, tracked secret environment files, Devstill metadata,
-lockfiles, source maps, and generated/minified files are ignored by default.
+lockfiles, Gradle wrapper scripts, source maps, and generated/minified files are
+ignored by default.
 Use `devstill files --ignored` to see exact paths and reasons.
 
 `files.include_ignored` can rescue specific paths, such as an architecture SVG
@@ -395,9 +409,14 @@ configuration, `.gitignore`, Dockerfiles, and Makefiles receive exact logical
 configuration sections. These recognized formats can be `GOOD`.
 
 Unknown UTF-8 formats retain a complete canonical document and receive
-paragraph/heading-aware bounded segments as `MEH`. Ignored assets and noisy
-files have no canonical chunks or embeddings. Empty and binary files are
-tracked as `SKIPPED`, outside the GOOD/MEH/BAD totals.
+paragraph/heading-aware bounded segments as `MEH`. When a known structural parser
+reports an error but the UTF-8 source can still be bounded safely, Devstill retains
+the diagnostic and indexes exact fallback chunks as `MEH`; parser errors therefore
+do not necessarily imply `BAD`. Django/Jinja HTML uses exact template block and
+interstitial sections for this recovery. Invalid UTF-8 and unsegmentable fallback
+content remain `BAD`. Ignored assets and noisy files have no canonical chunks or
+embeddings. Empty and binary files are tracked as `SKIPPED`, outside the
+GOOD/MEH/BAD totals.
 The local LLM may later review ambiguous comment attachment, but deterministic parsers remain the authority for source boundaries.
 Canonical chunks versus search units
 Devstill should distinguish between exact source records and embedding records.
@@ -460,6 +479,12 @@ Recommended per-repository storage:
 ├── .context.json
 ├── .plan.md
 ├── .plan.json
+├── .deep-plan-initial.md
+├── .deep-plan-initial.json
+├── .deep-plan.md
+├── .deep-plan.json
+├── .execute.patch
+├── .execute.json
 ├── cache/
 ├── logs/
 └── manifests/
@@ -517,22 +542,32 @@ Endpoint and model configuration are repository-local. API tokens are never writ
 to `devstill.json` or displayed. The interactive TUI can remember a token in
 `~/.config/devstill/credentials.json`, an atomic user-only file with `0600`
 permissions. The configured environment variable remains supported and takes
-precedence over a remembered token. Embedded URL credentials are rejected. The
-client requests strict JSON Schema output first, then retries once without
-`response_format` when a compatible local server reports that structured output is
-unsupported.
+precedence over a remembered token. Embedded URL credentials are rejected.
+
+Plan and Deep Plan use a separate 6,144-token output ceiling; this is a maximum, so
+models can stop earlier. General agent calls retain the smaller LLM
+`max_output_tokens` limit, while Pi execution uses
+`executor.max_output_tokens` and defaults to 49,152 tokens. Planning requests
+default to `planning_reasoning: "off"` and use Qwen's
+`chat_template_kwargs.enable_thinking=false`. If a compatible server rejects that
+extension, Devstill retries without it. The client also requests strict JSON Schema
+output and falls back when structured output is unsupported, using at most three
+compatibility attempts total.
 
 Every HTTP attempt appends a sanitized diagnostic record to
-`.devstill/logs/agent.jsonl`. The log includes response status, elapsed time,
-finish reason, usage, and the complete response body so empty or malformed local
-model output can be diagnosed. It records message roles and character counts rather
-than transmitted source, and never records authorization headers or API keys.
+`.devstill/logs/agent.jsonl`. The log includes response status, elapsed time, token
+ceiling, reasoning mode, fallback count, finish reason, usage, and the complete
+response body so empty, truncated, or malformed local model output can be diagnosed.
+It records message roles and character counts rather than transmitted source, and
+never records authorization headers or API keys.
 
 Configure and verify an agent from anywhere beneath the repository:
 ```bash
 devstill agent configure \
   --base-url http://127.0.0.1:8080/v1 \
-  --model local-model
+  --model local-model \
+  --planning-max-output-tokens 6144 \
+  --planning-reasoning off
 export DEVSTILL_AGENT_API_KEY="your-key-if-required"
 devstill agent
 devstill agent test
@@ -567,6 +602,55 @@ Imports
 AST-confirmed references
 LLM output should use strict JSON, be validated with Pydantic, and be cached by content hash, model name, and prompt version.
 File-impact plans are validated now; enrichment caching remains future work.
+
+Plan execution
+
+`devstill execute` uses Pi as a short-lived implementation engine. Devstill selects
+the newest `.plan.json` or `.deep-plan.json` unless `--from` is provided, rejects
+plans with unresolved `Search` entries, and stages only the approved files in an
+isolated temporary Git repository. Pi runs with reasoning disabled, no session or
+repository context files, a bounded tool budget, and no shell tool.
+
+Blue `Read` targets are copied for reference but cannot be changed. Existing
+`Modify`, `Add`, and `Delete` targets may change, while `New File` may create only
+its exact safe repository-relative path. Devstill rejects symlinks, traversal,
+unlisted files, and any read-only change before writing `.devstill/.execute.patch`.
+
+The patch is displayed before application. Interactive CLI and TUI use explicit
+confirmation; `--dry-run` only generates the preview and `--yes` is required for
+noninteractive application. Devstill rechecks original file hashes and runs
+`git apply --check` immediately before applying. It never commits or pushes.
+
+After a successful `/plan` or `/deep-plan`, the TUI asks whether to implement that
+plan with Pi without opening a popup. The bottom composer accepts optional multiline
+execution instructions; leaving it blank reuses the Plan's original query. The
+colored status on each existing file is an inline dropdown for `Read`, `Modify`,
+`Delete`, or `Add`, and valid changes are saved immediately without changing the
+one-sentence reason. Choosing a concrete label for a white `Search` row temporarily
+uses the composer for its exact repository-relative path. Pi remains blocked until
+every `Search` entry is resolved.
+
+The composer shows focused, right-aligned actions for **Not now**, **Preview with
+Pi**, **Use file**, **Cancel**, and **Apply patch** as appropriate. Normal commands
+pause during these focused steps. The complete patch and approval warning stay in
+the main feed; only an explicit **Apply patch** click can approve it. Custom Pi
+instructions cannot add writable paths or weaken the Plan's labels.
+
+Optional validation commands are configured as argument strings without shell
+expansion:
+```json
+"executor": {
+  "enabled": true,
+  "backend": "pi",
+  "timeout_seconds": 300,
+  "max_output_tokens": 49152,
+  "max_tool_calls": 16,
+  "validation_commands": ["npm run typecheck", "python3 -m pytest -q"]
+}
+```
+Only these user-configured commands run after application. A validation failure
+leaves the reviewed changes in place and is recorded in `.execute.json`; Pi events
+are written to `.devstill/logs/pi-execute.jsonl` without API credentials.
 Venv rule
 Keep all Devstill client-side functionality in the single dedicated venv:
 ```text
@@ -625,6 +709,12 @@ devstill agent disable
 devstill plan "add an activation code to registered users"
 devstill plan "add an activation code" --path core/ --limit 5 --json
 devstill plan "audit authentication" --include-tests --lexical-only
+devstill deep-plan "trace and refine the complete activation change"
+devstill deep-plan "improve check-in geolocation" --initial-limit 5 --limit 8 --json
+devstill execute --dry-run
+devstill execute --from plan
+devstill execute --from deep-plan --yes
+devstill execute --json --dry-run
 devstill --version
 ```
 
@@ -638,6 +728,10 @@ where is authentication checked?
 /search registration flow
 /context explain the login session
 /plan add account activation
+/deep-plan trace the complete account activation change
+/execute
+/execute plan
+/execute deep-plan
 /index
 /files
 /agent
@@ -650,17 +744,29 @@ where is authentication checked?
 
 Typing `/` opens command suggestions. Use Up and Down to highlight one and Tab to
 complete it in the prompt without executing it. The right sidebar offers the same
-commands and also prefills the prompt. Search runs locally; only `/plan` and
-`/agent test` contact the configured endpoint. Context and plan commands keep the
-same `.context.*` and `.plan.*` artifact behavior as the CLI.
+commands and also prefills the prompt. Search runs locally; `/plan`, `/deep-plan`,
+`/execute`, and `/agent test` contact the configured endpoint. Context, Plan, Deep
+Plan, and execution commands keep the same artifact behavior as the CLI. Successful
+Plan and Deep Plan commands open an optional Pi handoff: enter a more specific
+execution request, or submit it blank to reuse the original planning query. Pi
+handoff, label review, Search resolution, and patch approval stay inline: Plan
+statuses are clickable dropdowns in the feed and action buttons appear at the
+bottom-right of the composer. `/agent configure` remains a separate setup form.
+
+Human-readable Search, Context, Plan, Deep Plan, index, and execution results use a
+compact layout. Each Plan item keeps its label and path on one line with its reason
+immediately below it, without a blank spacer row. Decorative blank rows are omitted,
+and exact source retains only its real line breaks inside code fences. JSON output is
+unchanged.
 
 The prompt is a compact multiline editor aligned with its leading marker. `Enter`
 submits and `Shift+Enter` inserts a line break. It grows from one to six visible
 rows, then scrolls longer requests internally.
 
 `/agent configure` opens an in-app setup form for the OpenAI-compatible base URL,
-model, token, environment-variable name, timeout, and output-token limit. **Save &
-Test** remembers the settings and immediately verifies the connection. Remembered
+model, token, environment-variable name, timeout, general/Pi output-token limit,
+planning output-token limit, and planning reasoning mode. **Save & Test** remembers
+the settings and immediately verifies the connection. Remembered
 credentials are global to the current operating-system user and are intentionally
 outside repository removal; use **Forget saved token** to remove one. Setting the
 configured API-key environment variable overrides the remembered value for that
@@ -709,12 +815,30 @@ That same entry is replaced in place with the agent's colored impact labels and
 one-sentence reasons after validation succeeds. Agent failures keep the retrieved
 file list visible, attach the error and response-log path, and do not replace
 `.plan.*`.
+
+`/deep-plan` leaves ordinary Plan unchanged. It first builds an adaptive three-to-five
+chunk initial plan, then batch-embeds up to three focused generated reasons and
+expands the pinned context to five-to-eight total chunks. Follow-up matches are
+globally fused across those searches rather than appended round-robin. The feed keeps
+the colored initial plan visible while newly discovered existing files appear as
+white pending entries, then replaces the entry
+with a fully validated refined plan. Initial and final results are saved separately
+as `.deep-plan-initial.*` and `.deep-plan.*`.
+
+`/execute` runs Pi in the background against the newest successful plan and shows
+the complete staged patch in the session feed. Inline **Cancel** and **Apply patch**
+buttons appear beside the bottom composer before Devstill rechecks and applies it;
+submitting the composer never approves a patch. `/execute plan` and `/execute
+deep-plan` select a specific artifact. Cancelling closes the staging workspace
+without changing repository files.
 `devstill context` returns five records by default. Every successful context command
 also overwrites `.devstill/.context.md` and `.devstill/.context.json` with both
 reviewable formats, regardless of which format is printed to stdout.
 
-`devstill plan` retrieves the same compact context, groups chunks by repository
-path, and asks the configured model to classify file impact. It returns `Read`,
+`devstill plan` retrieves three-to-five chunks adaptively, stopping after a clear
+relevance drop while favoring multi-channel matches and file diversity. It groups
+chunks by repository path and asks the configured model to classify file impact. It
+returns `Read`,
 `Modify`, `Delete`, `Add`, `Search`, and `New File` items with one short reason.
 The command is advisory: it never changes source files. Every successful run
 overwrites `.devstill/.plan.md` and `.devstill/.plan.json` without changing the
@@ -723,9 +847,19 @@ also fails, the command exits nonzero and preserves the previous plan artifacts.
 The network destination and transmitted chunk count are written to stderr, so
 `--json` keeps stdout machine-readable.
 
-Parser versions are tracked per language family. After installing a parser
-upgrade, a normal `devstill index` reparses only files whose parser changed;
-`--rebuild` is not required.
+`devstill deep-plan` exposes the same filters and retrieval modes, with
+`--initial-limit 5` and `--limit 8` defaults. The adaptive initial three-to-five
+chunks remain pinned; up to three prioritized reason searches fill the remaining
+capacity through global reciprocal-rank fusion, score-gap stopping, file diversity,
+and exact-chunk deduplication. Query embeddings for those searches are generated in
+one CPU batch. A failed initial pass preserves every previous Deep Plan artifact. A
+failed refinement saves the new initial result while preserving the previous final
+`.deep-plan.*` files. Normal `.plan.*` and `.context.*` files are never changed by
+Deep Plan.
+
+Parser, pipeline, and content-policy versions are tracked. After installing an
+upgrade, a normal `devstill index` reparses files affected by the changed
+fingerprint; `--rebuild` is not required.
 
 Every index run prints content coverage, colored `GOOD`, `MEH`, and `BAD`
 totals, plus separate ignored, noisy/generated, empty, and binary counts.

@@ -14,6 +14,9 @@ def test_chroma_persists_queries_and_deletes(tmp_path) -> None:
     store = ChromaStore(path, "test_collection")
     store.upsert_search_units([unit], [[1.0, 0.0]], {chunk.id: chunk})
     assert store.query_embedding([1.0, 0.0], 1)[0][0] == chunk.id
+    batches = store.query_embeddings([[1.0, 0.0], [0.0, 1.0]], 1)
+    assert len(batches) == 2
+    assert all(group[0][0] == chunk.id for group in batches)
     reopened = ChromaStore(path, "test_collection")
     assert reopened.query_embedding([1.0, 0.0], 1)[0][0] == chunk.id
     reopened.delete_search_units([unit.id])

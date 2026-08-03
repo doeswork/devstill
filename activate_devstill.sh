@@ -5,3 +5,4 @@ export DEVSTILL_MODEL_PATH="/home/jeffy4080/.local/share/devstill/models/jina-em
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export TOKENIZERS_PARALLELISM=false
+export PATH="/home/jeffy4080/.local/share/pi-node/current/bin:/home/jeffy4080/.local/bin:$PATH"

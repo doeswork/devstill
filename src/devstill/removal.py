@@ -112,6 +112,12 @@ def build_removal_plan(
                     index_paths.root / ".context.json",
                     index_paths.root / ".plan.md",
                     index_paths.root / ".plan.json",
+                    index_paths.root / ".deep-plan-initial.md",
+                    index_paths.root / ".deep-plan-initial.json",
+                    index_paths.root / ".deep-plan.md",
+                    index_paths.root / ".deep-plan.json",
+                    index_paths.root / ".execute.patch",
+                    index_paths.root / ".execute.json",
                     index_paths.dirty_marker,
                 )
             )

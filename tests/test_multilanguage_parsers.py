@@ -216,7 +216,7 @@ def test_native_structural_parsers(
         ("Bad.java", "class Bad { void broken( { }\n"),
     ],
 )
-def test_native_parser_syntax_errors_are_bad(
+def test_native_parser_syntax_errors_recover_as_exact_meh_text(
     tmp_path: Path, filename: str, source: str
 ) -> None:
     path = tmp_path / filename
@@ -225,9 +225,67 @@ def test_native_parser_syntax_errors_are_bad(
     result = parse_source_file(path, tmp_path)
 
     assert result.errors
-    assert not result.chunks
+    assert result.chunks[0].code == source
+    assert result.chunks[0].parser_metadata["searchable"] is False
+    searchable = [
+        chunk
+        for chunk in result.chunks
+        if chunk.parser_metadata.get("searchable", True)
+    ]
+    assert searchable
+    assert all(chunk.code in source for chunk in searchable)
+    assert all(chunk.parser_metadata["fallback"] for chunk in searchable)
     assert result.quality is not None
-    assert result.quality.status == "BAD"
+    assert result.quality.status == "MEH"
+    assert "exact bounded fallback used" in result.quality.reasons[-1]
+
+
+def test_django_template_failure_uses_template_aware_exact_fallback(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "conditional.html"
+    source = (
+        '{% extends "base.html" %}\n'
+        "{% block content %}\n"
+        "{% if active %}<main>{% else %}<section>{% endif %}x</main>\n"
+        "{% endblock %}\n"
+        "<hr>\n"
+        "{% macro card(item) %}\n"
+        "<article>{{ item }}</article>\n"
+        "{% endmacro %}\n"
+    )
+    path.write_text(source, encoding="utf-8")
+
+    result = parse_source_file(path, tmp_path)
+
+    assert result.errors
+    assert result.quality is not None
+    assert result.quality.status == "MEH"
+    assert result.chunks[0].code == source
+    searchable = [
+        chunk
+        for chunk in result.chunks
+        if chunk.parser_metadata.get("searchable", True)
+    ]
+    assert [(chunk.kind, chunk.name) for chunk in searchable] == [
+        ("template_section", "preamble"),
+        ("template_block", "content"),
+        ("template_section", "section@5"),
+        ("template_block", "card"),
+    ]
+    assert "".join(chunk.code for chunk in searchable) == source
+    assert all(chunk.parser_metadata["template_aware"] for chunk in searchable)
+    assert [chunk.parser_metadata["template_kind"] for chunk in searchable] == [
+        "section",
+        "block",
+        "section",
+        "macro",
+    ]
+    assert all(
+        chunk.parser_metadata["structural_fallback"] == "tree_sitter_html"
+        for chunk in searchable
+    )
+    assert "exact template-aware fallback used" in result.quality.reasons[-1]
 
 
 def test_registry_routes_basenames_and_shebangs(tmp_path: Path) -> None:

@@ -22,22 +22,35 @@ from devstill.config import (
     write_default_config,
 )
 from devstill.context import (
+    DEEP_PLAN_MAX_CHUNKS,
+    DEEP_PLAN_MIN_CHUNKS,
+    PLAN_MAX_CHUNKS,
+    PLAN_MIN_CHUNKS,
+    planning_retrieval_limit,
     render_context_json,
     render_context_markdown,
+    select_adaptive_context_results,
     select_context_results,
     write_context_artifacts,
 )
 from devstill.credentials import api_key_source
+from devstill.deep_planning import run_deep_plan
+from devstill.executor import (
+    RepositoryExecutor,
+    render_execution_markdown,
+)
 from devstill.git_files import discover_repository_inventory
 from devstill.indexer import RepositoryIndexer
 from devstill.models import ChunkPolicy
 from devstill.parsers import parse_source_file
 from devstill.paths import relative_repo_path
+from devstill.pi_runtime import inspect_pi
 from devstill.planning import (
     LABEL_STYLES,
     generate_plan,
     render_plan_json,
     render_plan_markdown,
+    write_deep_plan_artifacts,
     write_plan_artifacts,
 )
 from devstill.removal import build_removal_plan, execute_removal
@@ -135,6 +148,11 @@ def parser() -> argparse.ArgumentParser:
     configure.add_argument("--api-key-env")
     configure.add_argument("--timeout", type=float)
     configure.add_argument("--max-output-tokens", type=int)
+    configure.add_argument("--planning-max-output-tokens", type=int)
+    configure.add_argument(
+        "--planning-reasoning",
+        choices=("off", "auto"),
+    )
     agent_actions.add_parser("test", help="Send a small structured agent request.")
     agent_actions.add_parser("enable", help="Enable the configured agent.")
     agent_actions.add_parser("disable", help="Disable the configured agent.")
@@ -144,7 +162,12 @@ def parser() -> argparse.ArgumentParser:
         help="Classify retrieved files for an advisory implementation plan.",
     )
     plan.add_argument("query")
-    plan.add_argument("--limit", type=int, default=5)
+    plan.add_argument(
+        "--limit",
+        type=int,
+        default=PLAN_MAX_CHUNKS,
+        help="Maximum chunks to send; relevance may stop after 3 (default: 5).",
+    )
     plan.add_argument("--json", action="store_true")
     plan.add_argument("--kind")
     plan.add_argument("--path")
@@ -153,6 +176,46 @@ def parser() -> argparse.ArgumentParser:
     plan_mode.add_argument("--exact", action="store_true")
     plan_mode.add_argument("--semantic-only", action="store_true")
     plan_mode.add_argument("--lexical-only", action="store_true")
+
+    deep_plan = sub.add_parser(
+        "deep-plan",
+        help="Refine an advisory file-impact plan through a second retrieval pass.",
+    )
+    deep_plan.add_argument("query")
+    deep_plan.add_argument(
+        "--initial-limit",
+        type=int,
+        default=PLAN_MAX_CHUNKS,
+        help="Maximum initial chunks; relevance may stop after 3 (default: 5).",
+    )
+    deep_plan.add_argument(
+        "--limit",
+        type=int,
+        default=DEEP_PLAN_MAX_CHUNKS,
+        help="Maximum expanded chunks; at least 5 are preferred (default: 8).",
+    )
+    deep_plan.add_argument("--json", action="store_true")
+    deep_plan.add_argument("--kind")
+    deep_plan.add_argument("--path")
+    deep_plan.add_argument("--include-tests", action="store_true")
+    deep_plan_mode = deep_plan.add_mutually_exclusive_group()
+    deep_plan_mode.add_argument("--exact", action="store_true")
+    deep_plan_mode.add_argument("--semantic-only", action="store_true")
+    deep_plan_mode.add_argument("--lexical-only", action="store_true")
+
+    execute = sub.add_parser(
+        "execute",
+        help="Generate, review, and apply an approved Plan through Pi.",
+    )
+    execute.add_argument(
+        "--from",
+        dest="source",
+        choices=("plan", "deep-plan"),
+        help="Select the Plan artifact; defaults to the newest successful plan.",
+    )
+    execute.add_argument("--dry-run", action="store_true")
+    execute.add_argument("--yes", action="store_true")
+    execute.add_argument("--json", action="store_true")
     return command
 
 
@@ -186,7 +249,8 @@ def remove_repo(index_only: bool, dry_run: bool, assume_yes: bool) -> int:
         else:
             console.print("Managed .gitignore block: [dim]not present[/dim]")
     console.print(
-        "Global Devstill installation and shared embedding model will be preserved."
+        "Global Devstill/Pi installations and the shared embedding model will be "
+        "preserved."
     )
     if dry_run:
         console.print("[yellow]Dry run: no files were removed.[/yellow]")
@@ -274,6 +338,17 @@ def doctor(load_model: bool) -> int:
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]Chroma unavailable: {exc}[/red]")
         failures += 1
+    pi = inspect_pi()
+    if pi.ready:
+        console.print(
+            f"Pi executor: [green]{pi.pi_version}[/green] at {pi.pi_path}; "
+            f"Node {pi.node_version}"
+        )
+    else:
+        console.print(
+            f"Pi executor: [yellow]unavailable[/yellow] ({pi.reason}). "
+            "Re-run setup_wsl_cpu.sh to enable code execution."
+        )
     if load_model and model_path.is_dir():
         try:
             from sentence_transformers import SentenceTransformer
@@ -551,7 +626,10 @@ def _print_agent(config: DevstillConfig) -> None:
         ("Base URL", llm.base_url),
         ("Model", llm.model or "not configured"),
         ("Timeout", f"{llm.timeout_seconds:g} seconds"),
-        ("Max output tokens", llm.max_output_tokens),
+        ("General max output tokens", llm.max_output_tokens),
+        ("Planning max output tokens", llm.planning_max_output_tokens),
+        ("Pi max output tokens", config.executor.max_output_tokens),
+        ("Planning reasoning", llm.planning_reasoning),
         ("API key environment", f"{llm.api_key_env} ({key_state})"),
     )
     for label, value in labels:
@@ -569,6 +647,8 @@ def agent_command(args: argparse.Namespace) -> int:
             "api_key_env": args.api_key_env,
             "timeout_seconds": args.timeout,
             "max_output_tokens": args.max_output_tokens,
+            "planning_max_output_tokens": args.planning_max_output_tokens,
+            "planning_reasoning": args.planning_reasoning,
         }
         updates.update(
             {key: value for key, value in values.items() if value is not None}
@@ -614,7 +694,7 @@ def plan_command(args: argparse.Namespace) -> int:
     try:
         candidates = engine.query(
             args.query,
-            limit=max(args.limit * 4, 32),
+            limit=planning_retrieval_limit(args.limit),
             kind=args.kind,
             path=args.path,
             exact_only=args.exact,
@@ -623,7 +703,12 @@ def plan_command(args: argparse.Namespace) -> int:
         )
     finally:
         engine.close()
-    results = select_context_results(candidates, args.limit, args.include_tests)
+    results = select_adaptive_context_results(
+        candidates,
+        min_limit=min(PLAN_MIN_CHUNKS, args.limit),
+        max_limit=args.limit,
+        include_tests=args.include_tests,
+    )
     agent_log = resolve_index_path(config_path, config).parent / "logs/agent.jsonl"
     client = AgentClient(config.llm, log_path=agent_log)
     try:
@@ -660,6 +745,179 @@ def plan_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def deep_plan_command(args: argparse.Namespace) -> int:
+    if args.initial_limit < 1:
+        raise ValueError("--initial-limit must be at least 1")
+    if args.limit < args.initial_limit:
+        raise ValueError("--limit must be at least --initial-limit")
+    config_path, config = _configured()
+    if not config.llm.enabled:
+        raise ValueError(
+            "Agent is disabled. Run `devstill agent configure --base-url URL --model MODEL`."
+        )
+    repo_root = resolve_repo_root(config_path, config)
+    artifact_root = resolve_index_path(config_path, config).parent
+    engine = HybridSearch(config_path, config)
+    agent_log = artifact_root / "logs/agent.jsonl"
+    client = AgentClient(config.llm, log_path=agent_log)
+    try:
+        candidates = engine.query(
+            args.query,
+            limit=planning_retrieval_limit(args.initial_limit),
+            kind=args.kind,
+            path=args.path,
+            exact_only=args.exact,
+            semantic_only=args.semantic_only,
+            lexical_only=args.lexical_only,
+        )
+        initial_results = select_adaptive_context_results(
+            candidates,
+            min_limit=min(PLAN_MIN_CHUNKS, args.initial_limit),
+            max_limit=args.initial_limit,
+            include_tests=args.include_tests,
+        )
+        diagnostic_console.print(f"Agent response log: {agent_log}")
+        diagnostic_console.print(
+            f"Sending {len(initial_results)} initial source chunks to {client.endpoint}"
+        )
+
+        def search_reasons(values: list[str]):
+            options = {
+                "limit": planning_retrieval_limit(args.limit),
+                "kind": args.kind,
+                "path": args.path,
+                "exact_only": args.exact,
+                "semantic_only": args.semantic_only,
+                "lexical_only": args.lexical_only,
+            }
+            query_many = getattr(engine, "query_many", None)
+            if callable(query_many):
+                return query_many(values, **options)
+            return [engine.query(value, **options) for value in values]
+
+        def initial_ready(initial_plan):
+            write_deep_plan_artifacts(
+                artifact_root,
+                render_plan_markdown(
+                    initial_plan,
+                    title="Devstill Deep Plan — Initial Pass",
+                ),
+                render_plan_json(initial_plan),
+                initial=True,
+            )
+            diagnostic_console.print(
+                "Initial Deep Plan complete; searching up to 3 focused reasons"
+            )
+
+        def context_ready(_initial_plan, expanded_results):
+            paths = {result.chunk.path for result in expanded_results}
+            diagnostic_console.print(
+                f"Sending {len(expanded_results)} Deep Plan chunks across "
+                f"{len(paths)} files to {client.endpoint}"
+            )
+
+        run = run_deep_plan(
+            client,
+            query=args.query,
+            repository=str(repo_root),
+            repo_root=repo_root,
+            initial_results=initial_results,
+            search=search_reasons,
+            deep_limit=args.limit,
+            deep_minimum=min(DEEP_PLAN_MIN_CHUNKS, args.limit),
+            include_tests=args.include_tests,
+            on_initial=initial_ready,
+            on_context=context_ready,
+        )
+    finally:
+        client.close()
+        engine.close()
+    json_output = render_plan_json(run.final_plan)
+    markdown_output = render_plan_markdown(
+        run.final_plan,
+        title="Devstill Deep Plan",
+    )
+    write_deep_plan_artifacts(artifact_root, markdown_output, json_output)
+    if args.json:
+        print(json_output)
+    else:
+        for item in run.final_plan.items:
+            style = LABEL_STYLES[item.label]
+            console.print(
+                f"[{style}]{item.label.value.upper()}[/{style}] "
+                f"[bold]{item.target}[/bold]"
+            )
+            console.print(f"  {item.reason}")
+    return 0
+
+
+def execute_command(args: argparse.Namespace) -> int:
+    if args.dry_run and args.yes:
+        raise ValueError("--dry-run and --yes cannot be used together")
+    config_path, config = _configured()
+    repo_root = resolve_repo_root(config_path, config)
+    artifact_root = resolve_index_path(config_path, config).parent
+    executor = RepositoryExecutor(repo_root, artifact_root, config)
+    prepared = None
+    try:
+        prepared = executor.prepare(
+            source=args.source,
+            progress=lambda message: diagnostic_console.print(message),
+        )
+        if args.json:
+            if args.dry_run:
+                print(json.dumps(prepared.result.to_dict(), indent=2))
+                return 0
+            if not args.yes:
+                diagnostic_console.print(
+                    render_execution_markdown(prepared.result, prepared.patch)
+                )
+        else:
+            print(render_execution_markdown(prepared.result, prepared.patch), end="")
+        if args.dry_run:
+            console.print(
+                "[yellow]Dry run: the patch was generated but not applied.[/yellow]"
+            )
+            return 0
+
+        confirmed = args.yes
+        if not confirmed:
+            if not sys.stdin.isatty():
+                raise ValueError(
+                    "Execution requires confirmation. Re-run with --yes or --dry-run "
+                    "in a noninteractive terminal."
+                )
+            diagnostic_console.print(f"Apply this patch to {repo_root}? [y/N] ", end="")
+            try:
+                confirmed = sys.stdin.readline().strip().casefold() in {"y", "yes"}
+            except EOFError:
+                confirmed = False
+        if not confirmed:
+            diagnostic_console.print(
+                "Execution cancelled; working files were unchanged."
+            )
+            if args.json:
+                print(json.dumps(prepared.result.to_dict(), indent=2))
+            return 0
+
+        result = executor.apply(
+            prepared,
+            progress=lambda message: diagnostic_console.print(message),
+        )
+        if not config.executor.validation_commands:
+            diagnostic_console.print(
+                "No executor.validation_commands are configured; validation was skipped."
+            )
+        if args.json:
+            print(json.dumps(result.to_dict(), indent=2))
+        else:
+            console.print(render_execution_markdown(result, ""), end="")
+        return 1 if result.status == "validation_failed" else 0
+    finally:
+        if prepared is not None:
+            prepared.close()
+
+
 def main() -> None:
     args = parser().parse_args()
     try:
@@ -683,6 +941,10 @@ def main() -> None:
             raise SystemExit(agent_command(args))
         if args.command == "plan":
             raise SystemExit(plan_command(args))
+        if args.command == "deep-plan":
+            raise SystemExit(deep_plan_command(args))
+        if args.command == "execute":
+            raise SystemExit(execute_command(args))
         config_path, config = _configured()
         DevstillApp(config_path, config).run()
     except (FileNotFoundError, RuntimeError, ValueError) as exc:

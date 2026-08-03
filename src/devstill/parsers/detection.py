@@ -17,6 +17,7 @@ _LOCKFILES = {
     "yarn.lock",
 }
 _NOISY_DIRS = {"vendor", "vendors", "third_party", "generated"}
+_GENERATED_BASENAMES = {"gradlew", "gradlew.bat"}
 _GENERATED_RE = re.compile(
     r"(?:generated|auto-?generated).{0,40}(?:do not edit|don't edit)|"
     r"(?:do not edit|don't edit).{0,40}(?:generated|auto-?generated)",
@@ -42,6 +43,8 @@ def path_is_binary(path: Path) -> bool:
 def noisy_reason(path: Path, relative: str, raw: bytes) -> str | None:
     name = path.name.casefold()
     parts = {part.casefold() for part in PurePosixPath(relative).parts[:-1]}
+    if name in _GENERATED_BASENAMES:
+        return "generated Gradle wrapper"
     if name in _LOCKFILES:
         return "lockfile"
     if path.suffix.casefold() == ".map":

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import json
 import subprocess
 
 import pytest
 
+from devstill.content_policy import CONTENT_POLICY_VERSION
 from devstill.indexer import RepositoryIndexer
-from devstill.parsers import JAVASCRIPT_FAMILY_PARSER_VERSION
+from devstill.parsers import (
+    JAVASCRIPT_FAMILY_PARSER_VERSION,
+    PARSER_PIPELINE_VERSION,
+)
 
 from .conftest import FakeChroma, FakeEmbedder
 
@@ -181,6 +186,141 @@ def test_parser_version_migrates_only_javascript_family(
     assert unchanged.unchanged_files == 2
     assert unchanged.parsed_files == 0
     assert unchanged.search_units_embedded == 0
+    indexer.close()
+
+
+def test_pipeline_version_reprocesses_unchanged_structural_fallback(
+    configured_repo: tuple,
+) -> None:
+    repo, config_path, config = configured_repo
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    source = repo / "Page.tsx"
+    source.write_text(
+        "export function Page() { return <button>Save & Send</button> }\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(repo), "add", "Page.tsx"], check=True)
+    chroma = FakeChroma()
+    indexer = RepositoryIndexer(
+        config_path,
+        config,
+        embedder=FakeEmbedder(),
+        chroma_store=chroma,
+    )
+
+    first = indexer.run()
+    assert first.meh_files == 1
+    record = indexer.store.get_files()["Page.tsx"]
+    assert CONTENT_POLICY_VERSION in record.parser_version
+    assert PARSER_PIPELINE_VERSION in record.parser_version
+    old_version = record.parser_version.replace(
+        CONTENT_POLICY_VERSION, "content-policy:1"
+    ).replace(PARSER_PIPELINE_VERSION, "pipeline:3")
+    indexer.store.connection.execute(
+        "UPDATE files SET parser_version = ? WHERE path = 'Page.tsx'",
+        (old_version,),
+    )
+    indexer.store.connection.commit()
+
+    migrated = indexer.run()
+
+    assert migrated.parsed_files == 1
+    assert migrated.search_units_embedded == 1
+    assert migrated.meh_files == 1
+    assert migrated.bad_files == 0
+    assert indexer.run().unchanged_files == 1
+    indexer.close()
+
+
+def test_seven_file_structural_fallback_regression(configured_repo: tuple) -> None:
+    repo, config_path, config = configured_repo
+    config = config.model_copy(
+        update={
+            "files": config.files.model_copy(
+                update={
+                    "scan_all_text": True,
+                    "exclude": [*config.files.exclude, "devstill.json"],
+                }
+            )
+        }
+    )
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    tsx_paths = [
+        "frontend/src/pages/RegisterPage/index.tsx",
+        "frontend/src/pages/ResourcesPage/index.tsx",
+        "frontend/src/pages/SOSPage/index.tsx",
+        "frontend/src/pages/SurveyPage/index.tsx",
+    ]
+    labels = [
+        "Save & Send",
+        "Privacy & Safety",
+        "Help & Support",
+        "Terms & Conditions",
+    ]
+    for relative, label in zip(tsx_paths, labels, strict=True):
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"export function Page() {{ return <button>{label}</button> }}\n",
+            encoding="utf-8",
+        )
+    template_paths = [
+        "core/templates/admin/cirkely.html",
+        "core/templates/admin/resources_crm.html",
+    ]
+    template_source = (
+        "{% block content %}\n"
+        "{% if active %}<main>{% else %}<section>{% endif %}x</main>\n"
+        "{% endblock %}\n"
+    )
+    for relative in template_paths:
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(template_source, encoding="utf-8")
+    gradlew = repo / "frontend/android/gradlew"
+    gradlew.parent.mkdir(parents=True, exist_ok=True)
+    gradlew.write_text(
+        '#!/bin/sh\nAPP_HOME=$(cd "${0%/*}" && pwd -P)\nexec java "$@"\n',
+        encoding="utf-8",
+    )
+    paths = [*tsx_paths, *template_paths, "frontend/android/gradlew"]
+    subprocess.run(["git", "-C", str(repo), "add", *paths], check=True)
+    chroma = FakeChroma()
+    indexer = RepositoryIndexer(
+        config_path,
+        config,
+        embedder=FakeEmbedder(),
+        chroma_store=chroma,
+    )
+
+    summary = indexer.run()
+
+    assert summary.discovered_files == 7
+    assert summary.eligible_files == 6
+    assert summary.meh_files == 6
+    assert summary.bad_files == 0
+    assert summary.ignored_files == 1
+    assert summary.noisy_files_skipped == 1
+    assert summary.parse_errors == 6
+    assert summary.search_units_embedded == 6
+    quality = {item.path: item for item in indexer.store.list_quality()}
+    assert set(quality) == set(paths)
+    for relative in [*tsx_paths, *template_paths]:
+        assert quality[relative].status == "MEH"
+        assert any(
+            chunk.parser_metadata.get("searchable", True)
+            for chunk in indexer.store.list_chunks_for_file(relative)
+        )
+    assert quality["frontend/android/gradlew"].status == "SKIPPED"
+    assert quality["frontend/android/gradlew"].category == "generated"
+    assert indexer.store.list_chunks_for_file("frontend/android/gradlew") == []
+    assert all("gradlew" not in unit_id for unit_id in chroma.records)
+    manifest = json.loads(
+        (repo / ".devstill/manifests/quality.json").read_text(encoding="utf-8")
+    )
+    assert manifest["meh_files"] == 6
+    assert manifest["bad_files"] == 0
+    assert manifest["noisy_files_skipped"] == 1
     indexer.close()
 
 

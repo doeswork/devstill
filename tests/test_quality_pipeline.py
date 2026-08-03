@@ -96,6 +96,24 @@ def test_unsegmentable_giant_line_is_bad(tmp_path: Path) -> None:
     assert result.chunks[0].code == "x" * 101
 
 
+def test_unsegmentable_structural_fallback_remains_bad(tmp_path: Path) -> None:
+    path = tmp_path / "Broken.tsx"
+    source = "export function Broken( {" + "x" * 100
+    path.write_text(source, encoding="utf-8")
+
+    result = parse_source_file(
+        path,
+        tmp_path,
+        policy=ChunkPolicy(max_chars=100, max_lines=5, overlap_lines=1),
+    )
+
+    assert result.errors
+    assert result.quality is not None
+    assert result.quality.status == "BAD"
+    assert not _searchable(result)
+    assert result.chunks[0].code == source
+
+
 def test_forced_fallback_windows_keep_configured_line_overlap(
     tmp_path: Path,
 ) -> None:

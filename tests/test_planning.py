@@ -7,6 +7,11 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
+from devstill.deep_planning import (
+    deep_plan_queries,
+    merge_deep_context,
+    run_deep_plan,
+)
 from devstill.planning import (
     LABEL_STYLES,
     AgentPlan,
@@ -17,6 +22,7 @@ from devstill.planning import (
     render_plan_json,
     render_plan_markdown,
     validate_plan_items,
+    write_deep_plan_artifacts,
     write_plan_artifacts,
 )
 from tests.test_context import make_result
@@ -37,7 +43,11 @@ class FakeClient:
     def __init__(self, *responses: str) -> None:
         self.responses = list(responses)
         self.calls: list[tuple[list[dict[str, str]], dict[str, object]]] = []
-        self.config = SimpleNamespace(model="local-12b")
+        self.config = SimpleNamespace(
+            model="local-12b",
+            planning_max_output_tokens=6144,
+            planning_reasoning="off",
+        )
 
     def chat(self, messages, **kwargs):
         self.calls.append((messages, kwargs))
@@ -93,8 +103,15 @@ def test_all_six_labels_validate_and_render(tmp_path: Path) -> None:
     assert payload["items"] == raw_items
     markdown = render_plan_markdown(output)
     assert "# Devstill File-Impact Plan" in markdown
-    assert "🟢 Add — core/views.py" in markdown
-    assert "🩷 New File — core/services/activation.py" in markdown
+    assert (
+        "- 🟢 Add — core/views.py  \n"
+        "  Add activation-code handling to registration." in markdown
+    )
+    assert (
+        "- 🩷 New File — core/services/activation.py  \n"
+        "  Create a focused activation service." in markdown
+    )
+    assert "\n\n" not in markdown
 
 
 def test_repeated_chunks_are_grouped_by_path_before_validation(tmp_path: Path) -> None:
@@ -137,6 +154,8 @@ def test_repeated_chunks_are_grouped_by_path_before_validation(tmp_path: Path) -
     assert len(context) == 1
     assert context[0]["path"] == "core/views.py"
     assert len(context[0]["chunks"]) == 2
+    assert client.calls[0][1]["max_output_tokens"] == 6144
+    assert client.calls[0][1]["reasoning"] == "off"
 
 
 @pytest.mark.parametrize(
@@ -236,6 +255,8 @@ def test_generate_plan_repairs_once_and_treats_source_as_untrusted(
     assert "untrusted quoted data" in system
     assert injection in user
     assert "failed validation" in client.calls[1][0][-1]["content"]
+    assert all(call[1]["max_output_tokens"] == 6144 for call in client.calls)
+    assert all(call[1]["reasoning"] == "off" for call in client.calls)
 
 
 def test_generate_plan_fails_after_one_repair(tmp_path: Path) -> None:
@@ -269,3 +290,168 @@ def test_plan_artifacts_overwrite_both_files_without_context_files(
     assert json_path.read_text(encoding="utf-8") == '{"second":true}\n'
     assert context_markdown.read_text(encoding="utf-8") == "context markdown\n"
     assert context_json.read_text(encoding="utf-8") == "context json\n"
+
+
+def test_deep_plan_queries_include_search_targets_and_deduplicate() -> None:
+    plan = PlanOutput(
+        query="geo",
+        repository="/repo",
+        model="model",
+        items=[
+            PlanItem(
+                label=PlanLabel.MODIFY,
+                target="frontend/page.tsx",
+                reason="Load geolocation when the page mounts.",
+            ),
+            PlanItem(
+                label=PlanLabel.SEARCH,
+                target="**/geo*.ts",
+                reason="Locate the existing geolocation helper.",
+            ),
+            PlanItem(
+                label=PlanLabel.READ,
+                target="core/views.py",
+                reason="Load geolocation when the page mounts.",
+            ),
+        ],
+    )
+
+    assert deep_plan_queries(plan) == [
+        "Load geolocation when the page mounts.",
+        "**/geo*.ts: Locate the existing geolocation helper.",
+    ]
+    assert deep_plan_queries(plan, max_queries=1) == [
+        "**/geo*.ts: Locate the existing geolocation helper."
+    ]
+
+
+def test_deep_context_pins_initial_and_keeps_unique_non_tests() -> None:
+    initial = [
+        make_result(path="a.py", name="a"),
+        make_result(path="b.py", name="b"),
+    ]
+    groups = [
+        [
+            initial[0],
+            make_result(path="tests/test_geo.py", name="test_geo"),
+            make_result(path="e.py", name="e"),
+        ],
+        [
+            make_result(path="c.py", name="c"),
+            make_result(path="d.py", name="d"),
+        ],
+    ]
+
+    merged = merge_deep_context(
+        initial,
+        groups,
+        limit=5,
+        include_tests=False,
+    )
+
+    assert [result.chunk.path for result in merged] == [
+        "a.py",
+        "b.py",
+        "c.py",
+        "d.py",
+        "e.py",
+    ]
+    with pytest.raises(ValueError, match="at least the initial"):
+        merge_deep_context(initial, groups, limit=1, include_tests=False)
+
+
+def test_deep_context_globally_fuses_support_across_queries() -> None:
+    initial = [make_result(path="initial.py", name="initial")]
+    shared = make_result(path="shared.py", name="shared")
+    first = make_result(path="first.py", name="first")
+    second = make_result(path="second.py", name="second")
+
+    merged = merge_deep_context(
+        initial,
+        [[first, shared], [second, shared]],
+        limit=3,
+        min_limit=3,
+        include_tests=False,
+    )
+
+    assert [result.chunk.path for result in merged] == [
+        "initial.py",
+        "shared.py",
+        "first.py",
+    ]
+    assert merged[1].scores["deep_query_support"] == 2.0
+
+
+def test_run_deep_plan_uses_distinct_schemas_and_reconsiders_all_files(
+    tmp_path: Path,
+) -> None:
+    make_files(tmp_path, "a.py", "b.py")
+    initial_result = make_result(path="a.py", name="a")
+    deep_result = make_result(path="b.py", name="b")
+    client = FakeClient(
+        json.dumps(
+            {
+                "items": [
+                    plan_item("Read", "a.py", "Inspect the existing location flow.")
+                ]
+            }
+        ),
+        json.dumps(
+            {
+                "items": [
+                    plan_item("Modify", "a.py", "Trigger location during page load."),
+                    plan_item("Read", "b.py", "Verify the shared location helper."),
+                ]
+            }
+        ),
+    )
+    initial_callbacks: list[PlanOutput] = []
+    context_callbacks: list[tuple[PlanOutput, list]] = []
+    searches: list[str] = []
+
+    run = run_deep_plan(
+        client,
+        query="load location",
+        repository=str(tmp_path),
+        repo_root=tmp_path,
+        initial_results=[initial_result],
+        search=lambda queries: searches.extend(queries) or [[deep_result]],
+        deep_limit=2,
+        include_tests=False,
+        on_initial=initial_callbacks.append,
+        on_context=lambda plan, results: context_callbacks.append((plan, results)),
+    )
+
+    assert searches == ["Inspect the existing location flow."]
+    assert [item.target for item in run.final_plan.items] == ["a.py", "b.py"]
+    assert run.final_plan.items[0].label is PlanLabel.MODIFY
+    assert initial_callbacks == [run.initial_plan]
+    assert context_callbacks[0][1] == run.expanded_results
+    assert client.calls[0][1]["schema_name"] == "devstill_deep_plan_initial"
+    assert client.calls[1][1]["schema_name"] == "devstill_deep_plan"
+    assert all(call[1]["max_output_tokens"] == 6144 for call in client.calls)
+    assert all(call[1]["reasoning"] == "off" for call in client.calls)
+    final_user_prompt = client.calls[1][0][1]["content"]
+    assert "INITIAL_PLAN_JSON:" in final_user_prompt
+    assert '"b.py"' in final_user_prompt
+
+
+def test_deep_plan_artifacts_are_separate_from_normal_plan(tmp_path: Path) -> None:
+    (tmp_path / ".plan.md").write_text("normal plan\n", encoding="utf-8")
+    initial_paths = write_deep_plan_artifacts(
+        tmp_path,
+        "# Initial",
+        '{"initial":true}',
+        initial=True,
+    )
+    final_paths = write_deep_plan_artifacts(
+        tmp_path,
+        "# Final",
+        '{"final":true}',
+    )
+
+    assert initial_paths[0].name == ".deep-plan-initial.md"
+    assert initial_paths[1].name == ".deep-plan-initial.json"
+    assert final_paths[0].name == ".deep-plan.md"
+    assert final_paths[1].name == ".deep-plan.json"
+    assert (tmp_path / ".plan.md").read_text(encoding="utf-8") == "normal plan\n"

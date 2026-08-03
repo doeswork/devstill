@@ -8,7 +8,7 @@ from devstill.config import DevstillConfig
 from devstill.parsers.detection import is_binary, noisy_reason
 from devstill.parsers.registry import FALLBACK_SPEC, ParserSpec, parser_spec_for
 
-CONTENT_POLICY_VERSION = "content-policy:1"
+CONTENT_POLICY_VERSION = "content-policy:2"
 
 _ASSET_EXTENSIONS = frozenset(
     {

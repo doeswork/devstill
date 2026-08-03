@@ -32,7 +32,11 @@ from devstill.models import (
     SearchUnit,
     SourceChunk,
 )
-from devstill.parsers import parse_source_file, parser_version_for
+from devstill.parsers import (
+    PARSER_PIPELINE_VERSION,
+    parse_source_file,
+    parser_version_for,
+)
 from devstill.parsers.registry import language_for
 from devstill.paths import IndexPaths
 from devstill.storage import ChromaStore, SQLiteStore
@@ -251,7 +255,8 @@ class RepositoryIndexer:
                 modified_ns=stat.st_mtime_ns,
                 language=language_for(path),
                 parser_version=(
-                    f"{parser_version_for(path)}|{CONTENT_POLICY_VERSION}|pipeline:3"
+                    f"{parser_version_for(path)}|{CONTENT_POLICY_VERSION}"
+                    f"|{PARSER_PIPELINE_VERSION}"
                     f"|chars:{policy.max_chars}|lines:{policy.max_lines}"
                     f"|overlap:{policy.overlap_lines}"
                     f"|noisy:{int(self.config.files.index_noisy_files)}"

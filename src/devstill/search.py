@@ -13,6 +13,9 @@ from devstill.paths import IndexPaths
 from devstill.storage import ChromaStore, SQLiteStore
 
 RRF_K = 60.0
+MIN_CANDIDATES_PER_CHANNEL = 50
+MAX_CANDIDATES_PER_CHANNEL = 80
+CANDIDATE_MULTIPLIER = 4
 WEIGHTS = {
     "exact": 6.0,
     "prefix": 4.0,
@@ -49,9 +52,21 @@ class HybridSearch:
             normalize=config.embedding.normalize_embeddings,
         )
         self.chroma = chroma_store or ChromaStore(paths.chroma, config.index.collection)
+        self._symbol_choices: dict[str, str] | None = None
 
     def close(self) -> None:
         self.store.close()
+
+    def _fuzzy_choices(self) -> dict[str, str]:
+        if self._symbol_choices is None:
+            symbols = self.store.list_symbol_chunks()
+            self._symbol_choices = {
+                chunk.id: " ".join(
+                    value for value in (chunk.name, chunk.qualname, chunk.path) if value
+                )
+                for chunk in symbols
+            }
+        return self._symbol_choices
 
     def query(
         self,
@@ -63,12 +78,84 @@ class HybridSearch:
         semantic_only: bool = False,
         lexical_only: bool = False,
     ) -> list[SearchResult]:
+        return self.query_many(
+            [query],
+            limit=limit,
+            kind=kind,
+            path=path,
+            exact_only=exact_only,
+            semantic_only=semantic_only,
+            lexical_only=lexical_only,
+        )[0]
+
+    @staticmethod
+    def _candidate_limit(limit: int) -> int:
+        if limit < 1:
+            raise ValueError("search limit must be at least 1")
+        bounded = min(
+            MAX_CANDIDATES_PER_CHANNEL,
+            max(MIN_CANDIDATES_PER_CHANNEL, limit * CANDIDATE_MULTIPLIER),
+        )
+        return max(limit, bounded)
+
+    def query_many(
+        self,
+        queries: list[str],
+        limit: int = 10,
+        kind: str | None = None,
+        path: str | None = None,
+        exact_only: bool = False,
+        semantic_only: bool = False,
+        lexical_only: bool = False,
+    ) -> list[list[SearchResult]]:
+        """Run several searches while batching their CPU query embeddings."""
+        if not queries:
+            return []
         if semantic_only and lexical_only:
             raise ValueError(
                 "--semantic-only and --lexical-only cannot be used together"
             )
+        candidate_limit = self._candidate_limit(limit)
+        semantic_groups: list[list[tuple[str, float]] | None] = [None] * len(queries)
+        if not exact_only and not lexical_only:
+            vectors = self.embedder.encode(queries)
+            batch_query = getattr(self.chroma, "query_embeddings", None)
+            if callable(batch_query):
+                semantic_groups = batch_query(vectors, candidate_limit)
+            else:
+                semantic_groups = [
+                    self.chroma.query_embedding(vector, candidate_limit)
+                    for vector in vectors
+                ]
+        return [
+            self._rank_query(
+                query,
+                limit=limit,
+                candidate_limit=candidate_limit,
+                semantic_values=semantic_groups[index],
+                kind=kind,
+                path=path,
+                exact_only=exact_only,
+                semantic_only=semantic_only,
+                lexical_only=lexical_only,
+            )
+            for index, query in enumerate(queries)
+        ]
+
+    def _rank_query(
+        self,
+        query: str,
+        *,
+        limit: int,
+        candidate_limit: int,
+        semantic_values: list[tuple[str, float]] | None,
+        kind: str | None,
+        path: str | None,
+        exact_only: bool,
+        semantic_only: bool,
+        lexical_only: bool,
+    ) -> list[SearchResult]:
         rankings: dict[str, list[tuple[str, float]]] = {}
-        candidate_limit = max(limit * 10, 50)
         if not semantic_only:
             exact = self.store.find_symbol_exact(query, candidate_limit)
             rankings["exact"] = [(chunk_id, 1.0) for chunk_id in exact]
@@ -81,18 +168,9 @@ class HybridSearch:
                 rankings["lexical"] = [
                     (chunk_id, 1.0 / (1.0 + abs(rank))) for chunk_id, rank in fts
                 ]
-                symbols = self.store.list_symbol_chunks()
-                choices = {
-                    chunk.id: " ".join(
-                        value
-                        for value in (chunk.name, chunk.qualname, chunk.path)
-                        if value
-                    )
-                    for chunk in symbols
-                }
                 fuzzy_values = process.extract(
                     query,
-                    choices,
+                    self._fuzzy_choices(),
                     scorer=fuzz.WRatio,
                     limit=candidate_limit,
                     score_cutoff=45,
@@ -101,9 +179,8 @@ class HybridSearch:
                     (str(chunk_id), float(score) / 100.0)
                     for _, score, chunk_id in fuzzy_values
                 ]
-        if not exact_only and not lexical_only:
-            vector = self.embedder.encode([query])[0]
-            rankings["semantic"] = self.chroma.query_embedding(vector, candidate_limit)
+        if semantic_values is not None:
+            rankings["semantic"] = semantic_values
 
         final_scores: defaultdict[str, float] = defaultdict(float)
         components: defaultdict[str, dict[str, float]] = defaultdict(dict)

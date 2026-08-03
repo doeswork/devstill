@@ -12,6 +12,7 @@ FALLBACK_PARSER_VERSION = "plain-text-bounded:2"
 MARKUP_TEXT_PARSER_VERSION = "markup-text:1"
 PROSE_TEXT_PARSER_VERSION = "prose-text:1"
 CONFIG_TEXT_PARSER_VERSION = "config-text:1"
+PARSER_PIPELINE_VERSION = "pipeline:4"
 PARSER_VERSION = PYTHON_PARSER_VERSION
 JAVASCRIPT_FAMILY_EXTENSIONS = frozenset({".js", ".jsx", ".ts", ".tsx"})
 

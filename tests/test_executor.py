@@ -1,0 +1,405 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from devstill.config import DevstillConfig
+from devstill.executor import (
+    ExecutionError,
+    RepositoryExecutor,
+    select_plan_artifact,
+    validate_reviewed_plan,
+)
+from devstill.pi_runtime import PiRunResult
+from devstill.planning import PlanItem, PlanLabel, PlanOutput, render_plan_json
+
+
+class FakePiRunner:
+    def __init__(self, mutate):
+        self.mutate = mutate
+        self.calls = 0
+        self.prompts: list[str] = []
+        self.provider_max_tokens: list[int] = []
+
+    def run(self, **kwargs):
+        self.calls += 1
+        self.prompts.append(kwargs["prompt"])
+        provider = json.loads(
+            (kwargs["config_dir"] / "models.json").read_text(encoding="utf-8")
+        )
+        self.provider_max_tokens.append(
+            provider["providers"]["devstill"]["models"][0]["maxTokens"]
+        )
+        self.mutate(kwargs["workspace"])
+        kwargs["log_path"].parent.mkdir(parents=True, exist_ok=True)
+        kwargs["log_path"].write_text('{"type":"agent_end"}\n', encoding="utf-8")
+        return PiRunResult(
+            events=[{"type": "agent_end"}], tool_calls=3, elapsed_seconds=0.2
+        )
+
+
+def configured() -> DevstillConfig:
+    return DevstillConfig(
+        llm={
+            "enabled": True,
+            "base_url": "http://localhost:1234/v1",
+            "model": "local-model",
+        }
+    )
+
+
+def write_plan(
+    root: Path,
+    artifact_root: Path,
+    items: list[PlanItem],
+    *,
+    deep: bool = False,
+) -> Path:
+    plan = PlanOutput(
+        query="implement the requested change",
+        repository=str(root),
+        model="local-model",
+        items=items,
+    )
+    path = artifact_root / (".deep-plan.json" if deep else ".plan.json")
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_plan_json(plan), encoding="utf-8")
+    return path
+
+
+def test_prepare_and_apply_only_approved_targets(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "modify.py").write_text("value = 1\n", encoding="utf-8")
+    (repo / "read.py").write_text("REFERENCE = True\n", encoding="utf-8")
+    artifacts = repo / ".devstill"
+    write_plan(
+        repo,
+        artifacts,
+        [
+            PlanItem(label=PlanLabel.MODIFY, target="modify.py", reason="Update it."),
+            PlanItem(label=PlanLabel.READ, target="read.py", reason="Inspect it."),
+            PlanItem(label=PlanLabel.NEW_FILE, target="new.py", reason="Create it."),
+        ],
+    )
+
+    def mutate(workspace: Path) -> None:
+        (workspace / "modify.py").write_text("value = 2\n", encoding="utf-8")
+        (workspace / "new.py").write_text("created = True\n", encoding="utf-8")
+
+    runner = FakePiRunner(mutate)
+    executor = RepositoryExecutor(
+        repo,
+        artifacts,
+        configured(),
+        runner=runner,
+    )
+    prepared = executor.prepare(source="plan")
+    try:
+        assert prepared.result.status == "preview"
+        assert prepared.result.changed_files == ["modify.py", "new.py"]
+        assert runner.provider_max_tokens == [49152]
+        assert "diff --git a/modify.py b/modify.py" in prepared.patch
+        assert "diff --git a/new.py b/new.py" in prepared.patch
+        assert (repo / "modify.py").read_text(encoding="utf-8") == "value = 1\n"
+        assert not (repo / "new.py").exists()
+        result = executor.apply(prepared)
+        assert result.status == "applied"
+    finally:
+        prepared.close()
+    assert (repo / "modify.py").read_text(encoding="utf-8") == "value = 2\n"
+    assert (repo / "read.py").read_text(encoding="utf-8") == "REFERENCE = True\n"
+    assert (repo / "new.py").read_text(encoding="utf-8") == "created = True\n"
+    assert json.loads((artifacts / ".execute.json").read_text())["status"] == "applied"
+
+
+def test_execution_instruction_overrides_query_without_expanding_plan(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("value = 1\n", encoding="utf-8")
+    artifacts = repo / ".devstill"
+    write_plan(
+        repo,
+        artifacts,
+        [PlanItem(label=PlanLabel.MODIFY, target="app.py", reason="Update it.")],
+    )
+
+    def mutate(workspace: Path) -> None:
+        (workspace / "app.py").write_text("value = 2\n", encoding="utf-8")
+
+    runner = FakePiRunner(mutate)
+    prepared = RepositoryExecutor(
+        repo,
+        artifacts,
+        configured(),
+        runner=runner,
+    ).prepare(
+        source="plan",
+        instruction="Use the existing helper and keep the change focused.",
+    )
+    try:
+        assert prepared.result.query == "implement the requested change"
+        assert (
+            prepared.result.instruction
+            == "Use the existing helper and keep the change focused."
+        )
+        assert (
+            'ORIGINAL_PLAN_QUERY: "implement the requested change"' in runner.prompts[0]
+        )
+        assert (
+            'EXECUTION_REQUEST: "Use the existing helper and keep the change focused."'
+            in runner.prompts[0]
+        )
+        assert 'WRITABLE_PATHS: ["app.py"]' in runner.prompts[0]
+        result_artifact = json.loads((artifacts / ".execute.json").read_text())
+        assert result_artifact["instruction"] == prepared.result.instruction
+    finally:
+        prepared.close()
+
+
+def test_blank_execution_instruction_uses_original_plan_query(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("value = 1\n", encoding="utf-8")
+    artifacts = repo / ".devstill"
+    write_plan(
+        repo,
+        artifacts,
+        [PlanItem(label=PlanLabel.MODIFY, target="app.py", reason="Update it.")],
+    )
+    runner = FakePiRunner(
+        lambda workspace: (workspace / "app.py").write_text(
+            "value = 2\n", encoding="utf-8"
+        )
+    )
+    prepared = RepositoryExecutor(
+        repo,
+        artifacts,
+        configured(),
+        runner=runner,
+    ).prepare(instruction="  \n")
+    try:
+        assert prepared.result.instruction == "implement the requested change"
+        assert (
+            'EXECUTION_REQUEST: "implement the requested change"' in runner.prompts[0]
+        )
+    finally:
+        prepared.close()
+
+
+def test_search_entries_block_execution(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    artifacts = repo / ".devstill"
+    write_plan(
+        repo,
+        artifacts,
+        [PlanItem(label=PlanLabel.SEARCH, target="auth", reason="Find it.")],
+    )
+    runner = FakePiRunner(lambda _workspace: None)
+    executor = RepositoryExecutor(repo, artifacts, configured(), runner=runner)
+    with pytest.raises(ExecutionError, match="Search entries"):
+        executor.prepare()
+    assert runner.calls == 0
+
+
+def test_reviewed_plan_allows_search_but_validates_concrete_targets(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("value = 1\n", encoding="utf-8")
+    plan = PlanOutput(
+        query="update app",
+        repository=str(repo),
+        model="local-model",
+        items=[
+            PlanItem(label=PlanLabel.SEARCH, target="**/auth*", reason="Find auth."),
+            PlanItem(label=PlanLabel.READ, target="app.py", reason="Inspect app."),
+        ],
+    )
+
+    validate_reviewed_plan(plan, repo)
+
+    invalid = plan.model_copy(
+        update={
+            "items": [
+                plan.items[0],
+                PlanItem(
+                    label=PlanLabel.READ,
+                    target="missing.py",
+                    reason="Inspect the missing file.",
+                ),
+            ]
+        }
+    )
+    with pytest.raises(ExecutionError, match="missing or not a file"):
+        validate_reviewed_plan(invalid, repo)
+
+
+def test_read_file_mutation_and_unapproved_file_are_rejected(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "read.py").write_text("value = 1\n", encoding="utf-8")
+    artifacts = repo / ".devstill"
+    write_plan(
+        repo,
+        artifacts,
+        [PlanItem(label=PlanLabel.READ, target="read.py", reason="Inspect it.")],
+    )
+
+    def mutate_read(workspace: Path) -> None:
+        (workspace / "read.py").write_text("value = 2\n", encoding="utf-8")
+
+    with pytest.raises(ExecutionError, match="read-only"):
+        RepositoryExecutor(
+            repo,
+            artifacts,
+            configured(),
+            runner=FakePiRunner(mutate_read),
+        ).prepare()
+
+    write_plan(
+        repo,
+        artifacts,
+        [PlanItem(label=PlanLabel.MODIFY, target="read.py", reason="Update it.")],
+    )
+
+    def add_unapproved(workspace: Path) -> None:
+        (workspace / "surprise.py").write_text("bad = True\n", encoding="utf-8")
+
+    with pytest.raises(ExecutionError, match="unapproved"):
+        RepositoryExecutor(
+            repo,
+            artifacts,
+            configured(),
+            runner=FakePiRunner(add_unapproved),
+        ).prepare()
+
+
+def test_apply_rejects_source_changed_after_preview(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = repo / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+    artifacts = repo / ".devstill"
+    write_plan(
+        repo,
+        artifacts,
+        [PlanItem(label=PlanLabel.MODIFY, target="app.py", reason="Update it.")],
+    )
+
+    def mutate(workspace: Path) -> None:
+        (workspace / "app.py").write_text("value = 2\n", encoding="utf-8")
+
+    executor = RepositoryExecutor(
+        repo,
+        artifacts,
+        configured(),
+        runner=FakePiRunner(mutate),
+    )
+    prepared = executor.prepare()
+    try:
+        target.write_text("user change\n", encoding="utf-8")
+        with pytest.raises(ExecutionError, match="Source changed"):
+            executor.apply(prepared)
+    finally:
+        prepared.close()
+    assert target.read_text(encoding="utf-8") == "user change\n"
+
+
+def test_delete_label_may_remove_file_but_modify_label_may_not(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = repo / "obsolete.py"
+    target.write_text("obsolete = True\n", encoding="utf-8")
+    artifacts = repo / ".devstill"
+
+    def remove(workspace: Path) -> None:
+        (workspace / "obsolete.py").unlink()
+
+    write_plan(
+        repo,
+        artifacts,
+        [PlanItem(label=PlanLabel.MODIFY, target="obsolete.py", reason="Change it.")],
+    )
+    with pytest.raises(ExecutionError, match="did not label Delete"):
+        RepositoryExecutor(
+            repo,
+            artifacts,
+            configured(),
+            runner=FakePiRunner(remove),
+        ).prepare()
+
+    write_plan(
+        repo,
+        artifacts,
+        [PlanItem(label=PlanLabel.DELETE, target="obsolete.py", reason="Remove it.")],
+    )
+    executor = RepositoryExecutor(
+        repo,
+        artifacts,
+        configured(),
+        runner=FakePiRunner(remove),
+    )
+    prepared = executor.prepare()
+    try:
+        result = executor.apply(prepared)
+    finally:
+        prepared.close()
+    assert result.status == "applied"
+    assert not target.exists()
+
+
+def test_validation_failure_preserves_applied_change(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = repo / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+    artifacts = repo / ".devstill"
+    write_plan(
+        repo,
+        artifacts,
+        [PlanItem(label=PlanLabel.MODIFY, target="app.py", reason="Update it.")],
+    )
+    config = configured()
+    config.executor.validation_commands = [
+        "python3 -c 'import sys; print(\"bad\"); sys.exit(4)'"
+    ]
+
+    def mutate(workspace: Path) -> None:
+        (workspace / "app.py").write_text("value = 2\n", encoding="utf-8")
+
+    executor = RepositoryExecutor(
+        repo,
+        artifacts,
+        config,
+        runner=FakePiRunner(mutate),
+    )
+    prepared = executor.prepare()
+    try:
+        result = executor.apply(prepared)
+    finally:
+        prepared.close()
+    assert result.status == "validation_failed"
+    assert result.validation[0].returncode == 4
+    assert "bad" in result.validation[0].output
+    assert target.read_text(encoding="utf-8") == "value = 2\n"
+
+
+def test_newest_plan_selection_and_explicit_source(tmp_path: Path) -> None:
+    artifacts = tmp_path / ".devstill"
+    artifacts.mkdir()
+    ordinary = artifacts / ".plan.json"
+    deep = artifacts / ".deep-plan.json"
+    ordinary.write_text("{}", encoding="utf-8")
+    deep.write_text("{}", encoding="utf-8")
+    ordinary.touch()
+    assert select_plan_artifact(artifacts)[0] == "plan"
+    assert select_plan_artifact(artifacts, "deep-plan") == ("deep-plan", deep)

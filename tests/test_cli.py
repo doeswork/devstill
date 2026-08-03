@@ -84,12 +84,18 @@ def test_cli_exposes_agent_and_plan_commands() -> None:
             "30",
             "--max-output-tokens",
             "1024",
+            "--planning-max-output-tokens",
+            "6144",
+            "--planning-reasoning",
+            "off",
         ]
     )
     assert configure.agent_action == "configure"
     assert configure.model == "local-model"
     assert configure.timeout == 30
     assert configure.max_output_tokens == 1024
+    assert configure.planning_max_output_tokens == 6144
+    assert configure.planning_reasoning == "off"
 
     plan = parser().parse_args(
         [
@@ -109,6 +115,38 @@ def test_cli_exposes_agent_and_plan_commands() -> None:
     assert plan.lexical_only
     with pytest.raises(SystemExit):
         parser().parse_args(["plan", "query", "--exact", "--semantic-only"])
+
+    deep = parser().parse_args(
+        [
+            "deep-plan",
+            "add activation",
+            "--initial-limit",
+            "4",
+            "--limit",
+            "9",
+            "--path",
+            "core/",
+            "--semantic-only",
+        ]
+    )
+    assert deep.command == "deep-plan"
+    assert deep.initial_limit == 4
+    assert deep.limit == 9
+    assert deep.path == "core/"
+    assert deep.semantic_only
+    defaults = parser().parse_args(["deep-plan", "query"])
+    assert defaults.initial_limit == 5
+    assert defaults.limit == 8
+    with pytest.raises(SystemExit):
+        parser().parse_args(["deep-plan", "query", "--exact", "--lexical-only"])
+
+    execute = parser().parse_args(
+        ["execute", "--from", "deep-plan", "--dry-run", "--json"]
+    )
+    assert execute.command == "execute"
+    assert execute.source == "deep-plan"
+    assert execute.dry_run
+    assert execute.json
 
 
 def test_agent_configure_from_nested_directory_and_secret_redaction(
@@ -131,6 +169,10 @@ def test_agent_configure_from_nested_directory_and_secret_redaction(
             "local-12b",
             "--api-key-env",
             "LOCAL_AGENT_KEY",
+            "--planning-max-output-tokens",
+            "5000",
+            "--planning-reasoning",
+            "auto",
         ]
     )
     assert cli.agent_command(args) == 0
@@ -138,8 +180,15 @@ def test_agent_configure_from_nested_directory_and_secret_redaction(
     assert configured.llm.enabled
     assert configured.llm.base_url == "http://localhost:9000/v1"
     assert configured.llm.model == "local-12b"
+    assert configured.llm.max_output_tokens == 2048
+    assert configured.llm.planning_max_output_tokens == 5000
+    assert configured.llm.planning_reasoning == "auto"
     output = capsys.readouterr().out
     assert "LOCAL_AGENT_KEY (environment)" in output
+    assert "General max output tokens: 2048" in output
+    assert "Planning max output tokens: 5000" in output
+    assert "Pi max output tokens: 49152" in output
+    assert "Planning reasoning: auto" in output
     assert "do-not-print-this-secret" not in output
 
     assert cli.agent_command(parser().parse_args(["agent", "disable"])) == 0
@@ -182,6 +231,68 @@ def test_agent_test_uses_configured_client(monkeypatch, tmp_path, capsys) -> Non
     assert cli.agent_command(parser().parse_args(["agent", "test"])) == 0
     assert calls["closed"]
     assert "Agent OK" in capsys.readouterr().out
+
+
+def test_execute_cli_dry_run_is_machine_readable_and_does_not_apply(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+) -> None:
+    config = DevstillConfig(
+        llm={"enabled": True, "base_url": "http://localhost/v1", "model": "model"}
+    )
+    calls: dict[str, object] = {}
+
+    class FakeResult:
+        status = "preview"
+
+        @staticmethod
+        def to_dict():
+            return {"status": "preview", "changed_files": ["app.py"]}
+
+    class FakePrepared:
+        result = FakeResult()
+        patch = "diff --git a/app.py b/app.py\n"
+
+        def close(self):
+            calls["closed"] = True
+
+    class FakeExecutor:
+        def __init__(self, repo_root, artifact_root, passed_config):
+            calls["repo_root"] = repo_root
+            calls["artifact_root"] = artifact_root
+            calls["config"] = passed_config
+
+        def prepare(self, *, source, progress):
+            calls["source"] = source
+            progress("Pi preview")
+            return FakePrepared()
+
+        def apply(self, *_args, **_kwargs):
+            calls["applied"] = True
+
+    monkeypatch.setattr(
+        cli, "_configured", lambda: (tmp_path / "devstill.json", config)
+    )
+    monkeypatch.setattr(cli, "RepositoryExecutor", FakeExecutor)
+    args = parser().parse_args(
+        ["execute", "--from", "deep-plan", "--dry-run", "--json"]
+    )
+    assert cli.execute_command(args) == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "status": "preview",
+        "changed_files": ["app.py"],
+    }
+    assert "Pi preview" in captured.err
+    assert calls["source"] == "deep-plan"
+    assert calls["closed"]
+    assert "applied" not in calls
+
+
+def test_execute_cli_rejects_conflicting_confirmation_flags() -> None:
+    with pytest.raises(ValueError, match="cannot be used together"):
+        cli.execute_command(parser().parse_args(["execute", "--dry-run", "--yes"]))
 
 
 def test_context_command_outputs_compact_json(monkeypatch, tmp_path, capsys) -> None:
@@ -339,7 +450,7 @@ def test_plan_command_outputs_json_writes_artifacts_and_preserves_context(
     assert [item["label"] for item in payload["items"]] == ["Add", "New File"]
     assert "Sending 1 source chunks" in captured.err
     assert "http://localhost:8080/v1/chat/completions" in captured.err
-    assert calls["limit"] == 32
+    assert calls["limit"] == 12
     assert calls["lexical_only"] is True
     assert calls["search_closed"] and calls["agent_closed"]
     assert (
@@ -398,6 +509,206 @@ def test_failed_plan_preserves_previous_artifacts(monkeypatch, tmp_path: Path) -
         cli.plan_command(parser().parse_args(["plan", "query"]))
     assert plan_markdown.read_text(encoding="utf-8") == "previous markdown\n"
     assert plan_json.read_text(encoding="utf-8") == "previous json\n"
+
+
+def test_deep_plan_command_refines_context_and_keeps_plan_artifacts(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+) -> None:
+    for relative in ("frontend/page.tsx", "frontend/geo.ts"):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"source for {relative}\n", encoding="utf-8")
+    artifact_root = tmp_path / ".devstill"
+    artifact_root.mkdir()
+    (artifact_root / ".plan.md").write_text("normal plan\n", encoding="utf-8")
+    (artifact_root / ".plan.json").write_text("normal json\n", encoding="utf-8")
+    config = DevstillConfig(
+        llm={"enabled": True, "base_url": "http://localhost/v1", "model": "model"}
+    )
+    queries: list[tuple[str, dict]] = []
+
+    class FakeSearch:
+        def __init__(self, *_args):
+            pass
+
+        def query(self, query, **kwargs):
+            queries.append((query, kwargs))
+            if query == "auto location":
+                return [make_result(path="frontend/page.tsx", name="Page")]
+            return [make_result(path="frontend/geo.ts", name="getLocation")]
+
+        def close(self):
+            pass
+
+    class FakeAgentClient:
+        endpoint = "http://localhost/v1/chat/completions"
+
+        def __init__(self, llm, **_kwargs):
+            self.config = llm
+
+        def chat(self, _messages, **kwargs):
+            if kwargs["schema_name"] == "devstill_deep_plan_initial":
+                return json.dumps(
+                    {
+                        "items": [
+                            {
+                                "label": "Modify",
+                                "target": "frontend/page.tsx",
+                                "reason": "Load geolocation when the page mounts.",
+                            }
+                        ]
+                    }
+                )
+            return json.dumps(
+                {
+                    "items": [
+                        {
+                            "label": "Modify",
+                            "target": "frontend/page.tsx",
+                            "reason": "Trigger geolocation during page initialization.",
+                        },
+                        {
+                            "label": "Read",
+                            "target": "frontend/geo.ts",
+                            "reason": "Reuse the shared browser geolocation helper.",
+                        },
+                    ]
+                }
+            )
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        cli, "_configured", lambda: (tmp_path / "devstill.json", config)
+    )
+    monkeypatch.setattr(cli, "HybridSearch", FakeSearch)
+    monkeypatch.setattr(cli, "AgentClient", FakeAgentClient)
+
+    args = parser().parse_args(
+        [
+            "deep-plan",
+            "auto location",
+            "--initial-limit",
+            "1",
+            "--limit",
+            "2",
+            "--json",
+        ]
+    )
+    assert cli.deep_plan_command(args) == 0
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert [item["target"] for item in payload["items"]] == [
+        "frontend/page.tsx",
+        "frontend/geo.ts",
+    ]
+    assert [query for query, _kwargs in queries] == [
+        "auto location",
+        "Load geolocation when the page mounts.",
+    ]
+    assert (artifact_root / ".plan.md").read_text(encoding="utf-8") == ("normal plan\n")
+    assert (artifact_root / ".plan.json").read_text(encoding="utf-8") == (
+        "normal json\n"
+    )
+    assert (artifact_root / ".deep-plan-initial.json").is_file()
+    assert (artifact_root / ".deep-plan.json").is_file()
+    assert "Initial Deep Plan complete" in captured.err
+    assert "2 Deep Plan chunks" in captured.err
+
+
+def test_deep_plan_rejects_invalid_limits() -> None:
+    with pytest.raises(ValueError, match="initial-limit"):
+        cli.deep_plan_command(
+            parser().parse_args(
+                ["deep-plan", "query", "--initial-limit", "0", "--limit", "10"]
+            )
+        )
+    with pytest.raises(ValueError, match="at least --initial-limit"):
+        cli.deep_plan_command(
+            parser().parse_args(
+                ["deep-plan", "query", "--initial-limit", "5", "--limit", "4"]
+            )
+        )
+
+
+def test_failed_deep_refinement_updates_initial_but_preserves_previous_final(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "page.py"
+    source.write_text("def page(): pass\n", encoding="utf-8")
+    artifact_root = tmp_path / ".devstill"
+    artifact_root.mkdir()
+    initial_path = artifact_root / ".deep-plan-initial.md"
+    final_path = artifact_root / ".deep-plan.md"
+    initial_path.write_text("old initial\n", encoding="utf-8")
+    final_path.write_text("old final\n", encoding="utf-8")
+    config = DevstillConfig(
+        llm={"enabled": True, "base_url": "http://localhost/v1", "model": "model"}
+    )
+
+    class FakeSearch:
+        def __init__(self, *_args):
+            pass
+
+        def query(self, *_args, **_kwargs):
+            return [make_result(path="page.py", name="page")]
+
+        def close(self):
+            pass
+
+    class FakeAgent:
+        endpoint = "http://localhost/v1/chat/completions"
+
+        def __init__(self, llm, **_kwargs):
+            self.config = llm
+            self.calls = 0
+
+        def chat(self, _messages, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return json.dumps(
+                    {
+                        "items": [
+                            {
+                                "label": "Modify",
+                                "target": "page.py",
+                                "reason": "Load location when the page mounts.",
+                            }
+                        ]
+                    }
+                )
+            return "not valid json"
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        cli, "_configured", lambda: (tmp_path / "devstill.json", config)
+    )
+    monkeypatch.setattr(cli, "HybridSearch", FakeSearch)
+    monkeypatch.setattr(cli, "AgentClient", FakeAgent)
+
+    with pytest.raises(ValueError, match="after one repair"):
+        cli.deep_plan_command(
+            parser().parse_args(
+                [
+                    "deep-plan",
+                    "auto location",
+                    "--initial-limit",
+                    "1",
+                    "--limit",
+                    "1",
+                ]
+            )
+        )
+
+    assert "Initial Pass" in initial_path.read_text(encoding="utf-8")
+    assert final_path.read_text(encoding="utf-8") == "old final\n"
 
 
 def test_parse_json_includes_parser_and_quality(monkeypatch, tmp_path, capsys) -> None:

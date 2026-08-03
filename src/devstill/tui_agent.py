@@ -9,7 +9,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, Static, Switch
+from textual.widgets import Button, Input, Label, Select, Static, Switch
 
 from devstill.config import LlmConfig
 
@@ -128,11 +128,30 @@ class AgentSetupScreen(ModalScreen[AgentSetupResult | None]):
                     type="number",
                     id="agent-timeout",
                 )
-                yield Label("Maximum output tokens", classes="agent-label")
+                yield Label(
+                    "General maximum output tokens",
+                    classes="agent-label",
+                )
                 yield Input(
                     str(self.config.max_output_tokens),
                     type="integer",
                     id="agent-max-tokens",
+                )
+                yield Label(
+                    "Planning maximum output tokens",
+                    classes="agent-label",
+                )
+                yield Input(
+                    str(self.config.planning_max_output_tokens),
+                    type="integer",
+                    id="agent-planning-max-tokens",
+                )
+                yield Label("Planning reasoning", classes="agent-label")
+                yield Select(
+                    (("Off (compatible fallback)", "off"), ("Automatic", "auto")),
+                    allow_blank=False,
+                    value=self.config.planning_reasoning,
+                    id="agent-planning-reasoning",
                 )
                 with Horizontal(id="agent-remember-row"):
                     yield Label(
@@ -167,6 +186,12 @@ class AgentSetupScreen(ModalScreen[AgentSetupResult | None]):
                 api_key_env=self.query_one("#agent-api-key-env", Input).value,
                 timeout_seconds=float(self.query_one("#agent-timeout", Input).value),
                 max_output_tokens=int(self.query_one("#agent-max-tokens", Input).value),
+                planning_max_output_tokens=int(
+                    self.query_one("#agent-planning-max-tokens", Input).value
+                ),
+                planning_reasoning=self.query_one(
+                    "#agent-planning-reasoning", Select
+                ).value,
             )
         except (TypeError, ValueError) as exc:
             self.query_one("#agent-form-error", Static).update(escape(str(exc)))

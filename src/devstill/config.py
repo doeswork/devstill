@@ -6,7 +6,7 @@ import re
 import stat
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -119,6 +119,8 @@ class LlmConfig(StrictModel):
     api_key_env: str = "DEVSTILL_AGENT_API_KEY"
     timeout_seconds: float = Field(default=300.0, ge=1, le=3600)
     max_output_tokens: int = Field(default=2048, ge=64, le=65536)
+    planning_max_output_tokens: int = Field(default=6144, ge=64, le=65536)
+    planning_reasoning: Literal["off", "auto"] = "off"
 
     @field_validator("base_url")
     @classmethod
@@ -159,6 +161,34 @@ class LlmConfig(StrictModel):
         return self
 
 
+class ExecutorConfig(StrictModel):
+    enabled: bool = True
+    backend: str = "pi"
+    timeout_seconds: float = Field(default=300.0, ge=1, le=3600)
+    max_output_tokens: int = Field(default=49152, ge=64, le=65536)
+    max_tool_calls: int = Field(default=16, ge=1, le=256)
+    validation_commands: list[str] = Field(default_factory=list)
+
+    @field_validator("backend")
+    @classmethod
+    def validate_backend(cls, value: str) -> str:
+        normalized = value.strip().casefold()
+        if normalized != "pi":
+            raise ValueError("executor backend must be pi")
+        return normalized
+
+    @field_validator("validation_commands")
+    @classmethod
+    def validate_commands(cls, value: list[str]) -> list[str]:
+        commands: list[str] = []
+        for command in value:
+            normalized = command.strip()
+            if not normalized or "\n" in normalized or "\r" in normalized:
+                raise ValueError("validation commands must be non-empty single lines")
+            commands.append(normalized)
+        return commands
+
+
 class DevstillConfig(StrictModel):
     version: int = 1
     repo: RepoConfig = Field(default_factory=RepoConfig)
@@ -166,6 +196,7 @@ class DevstillConfig(StrictModel):
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     files: FilesConfig = Field(default_factory=FilesConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
+    executor: ExecutorConfig = Field(default_factory=ExecutorConfig)
 
 
 def default_model_path() -> Path:
@@ -260,6 +291,16 @@ def default_config_dict() -> dict[str, Any]:
             "api_key_env": "DEVSTILL_AGENT_API_KEY",
             "timeout_seconds": 300,
             "max_output_tokens": 2048,
+            "planning_max_output_tokens": 6144,
+            "planning_reasoning": "off",
+        },
+        "executor": {
+            "enabled": True,
+            "backend": "pi",
+            "timeout_seconds": 300,
+            "max_output_tokens": 49152,
+            "max_tool_calls": 16,
+            "validation_commands": [],
         },
     }
 
@@ -283,10 +324,15 @@ def write_config(config_path: Path, config: DevstillConfig) -> Path:
         raise FileNotFoundError(config_path)
     raw = json.loads(config_path.read_text(encoding="utf-8"))
     raw["llm"] = config.llm.model_dump(mode="json")
+    raw["executor"] = config.executor.model_dump(mode="json")
     validated = DevstillConfig.model_validate(raw)
     rendered = (
         json.dumps(
-            {**raw, "llm": validated.llm.model_dump(mode="json")},
+            {
+                **raw,
+                "llm": validated.llm.model_dump(mode="json"),
+                "executor": validated.executor.model_dump(mode="json"),
+            },
             indent=2,
         )
         + "\n"

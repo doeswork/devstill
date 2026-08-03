@@ -11,6 +11,7 @@ from devstill.config import DevstillConfig
 from devstill.models import FileQuality, IndexProgress, IndexSummary
 from devstill.planning import PlanItem, PlanLabel, PlanOutput
 from devstill.tui_commands import (
+    TuiCommand,
     TuiCommandKind,
     TuiPreview,
     TuiWorkflow,
@@ -55,11 +56,18 @@ def test_tui_command_parser_and_aliases() -> None:
     assert parse_tui_command("/s login").kind is TuiCommandKind.SEARCH
     assert parse_tui_command("/c login").kind is TuiCommandKind.CONTEXT
     assert parse_tui_command("/p login").kind is TuiCommandKind.PLAN
+    deep = parse_tui_command("/deep-plan improve login")
+    assert deep.kind is TuiCommandKind.DEEP_PLAN
+    assert deep.query == "improve login"
     assert parse_tui_command("/?").kind is TuiCommandKind.HELP
     assert parse_tui_command("/index").kind is TuiCommandKind.INDEX
     assert parse_tui_command("/files").kind is TuiCommandKind.FILES
     assert parse_tui_command("/agent").kind is TuiCommandKind.AGENT
     assert parse_tui_command("/agent test").kind is TuiCommandKind.AGENT_TEST
+    execute = parse_tui_command("/execute deep-plan")
+    assert execute.kind is TuiCommandKind.EXECUTE
+    assert execute.query == "deep-plan"
+    assert parse_tui_command("/execute").kind is TuiCommandKind.EXECUTE
     assert parse_tui_command("/clear").kind is TuiCommandKind.CLEAR
     assert parse_tui_command("/quit").kind is TuiCommandKind.QUIT
 
@@ -71,7 +79,9 @@ def test_tui_command_parser_and_aliases() -> None:
         ("/search", "requires a query"),
         ("/context", "requires a query"),
         ("/plan", "requires a query"),
+        ("/deep-plan", "requires a query"),
         ("/agent enable", "accepts `configure` or `test`"),
+        ("/execute something", "accepts `plan` or `deep-plan`"),
         ("/index --rebuild", "does not accept arguments"),
         ("/remove", "Unknown command"),
     ],
@@ -90,7 +100,8 @@ def test_command_matching_and_help_describe_network_boundary() -> None:
     }
     assert matching_commands("ordinary text") == []
     help_text = help_markdown()
-    assert "Only `/plan` and `/agent test` use the network" in help_text
+    assert "`/execute`" in help_text
+    assert "use the configured model" in help_text
     assert "`/index`" in help_text
 
 
@@ -100,6 +111,7 @@ def test_search_markdown_preserves_source_and_uses_safe_fence() -> None:
     assert "core/views.py:10-11 — login_api (function)" in rendered
     assert code in rendered
     assert "````python" in rendered
+    assert "(function) — score 0.5000\n````python" in rendered
 
 
 def test_search_and_context_workflows_close_resources_and_write_artifacts(
@@ -233,6 +245,10 @@ def test_plan_workflow_reports_destination_and_preserves_context(
     )
 
     assert result.title == "Plan"
+    assert result.execution_offer is not None
+    assert result.execution_offer.source == "plan"
+    assert result.execution_offer.query == "add activation"
+    assert result.execution_offer.unresolved_searches == 0
     assert "🟢 Add — core/views.py" in result.markdown
     assert any(
         isinstance(message, str) and "Sending 1 source chunks" in message
@@ -240,11 +256,232 @@ def test_plan_workflow_reports_destination_and_preserves_context(
     )
     previews = [message for message in progress if isinstance(message, TuiPreview)]
     assert len(previews) == 1
-    assert "⚪ Pending — core/views.py" in previews[0].markdown
+    assert (
+        "- ⚪ Pending — core/views.py — Retrieved chunks: `register`"
+        in previews[0].markdown
+    )
     assert "Waiting for the agent" in previews[0].markdown
     assert closed == {"search": True, "agent": True}
     assert context_path.read_text(encoding="utf-8") == "keep me\n"
     assert (tmp_path / ".devstill/.plan.json").is_file()
+
+
+def test_deep_plan_workflow_stages_new_files_and_keeps_normal_plan(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    for relative in ("frontend/page.tsx", "frontend/geo.ts"):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"source for {relative}\n", encoding="utf-8")
+    config_path = tmp_path / "devstill.json"
+    config_path.write_text("{}", encoding="utf-8")
+    mark_index_ready(tmp_path)
+    normal_plan = tmp_path / ".devstill/.plan.md"
+    normal_plan.write_text("keep normal plan\n", encoding="utf-8")
+    config = DevstillConfig(
+        llm={"enabled": True, "base_url": "http://localhost/v1", "model": "model"}
+    )
+
+    class FakeSearch:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def query(self, query, **_kwargs):
+            if query == "auto location":
+                return [make_result(path="frontend/page.tsx", name="Page")]
+            return [make_result(path="frontend/geo.ts", name="getLocation")]
+
+        def close(self):
+            pass
+
+    class FakeAgent:
+        endpoint = "http://localhost/v1/chat/completions"
+
+        def __init__(self, llm, **_kwargs):
+            self.config = llm
+
+        def chat(self, _messages, **kwargs):
+            if kwargs["schema_name"] == "devstill_deep_plan_initial":
+                return json.dumps(
+                    {
+                        "items": [
+                            {
+                                "label": "Modify",
+                                "target": "frontend/page.tsx",
+                                "reason": "Load location when the page mounts.",
+                            }
+                        ]
+                    }
+                )
+            return json.dumps(
+                {
+                    "items": [
+                        {
+                            "label": "Modify",
+                            "target": "frontend/page.tsx",
+                            "reason": "Trigger location during page initialization.",
+                        },
+                        {
+                            "label": "Read",
+                            "target": "frontend/geo.ts",
+                            "reason": "Reuse the shared location helper.",
+                        },
+                    ]
+                }
+            )
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("devstill.tui_commands.HybridSearch", FakeSearch)
+    monkeypatch.setattr("devstill.tui_commands.AgentClient", FakeAgent)
+    progress: list[str | TuiPreview] = []
+    result = TuiWorkflow(
+        config_path,
+        config,
+        embedder=FakeWarmEmbedder(),
+        chroma_store=object(),
+    ).execute(parse_tui_command("/deep-plan auto location"), progress.append)
+
+    previews = [update for update in progress if isinstance(update, TuiPreview)]
+    assert len(previews) == 3
+    assert "⚪ Pending — frontend/page.tsx" in previews[0].markdown
+    assert "🟣 Modify — frontend/page.tsx" in previews[1].markdown
+    assert (
+        "- ⚪ Pending — frontend/geo.ts — Retrieved chunks: `getLocation`"
+        in previews[2].markdown
+    )
+    assert "🟣 Modify — frontend/page.tsx" in result.markdown
+    assert "🔵 Read — frontend/geo.ts" in result.markdown
+    assert result.execution_offer is not None
+    assert result.execution_offer.source == "deep-plan"
+    assert result.execution_offer.query == "auto location"
+    assert result.execution_offer.unresolved_searches == 0
+    assert normal_plan.read_text(encoding="utf-8") == "keep normal plan\n"
+    assert (tmp_path / ".devstill/.deep-plan-initial.json").is_file()
+    assert (tmp_path / ".devstill/.deep-plan.json").is_file()
+
+
+def test_execute_workflow_forwards_handoff_instruction(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls: dict[str, object] = {}
+    prepared = SimpleNamespace(result=object(), patch="diff")
+
+    class FakeExecutor:
+        def __init__(self, repo_root, artifact_root, config):
+            calls["paths"] = (repo_root, artifact_root)
+
+        def prepare(self, *, source, instruction, progress):
+            calls["source"] = source
+            calls["instruction"] = instruction
+            progress("Pi received the handoff")
+            return prepared
+
+    monkeypatch.setattr("devstill.tui_commands.RepositoryExecutor", FakeExecutor)
+    monkeypatch.setattr(
+        "devstill.tui_commands.render_execution_markdown",
+        lambda _result, _patch: "# Execution preview",
+    )
+    config_path = tmp_path / "devstill.json"
+    config_path.write_text("{}", encoding="utf-8")
+    progress: list[object] = []
+
+    result = TuiWorkflow(config_path, DevstillConfig()).execute(
+        TuiCommand(
+            TuiCommandKind.EXECUTE,
+            "/execute deep-plan",
+            "deep-plan",
+            "Reuse the existing geolocation helper.",
+        ),
+        progress.append,
+    )
+
+    assert result.prepared_execution is prepared
+    assert calls["source"] == "deep-plan"
+    assert calls["instruction"] == "Reuse the existing geolocation helper."
+    assert progress == [
+        "Preparing an isolated Pi execution workspace",
+        "Pi received the handoff",
+    ]
+
+
+def test_manual_plan_labels_are_validated_and_persisted(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "frontend/page.tsx"
+    target.parent.mkdir(parents=True)
+    target.write_text("export function Page() {}\n", encoding="utf-8")
+    config_path = tmp_path / "devstill.json"
+    config_path.write_text("{}", encoding="utf-8")
+    workflow = TuiWorkflow(
+        config_path,
+        DevstillConfig(),
+        embedder=FakeWarmEmbedder(),
+        chroma_store=object(),
+    )
+    reviewed = PlanOutput(
+        query="auto load location",
+        repository=str(tmp_path),
+        model="local-model",
+        items=[
+            PlanItem(
+                label=PlanLabel.MODIFY,
+                target="frontend/page.tsx",
+                reason="Trigger geolocation when the page mounts.",
+            )
+        ],
+    )
+
+    offer, markdown = workflow.save_manual_plan("deep-plan", reviewed)
+
+    assert offer.source == "deep-plan"
+    assert offer.unresolved_searches == 0
+    assert offer.plan == reviewed
+    assert "🟣 Modify — frontend/page.tsx" in markdown
+    saved = PlanOutput.model_validate_json(
+        (tmp_path / ".devstill/.deep-plan.json").read_text(encoding="utf-8")
+    )
+    assert saved == reviewed
+    assert not (tmp_path / ".devstill/.plan.json").exists()
+
+    unresolved = reviewed.model_copy(
+        update={
+            "items": [
+                PlanItem(
+                    label=PlanLabel.SEARCH,
+                    target="frontend/geo",
+                    reason="Locate the geolocation helper.",
+                )
+            ]
+        }
+    )
+    with pytest.raises(RuntimeError, match="Search entries"):
+        workflow.save_manual_plan("deep-plan", unresolved)
+    assert (
+        PlanOutput.model_validate_json(
+            (tmp_path / ".devstill/.deep-plan.json").read_text(encoding="utf-8")
+        )
+        == reviewed
+    )
+
+    partial_offer, partial_markdown = workflow.save_manual_plan(
+        "deep-plan",
+        unresolved,
+        allow_unresolved=True,
+    )
+    assert partial_offer.unresolved_searches == 1
+    assert partial_offer.plan == unresolved
+    assert "⚪ Search — frontend/geo" in partial_markdown
+    assert (
+        PlanOutput.model_validate_json(
+            (tmp_path / ".devstill/.deep-plan.json").read_text(encoding="utf-8")
+        )
+        == unresolved
+    )
+    workflow.close()
 
 
 def test_index_workflow_forwards_progress_and_closes_indexer(
@@ -433,6 +670,10 @@ def test_files_and_agent_status_workflows_do_not_expose_secret(
     agent = workflow.execute(parse_tui_command("/agent"))
     assert "DEVSTILL_AGENT_API_KEY" in agent.markdown
     assert "(**environment**)" in agent.markdown
+    assert "General max output tokens: **2048**" in agent.markdown
+    assert "Planning max output tokens: **6144**" in agent.markdown
+    assert "Pi max output tokens: **49152**" in agent.markdown
+    assert "Planning reasoning: **off**" in agent.markdown
     assert "top-secret-value" not in agent.markdown
 
 

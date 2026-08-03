@@ -43,6 +43,16 @@ def test_hybrid_exact_lexical_semantic_and_filters(configured_repo: tuple) -> No
     )
     semantic = search.query("where is profile data?", semantic_only=True, kind="class")
     assert semantic[0].chunk.name == "UserProfile"
+    embedder.calls.clear()
+    batched = search.query_many(
+        ["authentication", "profile"],
+        limit=8,
+        semantic_only=True,
+    )
+    assert len(batched) == 2
+    assert embedder.calls == [["authentication", "profile"]]
+    assert HybridSearch._candidate_limit(12) == 50
+    assert HybridSearch._candidate_limit(16) == 64
     assert search.query("profile", path="missing/") == []
     search.close()
 

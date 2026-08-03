@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from enum import Enum
 from pathlib import Path
 from typing import ClassVar
 
@@ -11,6 +12,8 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.widgets import (
+    Button,
+    Collapsible,
     Footer,
     Header,
     Input,
@@ -18,6 +21,7 @@ from textual.widgets import (
     Markdown,
     OptionList,
     ProgressBar,
+    Select,
     Static,
     TextArea,
 )
@@ -32,12 +36,16 @@ from devstill.credentials import (
     delete_api_key,
     store_api_key,
 )
+from devstill.executor import PreparedExecution
 from devstill.models import IndexProgress
+from devstill.pi_runtime import inspect_pi
+from devstill.planning import PlanItem, PlanLabel, PlanOutput
 from devstill.tui_agent import AgentSetupAction, AgentSetupResult, AgentSetupScreen
 from devstill.tui_commands import (
     COMMAND_SPECS,
     TuiCommand,
     TuiCommandKind,
+    TuiExecutionOffer,
     TuiPreview,
     TuiResult,
     TuiWorkflow,
@@ -83,6 +91,55 @@ class SessionEntry(Vertical):
         self.query_one(".entry-body", Markdown).update(markdown)
 
 
+class ExecutionSessionEntry(SessionEntry):
+    def __init__(self, command: str) -> None:
+        super().__init__(command, "")
+        self.activity: list[str] = []
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            f"[b]COMMAND[/b]  [dim]{escape(self.command)}[/dim]",
+            classes="entry-heading",
+        )
+        yield Collapsible(
+            Static("", classes="execution-activity-log"),
+            title="Pi activity · running",
+            collapsed=False,
+            classes="execution-activity",
+        )
+        yield Markdown(self.markdown, classes="entry-body")
+
+    def append_activity(self, message: str) -> None:
+        self.activity.append(message)
+        rendered = "\n".join(f"• {escape(item)}" for item in self.activity)
+        self.query_one(".execution-activity-log", Static).update(rendered)
+
+    def complete_activity(
+        self,
+        *,
+        tool_calls: int | None = None,
+        elapsed_seconds: float | None = None,
+    ) -> None:
+        title = "Pi activity · complete"
+        if tool_calls is not None and elapsed_seconds is not None:
+            title += f" · {tool_calls} tool calls · {elapsed_seconds:.1f}s"
+        panel = self.query_one(Collapsible)
+        panel.title = title
+        panel.collapsed = True
+
+    def fail_activity(self, message: str) -> None:
+        self.append_activity(message)
+        panel = self.query_one(Collapsible)
+        panel.title = "Pi activity · failed"
+        panel.collapsed = False
+
+    def cancel_activity(self) -> None:
+        self.append_activity("Pi execution cancelled")
+        panel = self.query_one(Collapsible)
+        panel.title = "Pi activity · cancelled"
+        panel.collapsed = False
+
+
 class PromptTextArea(TextArea):
     """Compact multiline prompt where Enter submits and Shift+Enter adds a line."""
 
@@ -102,6 +159,159 @@ class PromptTextArea(TextArea):
     def action_newline(self) -> None:
         start, end = self.selection
         self.replace("\n", start, end, maintain_selection_offset=False)
+
+
+class ComposerMode(str, Enum):
+    NORMAL = "normal"
+    PI_HANDOFF = "pi_handoff"
+    SEARCH_PATH = "search_path"
+    PATCH_APPROVAL = "patch_approval"
+
+
+PLAN_LABEL_OPTIONS = (
+    ("🔵 Read", PlanLabel.READ.value),
+    ("🟣 Modify", PlanLabel.MODIFY.value),
+    ("🔴 Delete", PlanLabel.DELETE.value),
+    ("🟢 Add", PlanLabel.ADD.value),
+)
+SEARCH_LABEL_OPTIONS = (
+    ("⚪ Search", PlanLabel.SEARCH.value),
+    *PLAN_LABEL_OPTIONS,
+)
+
+
+class PlanImpactRow(Vertical):
+    class LabelSelected(Message):
+        def __init__(self, row: PlanImpactRow, label: PlanLabel) -> None:
+            super().__init__()
+            self.row = row
+            self.index = row.index
+            self.label = label
+
+    def __init__(self, index: int, item: PlanItem) -> None:
+        super().__init__(classes="plan-impact-row")
+        self.index = index
+        self.item = item
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(classes="plan-impact-heading"):
+            if self.item.label is PlanLabel.NEW_FILE:
+                yield Static("🩷 New File", classes="plan-impact-fixed-label")
+            else:
+                options = (
+                    SEARCH_LABEL_OPTIONS
+                    if self.item.label is PlanLabel.SEARCH
+                    else PLAN_LABEL_OPTIONS
+                )
+                yield Select(
+                    options,
+                    allow_blank=False,
+                    value=self.item.label.value,
+                    classes="plan-impact-label",
+                    compact=True,
+                )
+            yield Static(
+                f"— {escape(self.item.target)}",
+                classes="plan-impact-target",
+            )
+        yield Static(escape(self.item.reason), classes="plan-impact-reason")
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select not in self.query(Select) or not isinstance(event.value, str):
+            return
+        event.stop()
+        self.post_message(self.LabelSelected(self, PlanLabel(event.value)))
+
+    def update_item(self, item: PlanItem) -> None:
+        if item == self.item:
+            select = self.query_one_optional(Select)
+            if select is not None and select.value != item.label.value:
+                select.value = item.label.value
+            return
+        self.item = item
+        self.query_one(".plan-impact-target", Static).update(f"— {escape(item.target)}")
+        self.query_one(".plan-impact-reason", Static).update(escape(item.reason))
+        select = self.query_one_optional(Select)
+        if select is not None:
+            select.set_options(
+                SEARCH_LABEL_OPTIONS
+                if item.label is PlanLabel.SEARCH
+                else PLAN_LABEL_OPTIONS
+            )
+            select.value = item.label.value
+
+    def set_editable(self, editable: bool) -> None:
+        select = self.query_one_optional(Select)
+        if select is not None:
+            select.disabled = not editable
+
+
+class PlanSessionEntry(Vertical):
+    def __init__(
+        self,
+        command: str,
+        plan: PlanOutput,
+        source: str,
+    ) -> None:
+        super().__init__(classes="session-entry plan-session-entry")
+        self.command = command
+        self.plan = plan
+        self.source = source
+
+    @property
+    def title(self) -> str:
+        return (
+            "Devstill Deep Plan"
+            if self.source == "deep-plan"
+            else "Devstill File-Impact Plan"
+        )
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            f"[b]COMMAND[/b]  [dim]{escape(self.command)}[/dim]",
+            classes="entry-heading",
+        )
+        with Vertical(classes="plan-impact-body"):
+            yield Static(f"[b]{self.title}[/b]", classes="plan-impact-title")
+            yield Static(
+                f"Query: {escape(self.plan.query)} · "
+                f"Repository: {escape(self.plan.repository)} · "
+                f"Model: {escape(self.plan.model)}",
+                classes="plan-impact-provenance",
+            )
+            for index, item in enumerate(self.plan.items):
+                yield PlanImpactRow(index, item)
+            yield Static("", classes="plan-impact-status")
+
+    def _active_rows(self) -> list[PlanImpactRow]:
+        return [row for row in self.query(PlanImpactRow) if row.display]
+
+    def update_plan(self, plan: PlanOutput) -> None:
+        self.plan = plan
+        for row, item in zip(self._active_rows(), plan.items, strict=True):
+            row.update_item(item)
+
+    def remove_plan_item(self, index: int, plan: PlanOutput) -> None:
+        rows = self._active_rows()
+        removed = rows[index]
+        removed.set_editable(False)
+        removed.display = False
+        remaining = [row for position, row in enumerate(rows) if position != index]
+        self.plan = plan
+        for new_index, (row, item) in enumerate(
+            zip(remaining, plan.items, strict=True)
+        ):
+            row.index = new_index
+            row.update_item(item)
+
+    def set_editable(self, editable: bool) -> None:
+        for row in self._active_rows():
+            row.set_editable(editable)
+
+    def set_status(self, message: str, *, error: bool = False) -> None:
+        status = self.query_one(".plan-impact-status", Static)
+        status.set_class(error, "error")
+        status.update(escape(message))
 
 
 class DevstillApp(App[None]):
@@ -146,7 +356,7 @@ class DevstillApp(App[None]):
 
     .session-entry {
         height: auto;
-        margin-bottom: 1;
+        margin-bottom: 0;
         border-left: thick $accent;
         background: $surface;
     }
@@ -156,8 +366,8 @@ class DevstillApp(App[None]):
     }
 
     .entry-heading {
-        height: 3;
-        padding: 1 2;
+        height: 1;
+        padding: 0 1;
         color: $accent;
         background: $boost;
     }
@@ -168,7 +378,77 @@ class DevstillApp(App[None]):
 
     .entry-body {
         height: auto;
-        padding: 0 2 1 2;
+        padding: 0 1;
+    }
+
+    .execution-activity {
+        height: auto;
+        padding: 0 1;
+        border-top: none;
+        background: $surface;
+    }
+
+    .execution-activity-log {
+        height: auto;
+        color: $text-muted;
+    }
+
+    .plan-impact-body {
+        height: auto;
+        padding: 0 1;
+    }
+
+    .plan-impact-title {
+        height: 1;
+        text-style: bold;
+    }
+
+    .plan-impact-provenance {
+        height: auto;
+        color: $text-muted;
+    }
+
+    .plan-impact-row {
+        height: auto;
+    }
+
+    .plan-impact-heading {
+        height: 1;
+        align-vertical: middle;
+    }
+
+    .plan-impact-label {
+        width: 18;
+    }
+
+    .plan-impact-fixed-label {
+        width: 18;
+        height: 1;
+        padding-left: 1;
+        color: $secondary;
+    }
+
+    .plan-impact-target {
+        width: 1fr;
+        height: auto;
+        padding-left: 1;
+    }
+
+    .plan-impact-reason {
+        height: auto;
+        padding: 0 1;
+        color: $text-muted;
+    }
+
+    .plan-impact-status {
+        height: auto;
+        min-height: 1;
+        padding: 0 1;
+        color: $warning;
+    }
+
+    .plan-impact-status.error {
+        color: $error;
     }
 
     #composer {
@@ -225,6 +505,19 @@ class DevstillApp(App[None]):
         height: 1;
         padding: 0 1;
         color: $text-muted;
+    }
+
+    #composer-actions {
+        display: none;
+        height: 3;
+        padding: 0 1;
+        align-horizontal: right;
+    }
+
+    #composer-actions Button {
+        display: none;
+        min-width: 12;
+        margin-left: 1;
     }
 
     #file-progress {
@@ -297,6 +590,15 @@ class DevstillApp(App[None]):
         self._history_index: int | None = None
         self._palette_specs = []
         self._sidebar_manual: bool | None = None
+        self._composer_mode = ComposerMode.NORMAL
+        self._pending_execution: PreparedExecution | None = None
+        self._pending_entry: SessionEntry | None = None
+        self._handoff_offer: TuiExecutionOffer | None = None
+        self._handoff_entry: PlanSessionEntry | SessionEntry | None = None
+        self._handoff_instruction_draft = ""
+        self._resolving_search_index: int | None = None
+        self._resolving_search_label: PlanLabel | None = None
+        self._pi_status = inspect_pi()
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -307,8 +609,8 @@ class DevstillApp(App[None]):
                     yield Static(
                         "[b]Devstill is ready.[/b]\n"
                         "Type a question for local hybrid search, or type [b]/[/b] "
-                        "for commands. Only [b]/plan[/b] and [b]/agent test[/b] "
-                        "use the network.",
+                        "for commands. [b]/plan[/b], [b]/deep-plan[/b], "
+                        "[b]/execute[/b], and [b]/agent test[/b] use the configured model.",
                         id="welcome",
                     )
                 with Vertical(id="composer"):
@@ -322,6 +624,25 @@ class DevstillApp(App[None]):
                             compact=True,
                         )
                         yield LoadingIndicator(id="busy")
+                    with Horizontal(id="composer-actions"):
+                        yield Button("Not now", id="cancel-pi-handoff")
+                        yield Button(
+                            "Preview with Pi",
+                            id="start-pi-handoff",
+                            variant="success",
+                        )
+                        yield Button("Cancel", id="cancel-search-path")
+                        yield Button(
+                            "Use file",
+                            id="use-search-path",
+                            variant="primary",
+                        )
+                        yield Button("Cancel", id="cancel-execution")
+                        yield Button(
+                            "Apply patch",
+                            id="apply-execution",
+                            variant="warning",
+                        )
                     yield Static("", id="file-progress")
                     yield Static("Ready", id="activity")
                     yield ProgressBar(
@@ -355,11 +676,250 @@ class DevstillApp(App[None]):
             self._start_warmup(warm)
 
     def on_unmount(self) -> None:
+        if self._pending_execution is not None:
+            self._pending_execution.close()
+            self._pending_execution = None
         if self._busy:
             return
         close = getattr(self.workflow, "close", None)
         if callable(close):
             close()
+
+    def _show_composer_actions(self, *button_ids: str) -> None:
+        actions = self.query_one("#composer-actions", Horizontal)
+        visible = set(button_ids)
+        actions.display = bool(visible)
+        for button in actions.query(Button):
+            button.display = button.id in visible
+
+    def _set_composer_mode(self, mode: ComposerMode) -> None:
+        self._composer_mode = mode
+        prompt = self.query_one("#command-input", PromptTextArea)
+        sidebar = self.query_one("#sidebar-commands", OptionList)
+        sidebar.disabled = mode is not ComposerMode.NORMAL
+        self._hide_palette()
+        if mode is ComposerMode.NORMAL:
+            prompt.placeholder = "Search the repository or type / for commands"
+            prompt.disabled = self._busy
+            self._show_composer_actions()
+        elif mode is ComposerMode.PI_HANDOFF:
+            unresolved = bool(
+                self._handoff_offer and self._handoff_offer.unresolved_searches
+            )
+            prompt.placeholder = (
+                "Optional Pi instructions; resolve Search labels to unlock preview"
+                if unresolved
+                else "Optional Pi instructions; blank uses the original request"
+            )
+            prompt.disabled = self._busy
+            buttons = ["cancel-pi-handoff"]
+            if not unresolved:
+                buttons.append("start-pi-handoff")
+            self._show_composer_actions(*buttons)
+        elif mode is ComposerMode.SEARCH_PATH:
+            prompt.placeholder = "Exact repository-relative file path"
+            prompt.disabled = self._busy
+            self._show_composer_actions("cancel-search-path", "use-search-path")
+        else:
+            prompt.placeholder = "Review the patch above before applying it"
+            prompt.disabled = True
+            self._show_composer_actions("cancel-execution", "apply-execution")
+
+    def _refresh_handoff(self) -> None:
+        offer = self._handoff_offer
+        entry = self._handoff_entry
+        if offer is None or entry is None:
+            return
+        if isinstance(entry, PlanSessionEntry):
+            entry.set_editable(True)
+            if offer.unresolved_searches:
+                count = offer.unresolved_searches
+                entry.set_status(
+                    f"Pi is blocked by {count} unresolved Search item"
+                    f"{'s' if count != 1 else ''}. Click a white Search label "
+                    "and choose its concrete impact."
+                )
+            else:
+                entry.set_status(
+                    "Implement this plan with Pi? Enter optional instructions "
+                    "below, or leave them blank to reuse the original request."
+                )
+        prompt = self.query_one("#command-input", PromptTextArea)
+        prompt.text = self._handoff_instruction_draft
+        self._set_composer_mode(ComposerMode.PI_HANDOFF)
+        if not offer.unresolved_searches:
+            prompt.focus()
+        elif isinstance(entry, PlanSessionEntry):
+            for row in entry.query(PlanImpactRow):
+                if not row.display:
+                    continue
+                if row.item.label is PlanLabel.SEARCH:
+                    select = row.query_one_optional(Select)
+                    if select is not None:
+                        select.focus()
+                    break
+
+    def _enter_handoff(
+        self,
+        offer: TuiExecutionOffer,
+        entry: PlanSessionEntry | SessionEntry,
+    ) -> None:
+        self._handoff_offer = offer
+        self._handoff_entry = entry
+        self._handoff_instruction_draft = ""
+        self._resolving_search_index = None
+        self._resolving_search_label = None
+        self._refresh_handoff()
+        self.query_one("#session-feed", VerticalScroll).scroll_end(animate=False)
+
+    def _leave_handoff(self, *, activity: str) -> None:
+        entry = self._handoff_entry
+        if isinstance(entry, PlanSessionEntry):
+            entry.set_editable(False)
+            entry.set_status("")
+        self._handoff_offer = None
+        self._handoff_entry = None
+        self._handoff_instruction_draft = ""
+        self._resolving_search_index = None
+        self._resolving_search_label = None
+        prompt = self.query_one("#command-input", PromptTextArea)
+        prompt.text = ""
+        self._set_composer_mode(ComposerMode.NORMAL)
+        self.query_one("#activity", Static).update(activity)
+        prompt.focus()
+
+    def _begin_search_resolution(self, index: int, label: PlanLabel) -> None:
+        offer = self._handoff_offer
+        entry = self._handoff_entry
+        if (
+            offer is None
+            or offer.plan is None
+            or not isinstance(entry, PlanSessionEntry)
+        ):
+            return
+        self._handoff_instruction_draft = self.query_one(
+            "#command-input", PromptTextArea
+        ).text
+        self._resolving_search_index = index
+        self._resolving_search_label = label
+        entry.set_status(
+            f"Enter the exact existing repository file for Search item {index + 1} "
+            f"and label it {label.value}."
+        )
+        prompt = self.query_one("#command-input", PromptTextArea)
+        prompt.text = ""
+        self._set_composer_mode(ComposerMode.SEARCH_PATH)
+        prompt.focus()
+
+    def _cancel_search_resolution(self) -> None:
+        entry = self._handoff_entry
+        offer = self._handoff_offer
+        if isinstance(entry, PlanSessionEntry) and offer and offer.plan:
+            entry.update_plan(offer.plan)
+        self._resolving_search_index = None
+        self._resolving_search_label = None
+        self._refresh_handoff()
+
+    def _persist_reviewed_plan(
+        self,
+        plan: PlanOutput,
+        *,
+        update_entry: bool = True,
+    ) -> bool:
+        offer = self._handoff_offer
+        entry = self._handoff_entry
+        if offer is None or not isinstance(entry, PlanSessionEntry):
+            return False
+        save_manual_plan = getattr(self.workflow, "save_manual_plan", None)
+        if not callable(save_manual_plan):
+            entry.set_status(
+                "This TUI workflow cannot persist manual Plan labels.", error=True
+            )
+            return False
+        try:
+            updated_offer, _markdown = save_manual_plan(
+                offer.source,
+                plan,
+                allow_unresolved=True,
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            if offer.plan is not None:
+                entry.update_plan(offer.plan)
+            entry.set_status(str(exc), error=True)
+            return False
+        self._handoff_offer = updated_offer
+        if update_entry:
+            entry.update_plan(plan)
+        self.query_one("#activity", Static).update("Plan label saved")
+        return True
+
+    def _use_search_path(self) -> None:
+        offer = self._handoff_offer
+        index = self._resolving_search_index
+        label = self._resolving_search_label
+        if offer is None or offer.plan is None or index is None or label is None:
+            return
+        target = (
+            self.query_one("#command-input", PromptTextArea)
+            .text.strip()
+            .replace("\\", "/")
+        )
+        if not target:
+            if isinstance(self._handoff_entry, PlanSessionEntry):
+                self._handoff_entry.set_status(
+                    "Enter an exact repository-relative file path.", error=True
+                )
+            self.query_one("#command-input", PromptTextArea).focus()
+            return
+        old_item = offer.plan.items[index]
+        items = list(offer.plan.items)
+        duplicate = next(
+            (
+                (position, item)
+                for position, item in enumerate(items)
+                if position != index
+                and item.label is not PlanLabel.SEARCH
+                and item.target == target
+            ),
+            None,
+        )
+        if duplicate is not None:
+            _duplicate_index, existing = duplicate
+            del items[index]
+            reviewed = offer.plan.model_copy(update={"items": items})
+            if not self._persist_reviewed_plan(reviewed, update_entry=False):
+                self.query_one("#command-input", PromptTextArea).focus()
+                return
+            if isinstance(self._handoff_entry, PlanSessionEntry):
+                self._handoff_entry.remove_plan_item(index, reviewed)
+            self._resolving_search_index = None
+            self._resolving_search_label = None
+            self._refresh_handoff()
+            if isinstance(self._handoff_entry, PlanSessionEntry):
+                remaining = (
+                    self._handoff_offer.unresolved_searches
+                    if self._handoff_offer is not None
+                    else 0
+                )
+                suffix = (
+                    f" {remaining} Search item"
+                    f"{'s remain' if remaining != 1 else ' remains'}."
+                    if remaining
+                    else " The Plan is ready for Pi."
+                )
+                self._handoff_entry.set_status(
+                    f"Resolved the redundant Search with {existing.target}; "
+                    f"the existing {existing.label.value} label was kept.{suffix}"
+                )
+            return
+        items[index] = PlanItem(label=label, target=target, reason=old_item.reason)
+        reviewed = offer.plan.model_copy(update={"items": items})
+        if not self._persist_reviewed_plan(reviewed):
+            self.query_one("#command-input", PromptTextArea).focus()
+            return
+        self._resolving_search_index = None
+        self._resolving_search_label = None
+        self._refresh_handoff()
 
     def on_resize(self, event: events.Resize) -> None:
         self._apply_sidebar_visibility(event.size.width)
@@ -389,9 +949,14 @@ class DevstillApp(App[None]):
             if status["agent_enabled"]
             else "[dim]disabled[/dim]"
         )
+        pi = (
+            f"[green]{escape(str(self._pi_status.pi_version))}[/green]"
+            if self._pi_status.ready
+            else "[yellow]missing[/yellow]"
+        )
         self.query_one("#workspace-status", Static).update(
             f"[b]{escape(str(status['repository']))}[/b]  •  Index {index}  •  "
-            f"Embeddings {model}  •  Agent {agent}"
+            f"Embeddings {model}  •  Agent {agent}  •  Pi {pi}"
         )
         key_state = str(status["key_source"])
         runtime_state = str(getattr(self.workflow, "runtime_state", "external"))
@@ -404,6 +969,8 @@ class DevstillApp(App[None]):
             "[b]DEFAULTS[/b]\n"
             "Search: hybrid × 10\n"
             "Context/plan: 5\n"
+            "Deep Plan: 5 → 10\n"
+            "Execute: preview → approve\n"
             "Tests: excluded\n\n"
             f"[b]INDEX[/b]\n{escape(str(status['quality']))}\n\n"
             f"[b]ENCODER[/b]\n[{runtime_color}]"
@@ -438,7 +1005,13 @@ class DevstillApp(App[None]):
             return
         prompt = event.text_area
         prompt.styles.height = max(1, min(6, prompt.text.count("\n") + 1))
-        self._update_palette(prompt.text)
+        if self._composer_mode is ComposerMode.NORMAL:
+            self._update_palette(prompt.text)
+        elif self._composer_mode is ComposerMode.PI_HANDOFF:
+            self._handoff_instruction_draft = prompt.text
+            self._hide_palette()
+        else:
+            self._hide_palette()
 
     def _update_palette(self, value: str) -> None:
         palette = self.query_one("#command-palette", OptionList)
@@ -467,6 +1040,18 @@ class DevstillApp(App[None]):
     ) -> None:
         if event.prompt.id != "command-input" or self._busy:
             return
+        if self._composer_mode is ComposerMode.PI_HANDOFF:
+            if self._handoff_offer and not self._handoff_offer.unresolved_searches:
+                self._start_pi_preview()
+            return
+        if self._composer_mode is ComposerMode.SEARCH_PATH:
+            self._use_search_path()
+            return
+        if self._composer_mode is ComposerMode.PATCH_APPROVAL:
+            self.query_one("#activity", Static).update(
+                "Click Apply patch to approve this change"
+            )
+            return
         value = event.prompt.text.strip()
         palette = self.query_one("#command-palette", OptionList)
         exact_immediate = any(
@@ -485,6 +1070,11 @@ class DevstillApp(App[None]):
         if self._busy:
             self.query_one("#activity", Static).update(
                 "Wait for the current command to finish"
+            )
+            return
+        if self._composer_mode is not ComposerMode.NORMAL:
+            self.query_one("#activity", Static).update(
+                "Finish or cancel the active Pi step first"
             )
             return
         self._hide_palette()
@@ -521,6 +1111,125 @@ class DevstillApp(App[None]):
             self.exit()
             return
         self._start_worker(command)
+
+    async def on_plan_impact_row_label_selected(
+        self,
+        event: PlanImpactRow.LabelSelected,
+    ) -> None:
+        if (
+            self._composer_mode is not ComposerMode.PI_HANDOFF
+            or self._handoff_offer is None
+            or self._handoff_offer.plan is None
+            or self._handoff_entry is None
+            or event.row not in self._handoff_entry.query(PlanImpactRow)
+        ):
+            return
+        plan = self._handoff_offer.plan
+        old_item = plan.items[event.index]
+        if event.label is old_item.label:
+            return
+        if old_item.label is PlanLabel.SEARCH:
+            self._begin_search_resolution(event.index, event.label)
+            return
+        if event.label is PlanLabel.SEARCH or old_item.label is PlanLabel.NEW_FILE:
+            if isinstance(self._handoff_entry, PlanSessionEntry):
+                self._handoff_entry.update_plan(plan)
+            return
+        items = list(plan.items)
+        items[event.index] = PlanItem(
+            label=event.label,
+            target=old_item.target,
+            reason=old_item.reason,
+        )
+        if self._persist_reviewed_plan(plan.model_copy(update={"items": items})):
+            self._refresh_handoff()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = event.button.id
+        if button_id == "cancel-pi-handoff":
+            self._leave_handoff(activity="Plan ready; Pi not started")
+        elif button_id == "start-pi-handoff":
+            self._start_pi_preview()
+        elif button_id == "cancel-search-path":
+            self._cancel_search_resolution()
+        elif button_id == "use-search-path":
+            self._use_search_path()
+        elif button_id == "cancel-execution":
+            self._cancel_execution_approval()
+        elif button_id == "apply-execution":
+            self._apply_execution_approval()
+
+    def _start_pi_preview(self) -> None:
+        offer = self._handoff_offer
+        if offer is None or offer.unresolved_searches:
+            return
+        instruction = self.query_one("#command-input", PromptTextArea).text.strip()
+        source = offer.source
+        entry = self._handoff_entry
+        if isinstance(entry, PlanSessionEntry):
+            entry.set_editable(False)
+            entry.set_status("Pi is preparing a patch from this approved Plan.")
+        self._handoff_offer = None
+        self._handoff_entry = None
+        self._handoff_instruction_draft = ""
+        self._resolving_search_index = None
+        self._resolving_search_label = None
+        self.query_one("#command-input", PromptTextArea).text = ""
+        self._set_composer_mode(ComposerMode.NORMAL)
+        self._start_worker(
+            TuiCommand(
+                TuiCommandKind.EXECUTE,
+                f"/execute {source}",
+                source,
+                instruction,
+            )
+        )
+
+    def _cancel_execution_approval(self) -> None:
+        prepared = self._pending_execution
+        entry = self._pending_entry
+        self._pending_execution = None
+        self._pending_entry = None
+        if prepared is not None:
+            prepared.close()
+        if entry is not None:
+            entry.update_markdown(
+                f"{entry.markdown.rstrip()}\n## Cancelled\n"
+                "The patch was not applied; working files are unchanged."
+            )
+        self.query_one("#command-input", PromptTextArea).text = ""
+        self._set_composer_mode(ComposerMode.NORMAL)
+        self.query_one("#activity", Static).update("Execution cancelled")
+        self.query_one("#command-input", PromptTextArea).focus()
+
+    def _apply_execution_approval(self) -> None:
+        prepared = self._pending_execution
+        entry = self._pending_entry
+        self._pending_execution = None
+        self._pending_entry = None
+        if prepared is None:
+            return
+        self._set_composer_mode(ComposerMode.NORMAL)
+        self._busy = True
+        self._active_command = TuiCommand(
+            TuiCommandKind.EXECUTE,
+            "/execute apply",
+        )
+        self._live_entry = entry
+        prompt = self.query_one("#command-input", PromptTextArea)
+        prompt.disabled = True
+        self.query_one("#busy", LoadingIndicator).display = True
+        self.query_one("#activity", Static).update("Applying reviewed Pi patch")
+        self._active_worker = self.run_worker(
+            lambda: self.workflow.apply_execution(
+                prepared,
+                self._thread_progress,
+            ),
+            name="execute-apply",
+            group="commands",
+            exit_on_error=False,
+            thread=True,
+        )
 
     async def _agent_setup_complete(
         self,
@@ -652,17 +1361,40 @@ class DevstillApp(App[None]):
         try:
             if isinstance(update, TuiPreview):
                 self.call_from_thread(self._show_preview, update)
+            elif (
+                isinstance(update, str)
+                and self._active_command is not None
+                and self._active_command.kind is TuiCommandKind.EXECUTE
+                and self._active_command.raw != "/execute apply"
+            ):
+                self.call_from_thread(self._show_execution_progress, update)
             else:
                 self.call_from_thread(self._set_progress, update)
         except RuntimeError:
             # The terminal may close while a non-cancellable CPU worker is finishing.
             pass
 
-    async def _show_preview(self, preview: TuiPreview) -> None:
+    async def _show_execution_progress(self, message: str) -> None:
+        command = self._active_command
         if (
-            self._active_command is None
-            or self._active_command.kind is not TuiCommandKind.PLAN
+            command is None
+            or command.kind is not TuiCommandKind.EXECUTE
+            or command.raw == "/execute apply"
         ):
+            self._set_progress(message)
+            return
+        if self._live_entry is None:
+            self._live_entry = await self._append_execution_entry(command.raw)
+        if isinstance(self._live_entry, ExecutionSessionEntry):
+            self._live_entry.append_activity(message)
+            self.query_one("#session-feed", VerticalScroll).scroll_end(animate=False)
+        self._set_progress(message)
+
+    async def _show_preview(self, preview: TuiPreview) -> None:
+        if self._active_command is None or self._active_command.kind not in {
+            TuiCommandKind.PLAN,
+            TuiCommandKind.DEEP_PLAN,
+        }:
             return
         if self._live_entry is None:
             self._live_entry = await self._append_entry(
@@ -671,9 +1403,7 @@ class DevstillApp(App[None]):
             )
         else:
             self._live_entry.update_markdown(preview.markdown)
-        self.query_one("#activity", Static).update(
-            "Retrieved files are ready; waiting for the agent"
-        )
+        self.query_one("#activity", Static).update(preview.status)
 
     def _set_progress(self, update: str | IndexProgress) -> None:
         if isinstance(update, str):
@@ -715,11 +1445,39 @@ class DevstillApp(App[None]):
             return
         if event.state is WorkerState.SUCCESS:
             result = event.worker.result
+            is_pi_preview = bool(
+                self._active_command is not None
+                and self._active_command.kind is TuiCommandKind.EXECUTE
+                and self._active_command.raw != "/execute apply"
+            )
+            rendered_entry: PlanSessionEntry | SessionEntry | None = None
             if result is not None and self._active_command is not None:
-                if self._live_entry is not None:
+                offer = result.execution_offer
+                if offer is not None and offer.plan is not None:
+                    if self._live_entry is not None:
+                        await self._live_entry.remove()
+                    rendered_entry = await self._append_plan_entry(
+                        self._active_command.raw,
+                        offer,
+                    )
+                elif self._live_entry is not None:
                     self._live_entry.update_markdown(result.markdown)
+                    rendered_entry = self._live_entry
                 else:
-                    await self._append_entry(self._active_command.raw, result.markdown)
+                    rendered_entry = await self._append_entry(
+                        self._active_command.raw,
+                        result.markdown,
+                    )
+            pending = result.prepared_execution if result is not None else None
+            offer = result.execution_offer if result is not None else None
+            if is_pi_preview and isinstance(rendered_entry, ExecutionSessionEntry):
+                if pending is None:
+                    rendered_entry.complete_activity()
+                else:
+                    rendered_entry.complete_activity(
+                        tool_calls=pending.result.tool_calls,
+                        elapsed_seconds=pending.result.elapsed_seconds,
+                    )
             self.refresh_repository_status()
             activity = (
                 "Ready · vector index open · query encoder warm"
@@ -728,12 +1486,37 @@ class DevstillApp(App[None]):
                 else "Ready"
             )
             self._finish_worker(activity)
+            if pending is not None:
+                self._pending_execution = pending
+                self._pending_entry = (
+                    rendered_entry if isinstance(rendered_entry, SessionEntry) else None
+                )
+                count = len(pending.result.changed_files)
+                if self._pending_entry is not None:
+                    self._pending_entry.update_markdown(
+                        f"{self._pending_entry.markdown.rstrip()}\n"
+                        "## Awaiting approval\n"
+                        f"The preview changes {count} approved file"
+                        f"{'s' if count != 1 else ''}. Devstill will recheck every "
+                        "source before applying it."
+                    )
+                self._set_composer_mode(ComposerMode.PATCH_APPROVAL)
+                self.query_one("#cancel-execution", Button).focus()
+            elif offer is not None:
+                if rendered_entry is not None:
+                    self._enter_handoff(offer, rendered_entry)
         elif event.state is WorkerState.ERROR:
             error = event.worker.error or RuntimeError("Command failed")
             raw = (
                 self._active_command.raw if self._active_command else "startup warm-up"
             )
             if self._live_entry is not None:
+                if (
+                    isinstance(self._live_entry, ExecutionSessionEntry)
+                    and self._active_command is not None
+                    and self._active_command.raw != "/execute apply"
+                ):
+                    self._live_entry.fail_activity(f"Pi execution failed: {error}")
                 self._live_entry.update_markdown(
                     f"{self._live_entry.markdown.rstrip()}\n\n"
                     f"## Agent request failed\n\n{error}",
@@ -750,6 +1533,12 @@ class DevstillApp(App[None]):
             self._finish_worker(activity)
         elif event.state is WorkerState.CANCELLED:
             if self._live_entry is not None:
+                if (
+                    isinstance(self._live_entry, ExecutionSessionEntry)
+                    and self._active_command is not None
+                    and self._active_command.raw != "/execute apply"
+                ):
+                    self._live_entry.cancel_activity()
                 self._live_entry.update_markdown(
                     f"{self._live_entry.markdown.rstrip()}\n\n"
                     "## Agent request cancelled",
@@ -763,7 +1552,7 @@ class DevstillApp(App[None]):
         self._active_command = None
         self._live_entry = None
         prompt = self.query_one("#command-input", PromptTextArea)
-        prompt.disabled = False
+        self._set_composer_mode(ComposerMode.NORMAL)
         self.query_one("#busy", LoadingIndicator).display = False
         file_progress = self.query_one("#file-progress", Static)
         file_progress.display = False
@@ -780,7 +1569,7 @@ class DevstillApp(App[None]):
         error: bool = False,
     ) -> SessionEntry:
         feed = self.query_one("#session-feed", VerticalScroll)
-        entries = list(feed.query(SessionEntry))
+        entries = list(feed.query(".session-entry"))
         while len(entries) >= MAX_SESSION_ENTRIES:
             await entries.pop(0).remove()
         entry = SessionEntry(command, markdown, error=error)
@@ -788,9 +1577,40 @@ class DevstillApp(App[None]):
         feed.scroll_end(animate=False)
         return entry
 
-    async def clear_feed(self) -> None:
+    async def _append_execution_entry(self, command: str) -> ExecutionSessionEntry:
         feed = self.query_one("#session-feed", VerticalScroll)
-        for entry in list(feed.query(SessionEntry)):
+        entries = list(feed.query(".session-entry"))
+        while len(entries) >= MAX_SESSION_ENTRIES:
+            await entries.pop(0).remove()
+        entry = ExecutionSessionEntry(command)
+        await feed.mount(entry)
+        feed.scroll_end(animate=False)
+        return entry
+
+    async def _append_plan_entry(
+        self,
+        command: str,
+        offer: TuiExecutionOffer,
+    ) -> PlanSessionEntry:
+        if offer.plan is None:
+            raise ValueError("Interactive Plan output requires the validated Plan")
+        feed = self.query_one("#session-feed", VerticalScroll)
+        entries = list(feed.query(".session-entry"))
+        while len(entries) >= MAX_SESSION_ENTRIES:
+            await entries.pop(0).remove()
+        entry = PlanSessionEntry(command, offer.plan, offer.source)
+        await feed.mount(entry)
+        feed.scroll_end(animate=False)
+        return entry
+
+    async def clear_feed(self) -> None:
+        if self._composer_mode is not ComposerMode.NORMAL:
+            self.query_one("#activity", Static).update(
+                "Finish or cancel the active Pi step before clearing the feed"
+            )
+            return
+        feed = self.query_one("#session-feed", VerticalScroll)
+        for entry in list(feed.query(".session-entry")):
             await entry.remove()
         self.query_one("#activity", Static).update("Session cleared")
 
@@ -820,7 +1640,23 @@ class DevstillApp(App[None]):
 
     def on_key(self, event: events.Key) -> None:
         prompt = self.query_one("#command-input", PromptTextArea)
+        if (
+            not self._busy
+            and self._composer_mode is not ComposerMode.NORMAL
+            and event.key == "escape"
+            and not isinstance(self.focused, Select)
+        ):
+            if self._composer_mode is ComposerMode.SEARCH_PATH:
+                self._cancel_search_resolution()
+            elif self._composer_mode is ComposerMode.PI_HANDOFF:
+                self._leave_handoff(activity="Plan ready; Pi not started")
+            elif self._composer_mode is ComposerMode.PATCH_APPROVAL:
+                self._cancel_execution_approval()
+            event.stop().prevent_default()
+            return
         if not prompt.has_focus or self._busy:
+            return
+        if self._composer_mode is not ComposerMode.NORMAL:
             return
         palette = self.query_one("#command-palette", OptionList)
         if event.key == "escape" and palette.has_class("visible"):
@@ -852,9 +1688,16 @@ class DevstillApp(App[None]):
         if event.option_id is None:
             return
         if event.option_list.id in {"command-palette", "sidebar-commands"}:
+            if self._composer_mode is not ComposerMode.NORMAL:
+                self.query_one("#activity", Static).update(
+                    "Finish or cancel the active Pi step first"
+                )
+                return
             self._prefill(event.option_id)
 
     def _prefill(self, value: str) -> None:
+        if self._composer_mode is not ComposerMode.NORMAL:
+            return
         prompt = self.query_one("#command-input", PromptTextArea)
         prompt.text = value
         prompt.cursor_location = prompt.document.end
@@ -871,5 +1714,6 @@ class DevstillApp(App[None]):
         sidebar.display = self._sidebar_manual
 
     def action_refresh(self) -> None:
+        self._pi_status = inspect_pi()
         self.refresh_repository_status()
         self.query_one("#activity", Static).update("Repository status refreshed")

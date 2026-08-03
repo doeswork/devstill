@@ -114,6 +114,37 @@ def test_index_noisy_files_does_not_enable_assets(tmp_path: Path) -> None:
     assert decisions["bundle.min.js"].noisy
 
 
+def test_gradle_wrappers_are_generated_unless_explicitly_enabled(
+    tmp_path: Path,
+) -> None:
+    for name in ("gradlew", "gradlew.bat"):
+        path = tmp_path / name
+        path.write_text("#!/bin/sh\necho wrapper\n", encoding="utf-8")
+        skipped = parse_source_file(path, tmp_path)
+        assert skipped.quality is not None
+        assert skipped.quality.status == "SKIPPED"
+        assert skipped.quality.category == "generated"
+        assert skipped.quality.disposition == "ignored"
+        assert skipped.quality.reasons == ["generated Gradle wrapper"]
+        assert skipped.chunks == []
+
+        indexed = parse_source_file(path, tmp_path, index_noisy_files=True)
+        assert indexed.quality is not None
+        assert indexed.quality.status == "MEH"
+        assert indexed.quality.noisy
+        assert any(
+            chunk.parser_metadata.get("searchable", True) for chunk in indexed.chunks
+        )
+
+        included = parse_source_file(path, tmp_path, include_ignored=[name])
+        assert included.quality is not None
+        assert included.quality.status == "MEH"
+        assert included.quality.noisy
+        assert any(
+            chunk.parser_metadata.get("searchable", True) for chunk in included.chunks
+        )
+
+
 def test_files_json_and_ignored_views(monkeypatch, tmp_path: Path, capsys) -> None:
     repo = _git_repo(
         tmp_path,

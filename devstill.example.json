@@ -79,6 +79,16 @@
     "model": "",
     "api_key_env": "DEVSTILL_AGENT_API_KEY",
     "timeout_seconds": 300,
-    "max_output_tokens": 2048
+    "max_output_tokens": 2048,
+    "planning_max_output_tokens": 6144,
+    "planning_reasoning": "off"
+  },
+  "executor": {
+    "enabled": true,
+    "backend": "pi",
+    "timeout_seconds": 300,
+    "max_output_tokens": 49152,
+    "max_tool_calls": 16,
+    "validation_commands": []
   }
 }

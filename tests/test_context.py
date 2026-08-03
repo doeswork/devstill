@@ -5,8 +5,10 @@ import json
 from devstill.context import (
     context_record,
     is_test_chunk,
+    planning_retrieval_limit,
     render_context_json,
     render_context_markdown,
+    select_adaptive_context_results,
     select_context_results,
     write_context_artifacts,
 )
@@ -66,6 +68,8 @@ def test_markdown_has_provenance_exact_code_and_safe_fence() -> None:
     assert "core/views.py:10-11 — login_api (function)" in rendered
     assert code in rendered
     assert "````python" in rendered
+    assert "Query: explain login · Repository: /workspace/repository" in rendered
+    assert "login_api (function)\n````python" in rendered
 
 
 def test_empty_markdown_and_json_are_clear() -> None:
@@ -98,6 +102,49 @@ def test_test_detection_and_filtering_happen_before_limit() -> None:
         include_tests=True,
     )
     assert included == [test_file, production]
+
+
+def test_adaptive_context_stops_at_semantic_gap_after_minimum() -> None:
+    results = [
+        make_result(name=f"symbol_{index}", path=f"src/file_{index}.py")
+        for index in range(5)
+    ]
+    for result, score in zip(results, [0.91, 0.88, 0.85, 0.70, 0.68], strict=True):
+        result.scores = {"semantic": score}
+
+    selected = select_adaptive_context_results(
+        results,
+        min_limit=3,
+        max_limit=5,
+        include_tests=False,
+    )
+
+    assert [result.chunk.name for result in selected] == [
+        "symbol_0",
+        "symbol_1",
+        "symbol_2",
+    ]
+
+
+def test_adaptive_context_keeps_close_and_multi_channel_candidates() -> None:
+    results = [
+        make_result(name=f"symbol_{index}", path=f"src/file_{index}.py")
+        for index in range(5)
+    ]
+    for result, score in zip(results, [0.91, 0.88, 0.85, 0.83, 0.60], strict=True):
+        result.scores = {"semantic": score}
+    results[-1].scores["lexical"] = 0.9
+
+    selected = select_adaptive_context_results(
+        results,
+        min_limit=3,
+        max_limit=5,
+        include_tests=False,
+    )
+
+    assert selected == results
+    assert planning_retrieval_limit(5) == 12
+    assert planning_retrieval_limit(8) == 16
 
 
 def test_context_artifacts_overwrite_both_files(tmp_path) -> None:

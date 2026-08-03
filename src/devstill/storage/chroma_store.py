@@ -96,18 +96,41 @@ class ChromaStore:
     def query_embedding(
         self, embedding: Sequence[float], limit: int
     ) -> list[tuple[str, float]]:
-        if self.collection.count() == 0:
+        return self.query_embeddings([embedding], limit)[0]
+
+    def query_embeddings(
+        self,
+        embeddings: Sequence[Sequence[float]],
+        limit: int,
+    ) -> list[list[tuple[str, float]]]:
+        """Query several vectors in one Chroma call."""
+        if not embeddings:
             return []
+        count = self.collection.count()
+        if count == 0:
+            return [[] for _ in embeddings]
         result = self.collection.query(
-            query_embeddings=[list(embedding)],
-            n_results=min(limit, self.collection.count()),
+            query_embeddings=[list(embedding) for embedding in embeddings],
+            n_results=min(limit, count),
             include=["distances", "metadatas"],
         )
-        ids = result.get("ids", [[]])[0]
-        distances = result.get("distances", [[]])[0]
-        metadatas = result.get("metadatas", [[]])[0]
-        values: list[tuple[str, float]] = []
-        for unit_id, distance, metadata in zip(ids, distances, metadatas, strict=False):
-            chunk_id = (metadata or {}).get("chunk_id", unit_id)
-            values.append((str(chunk_id), 1.0 - float(distance)))
-        return values
+        id_groups = result.get("ids", [[] for _ in embeddings])
+        distance_groups = result.get("distances", [[] for _ in embeddings])
+        metadata_groups = result.get("metadatas", [[] for _ in embeddings])
+        groups: list[list[tuple[str, float]]] = []
+        for ids, distances, metadatas in zip(
+            id_groups,
+            distance_groups,
+            metadata_groups,
+            strict=False,
+        ):
+            values: list[tuple[str, float]] = []
+            for unit_id, distance, metadata in zip(
+                ids, distances, metadatas, strict=False
+            ):
+                chunk_id = (metadata or {}).get("chunk_id", unit_id)
+                values.append((str(chunk_id), 1.0 - float(distance)))
+            groups.append(values)
+        while len(groups) < len(embeddings):
+            groups.append([])
+        return groups

@@ -1,6 +1,7 @@
 from devstill.parsers.base import (
     FALLBACK_PARSER_VERSION,
     JAVASCRIPT_FAMILY_PARSER_VERSION,
+    PARSER_PIPELINE_VERSION,
     PARSER_VERSION,
     PYTHON_PARSER_VERSION,
     ParseResult,
@@ -11,6 +12,7 @@ from devstill.parsers.base import (
 __all__ = [
     "FALLBACK_PARSER_VERSION",
     "JAVASCRIPT_FAMILY_PARSER_VERSION",
+    "PARSER_PIPELINE_VERSION",
     "PARSER_VERSION",
     "PYTHON_PARSER_VERSION",
     "ParseResult",
