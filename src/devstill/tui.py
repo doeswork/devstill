@@ -193,6 +193,12 @@ class PlanImpactRow(Vertical):
         self.index = index
         self.item = item
 
+    @staticmethod
+    def _target_text(item: PlanItem) -> str:
+        if item.label is PlanLabel.SEARCH:
+            return f"— unresolved search target: {escape(item.target)}"
+        return f"— {escape(item.target)}"
+
     def compose(self) -> ComposeResult:
         with Horizontal(classes="plan-impact-heading"):
             if self.item.label is PlanLabel.NEW_FILE:
@@ -211,7 +217,7 @@ class PlanImpactRow(Vertical):
                     compact=True,
                 )
             yield Static(
-                f"— {escape(self.item.target)}",
+                self._target_text(self.item),
                 classes="plan-impact-target",
             )
         yield Static(escape(self.item.reason), classes="plan-impact-reason")
@@ -229,7 +235,7 @@ class PlanImpactRow(Vertical):
                 select.value = item.label.value
             return
         self.item = item
-        self.query_one(".plan-impact-target", Static).update(f"— {escape(item.target)}")
+        self.query_one(".plan-impact-target", Static).update(self._target_text(item))
         self.query_one(".plan-impact-reason", Static).update(escape(item.reason))
         select = self.query_one_optional(Select)
         if select is not None:
@@ -413,7 +419,8 @@ class DevstillApp(App[None]):
     }
 
     .plan-impact-heading {
-        height: 1;
+        height: auto;
+        min-height: 1;
         align-vertical: middle;
     }
 
@@ -770,7 +777,7 @@ class DevstillApp(App[None]):
         self._resolving_search_index = None
         self._resolving_search_label = None
         self._refresh_handoff()
-        self.query_one("#session-feed", VerticalScroll).scroll_end(animate=False)
+        self._scroll_feed_after_layout()
 
     def _leave_handoff(self, *, activity: str) -> None:
         entry = self._handoff_entry
@@ -1387,7 +1394,7 @@ class DevstillApp(App[None]):
             self._live_entry = await self._append_execution_entry(command.raw)
         if isinstance(self._live_entry, ExecutionSessionEntry):
             self._live_entry.append_activity(message)
-            self.query_one("#session-feed", VerticalScroll).scroll_end(animate=False)
+            self._scroll_feed_after_layout()
         self._set_progress(message)
 
     async def _show_preview(self, preview: TuiPreview) -> None:
@@ -1404,6 +1411,7 @@ class DevstillApp(App[None]):
         else:
             self._live_entry.update_markdown(preview.markdown)
         self.query_one("#activity", Static).update(preview.status)
+        self._scroll_feed_after_layout()
 
     def _set_progress(self, update: str | IndexProgress) -> None:
         if isinstance(update, str):
@@ -1500,6 +1508,7 @@ class DevstillApp(App[None]):
                         f"{'s' if count != 1 else ''}. Devstill will recheck every "
                         "source before applying it."
                     )
+                    self._scroll_feed_after_layout()
                 self._set_composer_mode(ComposerMode.PATCH_APPROVAL)
                 self.query_one("#cancel-execution", Button).focus()
             elif offer is not None:
@@ -1522,6 +1531,7 @@ class DevstillApp(App[None]):
                     f"## Agent request failed\n\n{error}",
                     error=True,
                 )
+                self._scroll_feed_after_layout()
             else:
                 await self._append_entry(raw, str(error), error=True)
             self.refresh_repository_status()
@@ -1561,6 +1571,16 @@ class DevstillApp(App[None]):
         self.query_one("#activity", Static).update(activity)
         prompt.focus()
 
+    def _scroll_feed_after_layout(self) -> None:
+        """Keep new or expanding entries visible after Textual recalculates layout."""
+        feed = self.query_one("#session-feed", VerticalScroll)
+        feed.scroll_end(animate=False, force=True)
+        self.call_after_refresh(
+            feed.scroll_end,
+            animate=False,
+            force=True,
+        )
+
     async def _append_entry(
         self,
         command: str,
@@ -1574,7 +1594,7 @@ class DevstillApp(App[None]):
             await entries.pop(0).remove()
         entry = SessionEntry(command, markdown, error=error)
         await feed.mount(entry)
-        feed.scroll_end(animate=False)
+        self._scroll_feed_after_layout()
         return entry
 
     async def _append_execution_entry(self, command: str) -> ExecutionSessionEntry:
@@ -1584,7 +1604,7 @@ class DevstillApp(App[None]):
             await entries.pop(0).remove()
         entry = ExecutionSessionEntry(command)
         await feed.mount(entry)
-        feed.scroll_end(animate=False)
+        self._scroll_feed_after_layout()
         return entry
 
     async def _append_plan_entry(
@@ -1600,7 +1620,7 @@ class DevstillApp(App[None]):
             await entries.pop(0).remove()
         entry = PlanSessionEntry(command, offer.plan, offer.source)
         await feed.mount(entry)
-        feed.scroll_end(animate=False)
+        self._scroll_feed_after_layout()
         return entry
 
     async def clear_feed(self) -> None:

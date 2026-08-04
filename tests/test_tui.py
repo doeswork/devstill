@@ -709,6 +709,79 @@ def test_inline_label_save_failure_reverts_the_dropdown(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_plan_scrolls_after_layout_and_keeps_long_targets_visible(
+    tmp_path: Path,
+) -> None:
+    items = [
+        PlanItem(
+            label=PlanLabel.READ,
+            target=(
+                "frontend/src/pages/CheckInPage/components/"
+                f"VeryLongLocationComponent{index}.tsx"
+            ),
+            reason=f"Inspect location behavior number {index} before implementation.",
+        )
+        for index in range(12)
+    ]
+    plan = PlanOutput(
+        query="automatically load geolocation",
+        repository=str(tmp_path),
+        model="local-model",
+        items=items,
+    )
+
+    class PlanWorkflow(FakeWorkflow):
+        def execute(self, command, progress=None):
+            self.calls.append(command)
+            return TuiResult(
+                "Plan",
+                "# Plan",
+                execution_offer=TuiExecutionOffer("plan", plan.query, 0, plan),
+            )
+
+    async def scenario() -> None:
+        app = build_app(tmp_path, PlanWorkflow())
+        async with app.run_test(size=(64, 20)) as pilot:
+            await app.submit_text("/plan automatically load geolocation")
+            for _ in range(100):
+                if app._composer_mode is ComposerMode.PI_HANDOFF:
+                    break
+                await pilot.pause(0.02)
+            await pilot.pause()
+            await pilot.pause()
+
+            feed = app.query_one("#session-feed")
+            assert feed.max_scroll_y > 0
+            assert feed.scroll_y == feed.max_scroll_y
+            target = list(app.query(PlanImpactRow))[-1].query_one(
+                ".plan-impact-target", Static
+            )
+            assert items[-1].target in str(target.content)
+            assert target.content_region.height > 1
+
+    asyncio.run(scenario())
+
+
+def test_search_plan_target_is_identified_as_unresolved(tmp_path: Path) -> None:
+    item = PlanItem(
+        label=PlanLabel.SEARCH,
+        target="CheckInPage captureLocation",
+        reason="Locate the implementation before changing it.",
+    )
+
+    async def scenario() -> None:
+        app = build_app(tmp_path)
+        async with app.run_test(size=(80, 24)) as pilot:
+            row = PlanImpactRow(0, item)
+            await app.query_one("#session-feed").mount(row)
+            await pilot.pause()
+            assert "unresolved search target" in str(
+                row.query_one(".plan-impact-target", Static).content
+            )
+
+    asyncio.run(scenario())
+
+
 def test_search_resolution_merges_an_existing_plan_target(tmp_path: Path) -> None:
     target = tmp_path / "frontend/src/pages/CheckInPage/index.tsx"
     target.parent.mkdir(parents=True)
