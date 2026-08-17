@@ -13,7 +13,7 @@ def test_config_upward_discovery_and_strict_validation(tmp_path) -> None:
     nested.mkdir(parents=True)
     assert find_config(nested) == config_path
     config = load_config(config_path)
-    assert config.embedding.device == "cpu"
+    assert config.embedding.device == "auto"
     assert config.index.path == ".devstill/chroma"
     assert config.index.max_chunk_chars == 8000
     assert config.index.max_chunk_lines == 400
@@ -37,6 +37,25 @@ def test_config_upward_discovery_and_strict_validation(tmp_path) -> None:
     raw["unexpected"] = True
     config_path.write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(ValueError, match="Invalid devstill configuration"):
+        load_config(config_path)
+
+
+def test_legacy_explicit_cpu_device_is_preserved(tmp_path) -> None:
+    config_path = write_default_config(tmp_path / "devstill.json")
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    raw["embedding"]["device"] = "cpu"
+    config_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    assert load_config(config_path).embedding.device == "cpu"
+
+
+def test_embedding_device_is_strictly_validated(tmp_path) -> None:
+    config_path = write_default_config(tmp_path / "devstill.json")
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    raw["embedding"]["device"] = "metal"
+    config_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="embedding.device"):
         load_config(config_path)
 
 

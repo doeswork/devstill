@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -21,11 +20,13 @@ from devstill.agent import AgentClient
 from devstill.config import (
     CONFIG_FILENAME,
     DevstillConfig,
+    default_model_path,
     find_config,
     load_config,
     resolve_index_path,
     resolve_model_path,
     resolve_repo_root,
+    update_embedding_config,
     update_llm_config,
     write_default_config,
 )
@@ -43,12 +44,14 @@ from devstill.context import (
 )
 from devstill.credentials import api_key_source
 from devstill.deep_planning import run_deep_plan
+from devstill.devices import inspect_device, normalize_device
 from devstill.executor import (
     RepositoryExecutor,
     render_execution_markdown,
 )
 from devstill.git_files import discover_repository_inventory
 from devstill.indexer import RepositoryIndexer
+from devstill.installation import load_install_metadata
 from devstill.models import ChunkPolicy, IndexProgress
 from devstill.parsers import parse_source_file
 from devstill.paths import relative_repo_path
@@ -65,6 +68,13 @@ from devstill.removal import build_removal_plan, execute_removal
 from devstill.repository import ensure_devstill_gitignore
 from devstill.search import HybridSearch
 from devstill.tui import DevstillApp
+from devstill.updater import (
+    fetch_latest_release,
+    install_release,
+    is_editable_install,
+    update_available,
+    validate_self_contained_install,
+)
 
 console = Console()
 diagnostic_console = Console(stderr=True)
@@ -74,11 +84,30 @@ def parser() -> argparse.ArgumentParser:
     command = argparse.ArgumentParser(
         prog="devstill",
         description="Local AI-first repository intelligence.",
+        epilog=(
+            "Run `devstill help COMMAND` or `devstill COMMAND --help` for "
+            "command-specific help."
+        ),
     )
     command.add_argument(
         "--version", action="version", version=f"devstill {__version__}"
     )
     sub = command.add_subparsers(dest="command")
+
+    help_parser = sub.add_parser(
+        "help",
+        help="Show help for Devstill or a specific command.",
+        description=(
+            "Show the top-level help, or follow a command path such as "
+            "`agent configure`."
+        ),
+    )
+    help_parser.add_argument(
+        "topic",
+        nargs="*",
+        metavar="COMMAND",
+        help="Command path to explain (for example: agent configure).",
+    )
 
     init = sub.add_parser(
         "init", help=f"Create {CONFIG_FILENAME} in the current repository."
@@ -96,6 +125,17 @@ def parser() -> argparse.ArgumentParser:
         "doctor", help="Check the installation and current repository."
     )
     doctor.add_argument("--load-model", action="store_true")
+
+    device = sub.add_parser(
+        "device", help="Show or change this repository's embedding accelerator."
+    )
+    device.add_argument("value", nargs="?", choices=("auto", "cpu", "cuda"))
+
+    update = sub.add_parser(
+        "update", help="Update a self-contained installation to the latest release."
+    )
+    update.add_argument("--check", action="store_true")
+    update.add_argument("--yes", action="store_true")
 
     files = sub.add_parser("files", help="List files eligible for indexing.")
     files_output = files.add_mutually_exclusive_group()
@@ -146,20 +186,76 @@ def parser() -> argparse.ArgumentParser:
     agent = sub.add_parser(
         "agent",
         help="Configure and test the repository's OpenAI-compatible agent.",
+        description=(
+            "Configure the external OpenAI-compatible Chat Completions server "
+            "used by plan and deep-plan. Devstill does not start or download "
+            "an LLM server."
+        ),
     )
     agent_actions = agent.add_subparsers(dest="agent_action")
     configure = agent_actions.add_parser(
-        "configure", help="Save agent endpoint settings and enable the agent."
+        "configure",
+        help="Save agent endpoint settings and enable the agent.",
+        description=(
+            "Connect this repository to an already-running OpenAI-compatible "
+            "Chat Completions server. BASE_URL ends in /v1; MODEL is the exact "
+            "model identifier served by that endpoint."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  Ollama model:  ollama pull qwen2.5-coder:7b\n"
+            "  Ollama config: devstill agent configure --base-url "
+            "http://127.0.0.1:11434/v1 --model qwen2.5-coder:7b\n"
+            "  LM Studio base URL: http://127.0.0.1:1234/v1\n"
+            "  llama.cpp base URL: http://127.0.0.1:8080/v1\n\n"
+            "For LM Studio or llama.cpp, copy the model identifier shown by "
+            "that server and pass it to --model. Do not type the literal word "
+            "MODEL.\n\n"
+            "If the server requires a key, export DEVSTILL_AGENT_API_KEY "
+            "before running `devstill agent test`."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    configure.add_argument("--base-url")
-    configure.add_argument("--model")
-    configure.add_argument("--api-key-env")
-    configure.add_argument("--timeout", type=float)
-    configure.add_argument("--max-output-tokens", type=int)
-    configure.add_argument("--planning-max-output-tokens", type=int)
+    configure.add_argument(
+        "--base-url",
+        metavar="URL",
+        help=(
+            "OpenAI-compatible API root ending in /v1; when omitted, keep the "
+            "value in devstill.json."
+        ),
+    )
+    configure.add_argument(
+        "--model",
+        metavar="NAME",
+        help="Exact model identifier exposed by the server (required initially).",
+    )
+    configure.add_argument(
+        "--api-key-env",
+        metavar="NAME",
+        help="Environment variable containing the API key.",
+    )
+    configure.add_argument(
+        "--timeout",
+        type=float,
+        metavar="SECONDS",
+        help="HTTP request timeout in seconds.",
+    )
+    configure.add_argument(
+        "--max-output-tokens",
+        type=int,
+        metavar="TOKENS",
+        help="Output ceiling for general agent requests.",
+    )
+    configure.add_argument(
+        "--planning-max-output-tokens",
+        type=int,
+        metavar="TOKENS",
+        help="Output ceiling for plan and deep-plan requests.",
+    )
     configure.add_argument(
         "--planning-reasoning",
         choices=("off", "auto"),
+        help="Request model reasoning for planning when supported.",
     )
     agent_actions.add_parser("test", help="Send a small structured agent request.")
     agent_actions.add_parser("enable", help="Enable the configured agent.")
@@ -301,38 +397,39 @@ def doctor(load_model: bool) -> int:
     failures = 0
     console.print(f"devstill: [bold]{__version__}[/bold]")
     console.print(f"Python: {sys.version.split()[0]}")
-    try:
-        import torch
-
-        console.print(
-            f"PyTorch: {torch.__version__}; CUDA available: {torch.cuda.is_available()}"
-        )
-    except Exception as exc:  # noqa: BLE001
-        console.print(f"[red]PyTorch unavailable: {exc}[/red]")
-        failures += 1
-    model_path = (
-        Path(
-            os.environ.get(
-                "DEVSTILL_MODEL_PATH",
-                "~/.local/share/devstill/models/jina-embeddings-v2-base-code",
-            )
-        )
-        .expanduser()
-        .resolve()
-    )
+    config = DevstillConfig()
+    model_path = default_model_path()
     try:
         cfg_path = find_config()
-        cfg = load_config(cfg_path)
-        model_path = resolve_model_path(cfg)
+        config = load_config(cfg_path)
+        model_path = resolve_model_path(config)
         console.print(f"Config: [green]{cfg_path}[/green]")
-        console.print(f"Repository: {resolve_repo_root(cfg_path, cfg)}")
-        console.print(f"Index: {resolve_index_path(cfg_path, cfg)}")
+        console.print(f"Repository: {resolve_repo_root(cfg_path, config)}")
+        console.print(f"Index: {resolve_index_path(cfg_path, config)}")
     except FileNotFoundError:
         console.print(
             f"Config: [yellow]No {CONFIG_FILENAME} found from this directory[/yellow]"
         )
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
+        failures += 1
+    try:
+        device_info = inspect_device(
+            config.embedding.device,
+            verify_allocation=config.embedding.device == "cuda",
+        )
+        cuda_build = device_info.cuda_build or "none (CPU build)"
+        gpu = device_info.gpu_name or "none"
+        console.print(
+            f"PyTorch: {device_info.torch_version}; CUDA build: {cuda_build}; "
+            f"CUDA available: {device_info.cuda_available}"
+        )
+        console.print(
+            f"Embedding device: requested [bold]{device_info.requested}[/bold]; "
+            f"resolved [bold]{device_info.resolved}[/bold]; GPU: {gpu}"
+        )
+    except RuntimeError as exc:
+        console.print(f"[red]Embedding device unavailable: {exc}[/red]")
         failures += 1
     if model_path.is_dir():
         console.print(f"Model: [green]{model_path}[/green]")
@@ -355,35 +452,121 @@ def doctor(load_model: bool) -> int:
     else:
         console.print(
             f"Pi executor: [yellow]unavailable[/yellow] ({pi.reason}). "
-            "Re-run setup_wsl_cpu.sh to enable code execution."
+            "Re-run setup.sh to enable code execution."
         )
     if load_model and model_path.is_dir():
         try:
-            from sentence_transformers import SentenceTransformer
+            from devstill.embeddings import EmbeddingBackend
 
-            model = SentenceTransformer(
-                str(model_path),
-                trust_remote_code=True,
-                local_files_only=True,
-                device="cpu",
+            backend = EmbeddingBackend(
+                model_path,
+                max_sequence_length=config.embedding.max_sequence_length,
+                batch_size=config.embedding.batch_size,
+                normalize=config.embedding.normalize_embeddings,
+                device=config.embedding.device,
             )
-            model.max_seq_length = 2048
-            vector = model.encode(
-                ["devstill repository intelligence"],
-                normalize_embeddings=True,
-                convert_to_numpy=True,
-                show_progress_bar=False,
+            vectors = backend.encode(["devstill repository intelligence"])
+            shape = (len(vectors), len(vectors[0]) if vectors else 0)
+            console.print(
+                f"Embedding shape: {shape}; device: {backend.device}"
             )
-            console.print(f"Embedding shape: {tuple(vector.shape)}")
+            backend.close()
         except Exception as exc:  # noqa: BLE001
             console.print(f"[red]Model load failed: {exc}[/red]")
             failures += 1
     return 1 if failures else 0
 
 
+def device_command(value: str | None) -> int:
+    config_path, config = _configured()
+    requested = normalize_device(value or config.embedding.device)
+    info = inspect_device(requested, verify_allocation=requested == "cuda")
+    if value is not None and requested != config.embedding.device:
+        config = update_embedding_config(
+            config_path,
+            config,
+            device=requested,
+        )
+        console.print(f"[green]Updated embedding device in {config_path}[/green]")
+    console.print(f"Configured device: [bold]{config.embedding.device}[/bold]")
+    console.print(f"Resolved device: [bold]{info.resolved}[/bold]")
+    if info.gpu_name:
+        console.print(f"GPU: [green]{info.gpu_name}[/green]")
+    elif requested == "auto":
+        console.print("GPU: [dim]unavailable; automatic mode is using CPU[/dim]")
+    console.print("The existing index remains valid; future operations use this device.")
+    return 0
+
+
+def update_command(check_only: bool, assume_yes: bool) -> int:
+    if check_only and assume_yes:
+        raise ValueError("--check and --yes cannot be used together")
+    if is_editable_install():
+        raise ValueError(
+            "`devstill update` cannot update an editable development checkout. "
+            "Use `git pull` and reinstall the development environment instead."
+        )
+    metadata = load_install_metadata()
+    validate_self_contained_install(metadata)
+    release = fetch_latest_release()
+    console.print(f"Installed version: [bold]{__version__}[/bold]")
+    console.print(
+        f"Latest stable release: [bold]{release.version}[/bold] "
+        f"([dim]{release.tag}[/dim])"
+    )
+    if not update_available(__version__, release):
+        console.print("[green]Devstill is already up to date.[/green]")
+        return 0
+    if check_only:
+        console.print("[yellow]An update is available.[/yellow]")
+        return 0
+    if not assume_yes:
+        if not sys.stdin.isatty():
+            raise ValueError(
+                "Update requires confirmation. Re-run with --yes in a "
+                "noninteractive terminal."
+            )
+        try:
+            confirmed = input("Install this release? [y/N] ").strip().casefold()
+        except EOFError:
+            confirmed = ""
+        if confirmed not in {"y", "yes"}:
+            console.print("Update cancelled.")
+            return 0
+    install_release(release, metadata)
+    console.print(f"[green]Updated Devstill to {release.version}.[/green]")
+    return 0
+
+
 def _configured() -> tuple[Path, DevstillConfig]:
     config_path = find_config()
     return config_path, load_config(config_path)
+
+
+def show_help(topics: list[str]) -> int:
+    selected = parser()
+    traversed: list[str] = []
+    for topic in topics:
+        subparsers = next(
+            (
+                action
+                for action in selected._actions
+                if isinstance(action, argparse._SubParsersAction)
+            ),
+            None,
+        )
+        choices = subparsers.choices if subparsers is not None else {}
+        if topic not in choices:
+            location = " ".join(traversed) or "devstill"
+            available = ", ".join(sorted(choices)) or "none"
+            raise ValueError(
+                f"No help topic `{topic}` under `{location}`. "
+                f"Available commands: {available}."
+            )
+        selected = choices[topic]
+        traversed.append(topic)
+    selected.print_help()
+    return 0
 
 
 def files_command(as_json: bool, count: bool, ignored: bool = False) -> int:
@@ -544,6 +727,9 @@ def index_command(rebuild: bool, verbose: bool, as_json: bool) -> int:
         )
 
     try:
+        embedder = getattr(indexer, "embedder", None)
+        device = getattr(embedder, "device", config.embedding.device)
+        diagnostic_console.print(f"Embedding device: [bold]{device}[/bold]")
         with progress:
             summary = indexer.run(
                 rebuild=rebuild,
@@ -690,9 +876,39 @@ def _print_agent(config: DevstillConfig) -> None:
 
 
 def agent_command(args: argparse.Namespace) -> int:
-    config_path, config = _configured()
     action = args.agent_action or "show"
     if action == "configure":
+        option_values = (
+            args.base_url,
+            args.model,
+            args.api_key_env,
+            args.timeout,
+            args.max_output_tokens,
+            args.planning_max_output_tokens,
+            args.planning_reasoning,
+        )
+        if all(value is None for value in option_values):
+            return show_help(["agent", "configure"])
+    config_path, config = _configured()
+    if action == "configure":
+        if args.base_url in {"URL", "BASE_URL", "YOUR_URL"}:
+            raise ValueError(
+                f"`{args.base_url}` is a placeholder, not an endpoint. Pass the "
+                "HTTP(S) /v1 URL of your running LLM server. Run "
+                "`devstill help agent configure` for examples."
+            )
+        if args.model in {"MODEL", "MODEL_NAME", "YOUR_MODEL"}:
+            raise ValueError(
+                f"`{args.model}` is a placeholder, not a model identifier. Copy "
+                "the exact model name exposed by your LLM server. Run "
+                "`devstill help agent configure` for examples."
+            )
+        if args.model is None and not config.llm.model:
+            raise ValueError(
+                "No agent model is configured. Pass the exact model name exposed "
+                "by your LLM server with `--model`. Run "
+                "`devstill help agent configure` for examples."
+            )
         updates: dict[str, object] = {"enabled": True}
         values = {
             "base_url": args.base_url,
@@ -740,7 +956,8 @@ def plan_command(args: argparse.Namespace) -> int:
     config_path, config = _configured()
     if not config.llm.enabled:
         raise ValueError(
-            "Agent is disabled. Run `devstill agent configure --base-url URL --model MODEL`."
+            "Agent is disabled. Run `devstill help agent configure` for setup "
+            "instructions and endpoint examples."
         )
     repo_root = resolve_repo_root(config_path, config)
     engine = HybridSearch(config_path, config)
@@ -806,7 +1023,8 @@ def deep_plan_command(args: argparse.Namespace) -> int:
     config_path, config = _configured()
     if not config.llm.enabled:
         raise ValueError(
-            "Agent is disabled. Run `devstill agent configure --base-url URL --model MODEL`."
+            "Agent is disabled. Run `devstill help agent configure` for setup "
+            "instructions and endpoint examples."
         )
     repo_root = resolve_repo_root(config_path, config)
     artifact_root = resolve_index_path(config_path, config).parent
@@ -974,12 +1192,18 @@ def execute_command(args: argparse.Namespace) -> int:
 def main() -> None:
     args = parser().parse_args()
     try:
+        if args.command == "help":
+            raise SystemExit(show_help(args.topic))
         if args.command == "init":
             raise SystemExit(init_repo(args.force))
         if args.command == "remove":
             raise SystemExit(remove_repo(args.index_only, args.dry_run, args.yes))
         if args.command == "doctor":
             raise SystemExit(doctor(args.load_model))
+        if args.command == "device":
+            raise SystemExit(device_command(args.value))
+        if args.command == "update":
+            raise SystemExit(update_command(args.check, args.yes))
         if args.command == "files":
             raise SystemExit(files_command(args.json, args.count, args.ignored))
         if args.command == "parse":

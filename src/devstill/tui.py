@@ -277,7 +277,12 @@ class PlanImpactRow(Vertical):
             self.post_message(self.DiscardRequested(self))
 
     def update_item(self, item: PlanItem) -> None:
-        reason = self.query_one(".plan-impact-reason", Input)
+        reason = self.query_one_optional(".plan-impact-reason", Input)
+        if reason is None:
+            # A mounted row is queryable just before Textual has composed its
+            # children. Keep the source item current and let compose use it.
+            self.item = item
+            return
         if reason.value != item.reason:
             reason.value = item.reason
         if item == self.item:
@@ -285,16 +290,22 @@ class PlanImpactRow(Vertical):
             if select is not None and select.value != item.label.value:
                 select.value = item.label.value
             return
+        previous = self.item
         self.item = item
         self.query_one(".plan-impact-target", Static).update(self._target_text(item))
         select = self.query_one_optional(Select)
         if select is not None:
-            select.set_options(
-                SEARCH_LABEL_OPTIONS
-                if item.label is PlanLabel.SEARCH
-                else PLAN_LABEL_OPTIONS
+            search_mode_changed = (previous.label is PlanLabel.SEARCH) != (
+                item.label is PlanLabel.SEARCH
             )
-            select.value = item.label.value
+            if search_mode_changed:
+                select.set_options(
+                    SEARCH_LABEL_OPTIONS
+                    if item.label is PlanLabel.SEARCH
+                    else PLAN_LABEL_OPTIONS
+                )
+            if select.value != item.label.value:
+                select.value = item.label.value
 
     def set_editable(self, editable: bool) -> None:
         select = self.query_one_optional(Select)
@@ -1167,10 +1178,15 @@ class DevstillApp(App[None]):
         )
         self.query_one("#workspace-status", Static).update(
             f"[b]{escape(str(status['repository']))}[/b]  •  Index {index}  •  "
-            f"Embeddings {model}  •  Agent {agent}  •  Pi {pi}"
+            f"Embeddings {model}  •  Device "
+            f"[cyan]{escape(str(getattr(self.workflow, 'runtime_device', self.config.embedding.device)))}[/cyan]  •  "
+            f"Agent {agent}  •  Pi {pi}"
         )
         key_state = str(status["key_source"])
         runtime_state = str(getattr(self.workflow, "runtime_state", "external"))
+        runtime_device = str(
+            getattr(self.workflow, "runtime_device", self.config.embedding.device)
+        )
         runtime_color = {
             "cold": "yellow",
             "loading": "cyan",
@@ -1185,7 +1201,8 @@ class DevstillApp(App[None]):
             "Tests: excluded\n\n"
             f"[b]INDEX[/b]\n{escape(str(status['quality']))}\n\n"
             f"[b]ENCODER[/b]\n[{runtime_color}]"
-            f"{escape(runtime_state)}[/{runtime_color}]\n"
+            f"{escape(runtime_state)}[/{runtime_color}] · "
+            f"[cyan]{escape(runtime_device)}[/cyan]\n"
             "[dim]Startup warm · ~1.1 GiB[/dim]\n\n"
             f"[b]AGENT KEY[/b]\n{key_state}\n\n"
             "[b]CLIPBOARD[/b]\n"
@@ -1336,6 +1353,11 @@ class DevstillApp(App[None]):
         ):
             return
         plan = self._handoff_offer.plan
+        select = event.row.query_one_optional(Select)
+        if select is None or select.value != event.label.value:
+            return
+        if event.index < 0 or event.index >= len(plan.items):
+            return
         old_item = plan.items[event.index]
         if event.label is old_item.label:
             return

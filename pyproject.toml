@@ -15,6 +15,7 @@ dependencies = [
     "httpx>=0.28,<1",
     "numpy<3",
     "orjson>=3.10,<4",
+    "packaging>=24,<27",
     "pydantic>=2.7,<3",
     "python-dotenv>=1,<2",
     "rapidfuzz>=3,<4",
@@ -47,3 +48,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 devstill = ["pi/*.ts"]
+
+[tool.pytest.ini_options]
+markers = [
+    "cuda: requires a CUDA-capable PyTorch installation and NVIDIA GPU",
+]

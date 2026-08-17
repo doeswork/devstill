@@ -192,6 +192,7 @@ class TuiRetrievalRuntime:
             max_sequence_length=config.embedding.max_sequence_length,
             batch_size=config.embedding.batch_size,
             normalize=config.embedding.normalize_embeddings,
+            device=config.embedding.device,
         )
         self._chroma = chroma_store
         self._lock = Lock()
@@ -199,6 +200,15 @@ class TuiRetrievalRuntime:
     @property
     def state(self) -> str:
         return str(getattr(self.embedder, "state", "cold"))
+
+    @property
+    def device(self) -> str:
+        try:
+            return str(
+                getattr(self.embedder, "device", self.config.embedding.device)
+            )
+        except RuntimeError:
+            return "unavailable"
 
     def dependencies(
         self,
@@ -475,6 +485,10 @@ class TuiWorkflow:
     def runtime_state(self) -> str:
         return self._runtime.state
 
+    @property
+    def runtime_device(self) -> str:
+        return self._runtime.device
+
     def _retrieval_key(self, config: DevstillConfig) -> tuple[Any, ...]:
         return (
             resolve_index_path(self.config_path, config),
@@ -483,6 +497,7 @@ class TuiWorkflow:
             config.embedding.max_sequence_length,
             config.embedding.batch_size,
             config.embedding.normalize_embeddings,
+            config.embedding.device,
         )
 
     def update_config(self, config: DevstillConfig) -> None:

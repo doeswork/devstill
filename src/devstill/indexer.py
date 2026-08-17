@@ -63,6 +63,7 @@ class RepositoryIndexer:
             max_sequence_length=config.embedding.max_sequence_length,
             batch_size=config.embedding.batch_size,
             normalize=config.embedding.normalize_embeddings,
+            device=config.embedding.device,
         )
         self.chroma = chroma_store or ChromaStore(
             self.paths.chroma,

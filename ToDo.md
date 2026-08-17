@@ -52,7 +52,7 @@ We need to include other major coding laguanges like rust, ruby, go, sql, etc to
 
 ```bash
 cd ~/projects/devstill/devstill
-./setup_wsl_cpu.sh
+./setup.sh
 source ~/.bashrc
 devstill doctor
 pi --version

@@ -18,6 +18,9 @@ from pydantic import (
     model_validator,
 )
 
+from devstill.devices import EmbeddingDevice
+from devstill.installation import data_home
+
 CONFIG_FILENAME = "devstill.json"
 
 
@@ -45,7 +48,7 @@ class IndexConfig(StrictModel):
 
 class EmbeddingConfig(StrictModel):
     model: str = "~/.local/share/devstill/models/jina-embeddings-v2-base-code"
-    device: str = "cpu"
+    device: EmbeddingDevice = "auto"
     max_sequence_length: int = Field(default=2048, ge=128, le=8192)
     batch_size: int = Field(default=8, ge=1, le=256)
     normalize_embeddings: bool = True
@@ -203,9 +206,7 @@ def default_model_path() -> Path:
     configured = os.environ.get("DEVSTILL_MODEL_PATH")
     if configured:
         return Path(os.path.expandvars(configured)).expanduser().resolve()
-    return (
-        Path.home() / ".local/share/devstill/models/jina-embeddings-v2-base-code"
-    ).resolve()
+    return (data_home() / "models/jina-embeddings-v2-base-code").resolve()
 
 
 def find_config(start: Path | None = None) -> Path:
@@ -271,7 +272,7 @@ def default_config_dict() -> dict[str, Any]:
         },
         "embedding": {
             "model": str(default_model_path()),
-            "device": "cpu",
+            "device": "auto",
             "max_sequence_length": 2048,
             "batch_size": 8,
             "normalize_embeddings": True,
@@ -323,6 +324,7 @@ def write_config(config_path: Path, config: DevstillConfig) -> Path:
     if not config_path.is_file():
         raise FileNotFoundError(config_path)
     raw = json.loads(config_path.read_text(encoding="utf-8"))
+    raw["embedding"] = config.embedding.model_dump(mode="json")
     raw["llm"] = config.llm.model_dump(mode="json")
     raw["executor"] = config.executor.model_dump(mode="json")
     validated = DevstillConfig.model_validate(raw)
@@ -330,6 +332,7 @@ def write_config(config_path: Path, config: DevstillConfig) -> Path:
         json.dumps(
             {
                 **raw,
+                "embedding": validated.embedding.model_dump(mode="json"),
                 "llm": validated.llm.model_dump(mode="json"),
                 "executor": validated.executor.model_dump(mode="json"),
             },
@@ -367,6 +370,18 @@ def update_llm_config(
 ) -> DevstillConfig:
     raw = config.model_dump(mode="json")
     raw["llm"] = {**raw["llm"], **updates}
+    updated = DevstillConfig.model_validate(raw)
+    write_config(config_path, updated)
+    return updated
+
+
+def update_embedding_config(
+    config_path: Path,
+    config: DevstillConfig,
+    **updates: Any,
+) -> DevstillConfig:
+    raw = config.model_dump(mode="json")
+    raw["embedding"] = {**raw["embedding"], **updates}
     updated = DevstillConfig.model_validate(raw)
     write_config(config_path, updated)
     return updated

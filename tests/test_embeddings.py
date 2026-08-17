@@ -5,7 +5,9 @@ import types
 import warnings
 
 import numpy as np
+import pytest
 
+from devstill import embeddings
 from devstill.embeddings import EmbeddingBackend
 
 
@@ -133,3 +135,53 @@ def test_embedding_progress_uses_groups_and_restores_original_order(
     assert progress == [(64, 130), (128, 130), (130, 130)]
     assert [int(vector[0]) for vector in result] == list(range(130))
     assert all(kwargs["show_progress_bar"] is False for _texts, kwargs in calls)
+
+
+def test_embedding_backend_passes_resolved_cuda_device(monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeModel:
+        def __init__(self, _path, **kwargs):
+            captured.update(kwargs)
+            self.max_seq_length = None
+
+    monkeypatch.setattr(
+        embeddings,
+        "inspect_device",
+        lambda _requested: types.SimpleNamespace(resolved="cuda"),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "sentence_transformers",
+        types.SimpleNamespace(SentenceTransformer=FakeModel),
+    )
+
+    backend = EmbeddingBackend(tmp_path, device="auto")
+    backend.warm()
+
+    assert backend.device == "cuda"
+    assert captured["device"] == "cuda"
+
+
+def test_cuda_oom_has_actionable_batch_size_guidance(monkeypatch, tmp_path) -> None:
+    class OomModel:
+        def __init__(self, *_args, **_kwargs):
+            self.max_seq_length = None
+
+        def encode(self, *_args, **_kwargs):
+            raise RuntimeError("CUDA out of memory")
+
+    monkeypatch.setattr(
+        embeddings,
+        "inspect_device",
+        lambda _requested: types.SimpleNamespace(resolved="cuda"),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "sentence_transformers",
+        types.SimpleNamespace(SentenceTransformer=OomModel),
+    )
+    backend = EmbeddingBackend(tmp_path, batch_size=32, device="cuda")
+
+    with pytest.raises(RuntimeError, match="below 32"):
+        backend.encode(["one"])

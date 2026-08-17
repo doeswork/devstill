@@ -16,7 +16,7 @@ Current status
 The current release implements:
 Global `devstill` console command
 Dedicated Python virtual environment
-CPU-only PyTorch installation
+Automatic CPU/CUDA PyTorch installation with explicit overrides
 Local `jina-embeddings-v2-base-code` model
 ChromaDB dependency and health check
 `devstill init`
@@ -51,78 +51,105 @@ Token-budgeted and relationship-aware context expansion
 Additional native parsers for C/C++, C#, PHP, Kotlin, and Swift
 File watching
 Running `devstill` opens the interactive repository workspace. The manual CLI remains available for scripts, advanced filters, rebuilds, configuration, and removal.
-Development repository layout
-The current development checkout is expected to look like:
-```text
-~/projects/devstill/devstill/
-├── .venv/
-├── README.md
-├── ToDo.md
-├── activate_devstill.sh
-├── devstill.example.json
-├── pyproject.toml
-├── setup_wsl_cpu.sh
-└── src/
-    └── devstill/
-        ├── __init__.py
-        ├── cli.py
-        ├── config.py
-        ├── tui_commands.py
-        └── tui.py
-```
-The development checkout currently happens to be nested under:
-```text
-~/projects/devstill/devstill/
-```
-Use that directory as the Devstill source root unless the project is later moved.
-Install on WSL
-From the Devstill source directory:
-```bash
-cd ~/projects/devstill/devstill
+Install on Ubuntu or WSL
 
-chmod +x setup_wsl_cpu.sh
-./setup_wsl_cpu.sh
+Clone Devstill and run the setup script; no manual build is required:
+```bash
+git clone https://github.com/doeswork/devstill.git
+cd devstill
+./setup.sh
 source ~/.bashrc
 ```
-This one command also installs the Pi coding executor and a compatible Node.js
-runtime when needed. Pi is installed through its official installer and is used
-only when `devstill execute` or `/execute` runs. For a search-only installation:
+
+The default `--device auto` mode detects an NVIDIA GPU, installs Devstill's tested
+CUDA PyTorch wheel, and verifies a real GPU allocation. If that fails, setup prints
+a warning and installs the CPU wheel. Force either mode with:
+
 ```bash
-DEVSTILL_SKIP_PI=1 ./setup_wsl_cpu.sh
+./setup.sh --device cpu
+./setup.sh --device cuda
 ```
-The installer creates one dedicated environment:
-```text
-~/projects/devstill/devstill/.venv/
+
+CUDA requires a supported NVIDIA GPU and a compatible host driver. Devstill uses
+PyTorch's prebuilt wheels, so users do not build PyTorch from source. Advanced users
+can select another official wheel index when their driver needs it:
+
+```bash
+./setup.sh --device cuda \
+  --torch-index-url https://download.pytorch.org/whl/cu128
 ```
-The shared embedding model is stored at:
+
+Explicit CUDA setup fails instead of silently using CPU when verification fails.
+Automatic mode is the only mode that falls back. Rerun setup to change the installed
+PyTorch build; the per-project `devstill device` command cannot add CUDA support to a
+CPU-only PyTorch installation.
+
+Setup also installs the Pi coding executor and a compatible Node.js runtime when
+needed. Pi is used only for `devstill execute` or `/execute`. For search and planning
+without code execution, use either form:
+
+```bash
+./setup.sh --skip-pi
+DEVSTILL_SKIP_PI=1 ./setup.sh
+```
+
+The public installation is independent of the cloned source tree:
+
 ```text
+~/.local/share/devstill/venv/
+~/.local/share/devstill/install.json
+~/.local/share/devstill/activate.sh
 ~/.local/share/devstill/models/jina-embeddings-v2-base-code/
-```
-The global command is linked into:
-```text
 ~/.local/bin/devstill
 ```
-Confirm that the command is available:
+
+After setup succeeds, the cloned checkout can be moved or deleted. Confirm the
+installation and selected accelerator with:
+
 ```bash
 which devstill
 devstill --version
+devstill doctor --load-model
 pi --version
 ```
-Expected version:
-```text
-devstill 0.1.0
-```
-Activate the development environment
-The global `devstill` command can be used without manually activating the venv.
-Activate the venv when modifying or testing Devstill itself:
+
+Update and uninstall
+
+`devstill update` checks the latest stable GitHub Release, shows the current and
+target versions, and asks before updating. Scripts must opt in explicitly:
+
 ```bash
-cd ~/projects/devstill/devstill
+devstill update --check
+devstill update
+devstill update --yes
+```
+
+The updater is intentionally unavailable in editable developer checkouts. It keeps
+the installed PyTorch build and runs package and Devstill health checks afterward.
+The update channel becomes usable when the project publishes its first versioned
+GitHub Release.
+
+To uninstall the self-contained client and shared model, remove
+`~/.local/bin/devstill` and `~/.local/share/devstill`. This does not remove Pi or any
+per-repository `devstill.json`/`.devstill` data. Use `devstill remove` inside each
+repository first if that data should also be deleted.
+
+Development installation
+
+Contributors should keep a separate editable environment in the source checkout:
+
+```bash
+git clone https://github.com/doeswork/devstill.git
+cd devstill
+python3 -m venv .venv
 source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
 ```
-Or use:
-```bash
-source ~/projects/devstill/devstill/activate_devstill.sh
-```
+
+`activate_devstill.sh` is a checkout-relative convenience helper after `.venv` has
+been created. The legacy `setup_wsl_cpu.sh` remains as a compatibility wrapper for
+`./setup.sh --device cpu`.
 Dependency compatibility
 The Jina embedding model uses custom Transformers code and currently requires Transformers 4.x.
 The project dependency must remain:
@@ -148,10 +175,10 @@ Agent requests use a directly pinned HTTP client:
 ```toml
 "httpx>=0.28,<1"
 ```
-The environment currently uses:
+The environment uses:
 ```text
 Python 3.12
-CPU-only PyTorch
+CPU or NVIDIA CUDA PyTorch
 Transformers 4.x
 Sentence Transformers
 ChromaDB
@@ -167,8 +194,9 @@ Expected checks include:
 ```text
 devstill version
 Python version
-CPU-only PyTorch
-CUDA unavailable
+PyTorch and CUDA build versions
+requested and resolved embedding device
+CUDA availability and GPU name
 embedding-model path
 Chroma heartbeat
 Pi and Node.js executor status
@@ -187,7 +215,7 @@ SentenceTransformer(
     model_path,
     trust_remote_code=True,
     local_files_only=True,
-    device="cpu",
+    device="cpu",  # or "cuda", selected by embedding.device
 )
 ```
 Configure a codebase
@@ -263,7 +291,7 @@ Example `devstill.json`
   },
   "embedding": {
     "model": "/home/USER/.local/share/devstill/models/jina-embeddings-v2-base-code",
-    "device": "cpu",
+    "device": "auto",
     "max_sequence_length": 2048,
     "batch_size": 8,
     "normalize_embeddings": true
@@ -441,7 +469,7 @@ jinaai/jina-embeddings-v2-base-code
 It converts different-length inputs into fixed 768-dimensional vectors.
 Recommended initial settings:
 ```text
-device: cpu
+device: auto
 max sequence length: 2048
 batch size: 8
 normalized embeddings: true
@@ -538,6 +566,11 @@ Result deduplication
 Per-file diversity limits
 Local LLM integration
 `devstill plan` calls a configured OpenAI-compatible Chat Completions endpoint.
+The agent is not a second model bundled with Devstill: it is the connection from
+Devstill to an LLM server that you start or obtain separately. The server must
+provide `POST /v1/chat/completions`. Indexing, search, and context assembly work
+without this agent; `plan` and `deep-plan` require it.
+
 Endpoint and model configuration are repository-local. API tokens are never written
 to `devstill.json` or displayed. The interactive TUI can remember a token in
 `~/.config/devstill/credentials.json`, an atomic user-only file with `0600`
@@ -563,15 +596,55 @@ never records authorization headers or API keys.
 
 Configure and verify an agent from anywhere beneath the repository:
 ```bash
+# First inspect the setup help and examples.
+devstill help agent configure
+
+# Example: download a model into Ollama, then configure its running server.
+ollama pull qwen2.5-coder:7b
 devstill agent configure \
-  --base-url http://127.0.0.1:8080/v1 \
-  --model local-model \
+  --base-url http://127.0.0.1:11434/v1 \
+  --model qwen2.5-coder:7b \
   --planning-max-output-tokens 6144 \
   --planning-reasoning off
-export DEVSTILL_AGENT_API_KEY="your-key-if-required"
 devstill agent
 devstill agent test
 ```
+`--base-url` is the API root ending in `/v1`, not the full
+`/v1/chat/completions` URL. `--model` is not a placeholder for the word `MODEL`;
+use the identifier shown by your server. When supported, this lists the available
+identifiers:
+```bash
+curl http://127.0.0.1:11434/v1/models
+```
+
+Common local-server examples:
+```bash
+# Ollama (ensure the Ollama app/service is running)
+ollama pull qwen2.5-coder:7b
+devstill agent configure \
+  --base-url http://127.0.0.1:11434/v1 \
+  --model qwen2.5-coder:7b
+```
+For LM Studio, the common base URL is `http://127.0.0.1:1234/v1`; load a model,
+start its local server, and copy its displayed model identifier into `--model`. For
+llama.cpp, the common base URL is `http://127.0.0.1:8080/v1`; pass the model
+identifier configured for that server. Do not type the literal words `URL`, `MODEL`,
+or `YOUR_MODEL` from a usage message.
+
+Local servers commonly accept requests without a key. If yours requires one, set
+the default environment variable before testing:
+```bash
+export DEVSTILL_AGENT_API_KEY="your-actual-key"
+devstill agent test
+```
+To use a different variable name, pass `--api-key-env NAME` during configuration and
+export that name instead. Devstill reads the variable when it sends a request; the
+secret is not saved in `devstill.json`.
+
+Running `devstill agent configure` without options prints this setup help. Standard
+help forms also work: `devstill --help`, `devstill agent --help`, and
+`devstill agent configure --help`.
+
 Alternatively, run `devstill`, choose **Agent setup** in the right sidebar, or type
 `/agent configure`. Enter the endpoint, model, and token, leave **Remember** enabled,
 then choose **Save & Test**. The password field is always blank when reopened and the
@@ -660,7 +733,7 @@ Keep all Devstill client-side functionality in the single dedicated venv:
 ```text
 Textual TUI
 parsers
-CPU embedding model
+CPU or CUDA embedding model
 Chroma
 SQLite
 fuzzy search
@@ -669,7 +742,7 @@ search engine
 LLM HTTP client
 ```
 Do not install Devstill into each scanned repository's environment.
-A future Python/CUDA LLM server should use a separate venv or container.
+A separate Python/CUDA LLM server should still use its own venv or container.
 The following already run as separate services and do not need a Devstill-specific venv:
 llama.cpp server
 Ollama
@@ -677,6 +750,8 @@ LM Studio
 Current commands
 ```bash
 devstill
+devstill help
+devstill help agent configure
 devstill init
 devstill init --force
 devstill remove
@@ -685,6 +760,13 @@ devstill remove --index-only
 devstill remove --yes
 devstill doctor
 devstill doctor --load-model
+devstill device
+devstill device auto
+devstill device cpu
+devstill device cuda
+devstill update --check
+devstill update
+devstill update --yes
 devstill files
 devstill files --count
 devstill files --json
@@ -725,7 +807,7 @@ devstill --version
 The manual index command shows live discovery, file-checking, parsing, embedding,
 and persistence progress on stderr, including checked/changed/unchanged/parsed file
 counts. The optional `optimum`/ONNX warning from the embedding model is suppressed;
-ONNX support is not used by Devstill's normal CPU embedding workflow.
+ONNX support is not used by Devstill's normal embedding workflow.
 
 Interactive TUI
 
@@ -791,7 +873,7 @@ and is not persisted.
 During `/index`, the composer displays the active discovery, reconciliation,
 parsing, embedding, or persistence stage. Stages with measurable work show a
 progress bar, percentage, and current/total count; the final session entry retains
-the incremental-index and quality summary. CPU embedding is grouped for structured
+the incremental-index and quality summary. Embedding is grouped for structured
 progress updates, so large repositories advance throughout the encoder run and show
 an ETA instead of remaining at zero until the whole model call returns.
 
@@ -810,10 +892,11 @@ summary reports reconciled units separately from newly embedded changed-file uni
 
 The TUI opens Chroma and warms the local query encoder in a startup worker whenever
 the repository already has an index. Startup may spend several seconds loading the
-CPU model and raises Devstill's memory use by roughly 1.1 GiB, but the first search,
+model and raises Devstill's memory use by roughly 1.1 GiB, but the first search,
 context, or plan then avoids that cold-start delay. The sidebar reports the encoder
-as `cold`, `loading`, or `warm`. The same encoder and Chroma client are reused for
-the rest of that TUI session, while each command keeps its own lightweight SQLite
+as `cold`, `loading`, or `warm` alongside its resolved CPU/CUDA device. The same
+encoder and Chroma client are reused for the rest of that TUI session, while each
+command keeps its own lightweight SQLite
 connection. Missing indexes remain cold until `/index` builds them. Closing Devstill
 releases the session cache. One-shot CLI commands remain independent and therefore
 still pay their own cold-start cost.
@@ -862,7 +945,7 @@ The network destination and transmitted chunk count are written to stderr, so
 chunks remain pinned; up to three prioritized reason searches fill the remaining
 capacity through global reciprocal-rank fusion, score-gap stopping, file diversity,
 and exact-chunk deduplication. Query embeddings for those searches are generated in
-one CPU batch. A failed initial pass preserves every previous Deep Plan artifact. A
+one embedding batch. A failed initial pass preserves every previous Deep Plan artifact. A
 failed refinement saves the new initial result while preserving the previous final
 `.deep-plan.*` files. Normal `.plan.*` and `.context.*` files are never changed by
 Deep Plan.
@@ -889,4 +972,9 @@ python -m pip check
 pytest
 ruff check .
 ```
+
+Maintainers publish the updater channel by bumping `project.version`, pushing a
+matching stable `vMAJOR.MINOR.PATCH` tag, and allowing the release workflow to pass
+the CPU test suite before it creates the GitHub Release. CUDA smoke testing is a
+manual, hardware-gated CI job for a self-hosted NVIDIA runner.
 See `ToDo.md` for the implementation sequence and acceptance criteria.
