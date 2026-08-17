@@ -81,7 +81,7 @@ def test_prepare_and_apply_only_approved_targets(tmp_path: Path) -> None:
         [
             PlanItem(label=PlanLabel.MODIFY, target="modify.py", reason="Update it."),
             PlanItem(label=PlanLabel.READ, target="read.py", reason="Inspect it."),
-            PlanItem(label=PlanLabel.NEW_FILE, target="new.py", reason="Create it."),
+            PlanItem(label=PlanLabel.NEW, target="new.py", reason="Create it."),
         ],
     )
 
@@ -312,7 +312,7 @@ def test_apply_rejects_source_changed_after_preview(tmp_path: Path) -> None:
     assert target.read_text(encoding="utf-8") == "user change\n"
 
 
-def test_delete_label_may_remove_file_but_modify_label_may_not(
+def test_delete_must_remove_file_but_remove_and_modify_must_preserve_it(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -324,23 +324,40 @@ def test_delete_label_may_remove_file_but_modify_label_may_not(
     def remove(workspace: Path) -> None:
         (workspace / "obsolete.py").unlink()
 
+    for label in (PlanLabel.MODIFY, PlanLabel.REMOVE):
+        write_plan(
+            repo,
+            artifacts,
+            [PlanItem(label=label, target="obsolete.py", reason="Change it.")],
+        )
+        with pytest.raises(ExecutionError, match="did not label Delete"):
+            RepositoryExecutor(
+                repo,
+                artifacts,
+                configured(),
+                runner=FakePiRunner(remove),
+            ).prepare()
+
+    def retain(workspace: Path) -> None:
+        (workspace / "obsolete.py").write_text("obsolete = False\n", encoding="utf-8")
+
     write_plan(
         repo,
         artifacts,
-        [PlanItem(label=PlanLabel.MODIFY, target="obsolete.py", reason="Change it.")],
+        [PlanItem(label=PlanLabel.DELETE, target="obsolete.py", reason="Delete it.")],
     )
-    with pytest.raises(ExecutionError, match="did not label Delete"):
+    with pytest.raises(ExecutionError, match="did not delete planned Delete"):
         RepositoryExecutor(
             repo,
             artifacts,
             configured(),
-            runner=FakePiRunner(remove),
+            runner=FakePiRunner(retain),
         ).prepare()
 
     write_plan(
         repo,
         artifacts,
-        [PlanItem(label=PlanLabel.DELETE, target="obsolete.py", reason="Remove it.")],
+        [PlanItem(label=PlanLabel.DELETE, target="obsolete.py", reason="Delete it.")],
     )
     executor = RepositoryExecutor(
         repo,

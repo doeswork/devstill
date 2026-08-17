@@ -46,8 +46,9 @@ def deep_plan_queries(
         PlanLabel.SEARCH: 0,
         PlanLabel.MODIFY: 1,
         PlanLabel.ADD: 1,
+        PlanLabel.REMOVE: 1,
         PlanLabel.DELETE: 1,
-        PlanLabel.NEW_FILE: 2,
+        PlanLabel.NEW: 2,
         PlanLabel.READ: 3,
     }
     ordered = list(enumerate(plan.items))

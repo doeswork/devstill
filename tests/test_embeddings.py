@@ -2,10 +2,37 @@ from __future__ import annotations
 
 import sys
 import types
+import warnings
 
 import numpy as np
 
 from devstill.embeddings import EmbeddingBackend
+
+
+def test_embedding_load_suppresses_only_optional_onnx_warning(
+    monkeypatch, tmp_path
+) -> None:
+    class WarningModel:
+        def __init__(self, *_args, **_kwargs):
+            warnings.warn(
+                "optimum is not installed. To use OnnxConfig and BertOnnxConfig, "
+                "make sure that `optimum` package is installed",
+                UserWarning,
+                stacklevel=2,
+            )
+            warnings.warn("keep this model warning", UserWarning, stacklevel=2)
+            self.max_seq_length = None
+
+    module = types.SimpleNamespace(SentenceTransformer=WarningModel)
+    monkeypatch.setitem(sys.modules, "sentence_transformers", module)
+    backend = EmbeddingBackend(tmp_path)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        backend.warm()
+
+    messages = [str(item.message) for item in caught]
+    assert messages == ["keep this model warning"]
 
 
 def test_embedding_backend_forces_offline_cpu_and_restores_order(

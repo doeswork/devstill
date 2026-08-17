@@ -611,10 +611,12 @@ plans with unresolved `Search` entries, and stages only the approved files in an
 isolated temporary Git repository. Pi runs with reasoning disabled, no session or
 repository context files, a bounded tool budget, and no shell tool.
 
-Blue `Read` targets are copied for reference but cannot be changed. Existing
-`Modify`, `Add`, and `Delete` targets may change, while `New File` may create only
-its exact safe repository-relative path. Devstill rejects symlinks, traversal,
-unlisted files, and any read-only change before writing `.devstill/.execute.patch`.
+Blue `Read` targets are copied for reference but cannot be changed. Existing green
+`Add`, orange `Remove`, and purple `Modify` targets may change but must remain files.
+Black `Delete` targets must be removed completely, while pink `New` targets must
+create only their exact safe repository-relative paths. Devstill rejects symlinks,
+traversal, unlisted files, and any read-only change before writing
+`.devstill/.execute.patch`.
 
 The patch is displayed before application. Interactive CLI and TUI use explicit
 confirmation; `--dry-run` only generates the preview and `--yes` is required for
@@ -624,11 +626,13 @@ noninteractive application. Devstill rechecks original file hashes and runs
 After a successful `/plan` or `/deep-plan`, the TUI asks whether to implement that
 plan with Pi without opening a popup. The bottom composer accepts optional multiline
 execution instructions; leaving it blank reuses the Plan's original query. The
-colored status on each existing file is an inline dropdown for `Read`, `Modify`,
-`Delete`, or `Add`, and valid changes are saved immediately without changing the
-one-sentence reason. Choosing a concrete label for a white `Search` row temporarily
-uses the composer for its exact repository-relative path. Pi remains blocked until
-every `Search` entry is resolved.
+colored status on each existing file is an inline dropdown for `Read`, `Add`,
+`Remove`, `Modify`, or `Delete`. Reasons remain visible as one-line inputs and save
+on Enter or focus loss. An inline **Add New file** form collects an exact path and
+reason for a pink `New` row, and pink rows can be discarded. Valid changes are saved
+immediately. Choosing a concrete label for a white `Search` row temporarily uses the
+composer for its exact repository-relative path. Pi remains blocked until every
+`Search` entry is resolved.
 
 The composer shows focused, right-aligned actions for **Not now**, **Preview with
 Pi**, **Use file**, **Cancel**, and **Apply patch** as appropriate. Normal commands
@@ -717,6 +721,11 @@ devstill execute --from deep-plan --yes
 devstill execute --json --dry-run
 devstill --version
 ```
+
+The manual index command shows live discovery, file-checking, parsing, embedding,
+and persistence progress on stderr, including checked/changed/unchanged/parsed file
+counts. The optional `optimum`/ONNX warning from the embedding model is suppressed;
+ONNX support is not used by Devstill's normal CPU embedding workflow.
 
 Interactive TUI
 
@@ -839,7 +848,8 @@ reviewable formats, regardless of which format is printed to stdout.
 relevance drop while favoring multi-channel matches and file diversity. It groups
 chunks by repository path and asks the configured model to classify file impact. It
 returns `Read`,
-`Modify`, `Delete`, `Add`, `Search`, and `New File` items with one short reason.
+`Read`, `Add`, `Remove`, `Modify`, `Delete`, `Search`, and `New` items with one short
+reason.
 The command is advisory: it never changes source files. Every successful run
 overwrites `.devstill/.plan.md` and `.devstill/.plan.json` without changing the
 `.context.*` artifacts. Invalid model output receives one repair request; if that

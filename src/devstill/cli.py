@@ -7,6 +7,14 @@ import sys
 from pathlib import Path
 
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeRemainingColumn,
+)
 
 from devstill import __version__
 from devstill.agent import AgentClient
@@ -41,7 +49,7 @@ from devstill.executor import (
 )
 from devstill.git_files import discover_repository_inventory
 from devstill.indexer import RepositoryIndexer
-from devstill.models import ChunkPolicy
+from devstill.models import ChunkPolicy, IndexProgress
 from devstill.parsers import parse_source_file
 from devstill.paths import relative_repo_path
 from devstill.pi_runtime import inspect_pi
@@ -495,8 +503,53 @@ def parse_command(value: str, as_json: bool) -> int:
 def index_command(rebuild: bool, verbose: bool, as_json: bool) -> int:
     config_path, config = _configured()
     indexer = RepositoryIndexer(config_path, config)
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[bold cyan]{task.fields[stage]}[/bold cyan]"),
+        TextColumn("{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeRemainingColumn(),
+        TextColumn("[dim]{task.fields[files]}[/dim]"),
+        console=diagnostic_console,
+        transient=True,
+    )
+    task = progress.add_task(
+        "Starting repository index",
+        total=None,
+        stage="STARTING",
+        files="",
+    )
+
+    def report(event: IndexProgress) -> None:
+        total = event.total if event.total is not None and event.total > 0 else None
+        completed = event.current or 0
+        if total is not None:
+            completed = max(0, min(completed, total))
+        files = ""
+        if event.files is not None and event.files.total:
+            files = (
+                f"files {event.files.checked}/{event.files.total} · "
+                f"{event.files.changed} changed · "
+                f"{event.files.unchanged} unchanged · "
+                f"{event.files.parsed} parsed"
+            )
+        progress.update(
+            task,
+            description=event.message,
+            total=total,
+            completed=completed,
+            stage=event.stage.upper(),
+            files=files,
+        )
+
     try:
-        summary = indexer.run(rebuild=rebuild, verbose=verbose)
+        with progress:
+            summary = indexer.run(
+                rebuild=rebuild,
+                verbose=verbose,
+                progress=report,
+            )
     finally:
         indexer.close()
     if as_json:

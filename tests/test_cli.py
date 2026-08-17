@@ -9,7 +9,7 @@ import pytest
 from devstill import cli
 from devstill.cli import parser
 from devstill.config import DevstillConfig, load_config, write_default_config
-from devstill.models import IndexSummary
+from devstill.models import IndexFileProgress, IndexProgress, IndexSummary
 from tests.test_context import make_result
 
 
@@ -422,7 +422,7 @@ def test_plan_command_outputs_json_writes_artifacts_and_preserves_context(
                             "reason": "Add activation-code handling to registration.",
                         },
                         {
-                            "label": "New File",
+                            "label": "New",
                             "target": "core/services/activation.py",
                             "reason": "Create a focused activation service.",
                         },
@@ -447,7 +447,7 @@ def test_plan_command_outputs_json_writes_artifacts_and_preserves_context(
     assert payload["query"] == "add activation"
     assert payload["repository"] == str(tmp_path)
     assert payload["model"] == "local-12b"
-    assert [item["label"] for item in payload["items"]] == ["Add", "New File"]
+    assert [item["label"] for item in payload["items"]] == ["Add", "New"]
     assert "Sending 1 source chunks" in captured.err
     assert "http://localhost:8080/v1/chat/completions" in captured.err
     assert calls["limit"] == 12
@@ -730,6 +730,7 @@ def test_parse_json_includes_parser_and_quality(monkeypatch, tmp_path, capsys) -
 
 
 def test_index_quality_human_and_json_output(monkeypatch, tmp_path, capsys) -> None:
+    reported: list[IndexProgress] = []
     summary = IndexSummary(
         repository=str(tmp_path),
         good_files=7,
@@ -743,7 +744,28 @@ def test_index_quality_human_and_json_output(monkeypatch, tmp_path, capsys) -> N
         def __init__(self, config_path, config):
             pass
 
-        def run(self, rebuild=False, verbose=False):
+        def run(self, rebuild=False, verbose=False, progress=None):
+            assert progress is not None
+            events = [
+                IndexProgress("discovery", "Discovering repository files"),
+                IndexProgress(
+                    "checking",
+                    "Checking 10 repository files",
+                    5,
+                    10,
+                    files=IndexFileProgress(
+                        total=10,
+                        checked=5,
+                        changed=2,
+                        unchanged=3,
+                        parsed=1,
+                    ),
+                ),
+                IndexProgress("complete", "Index update complete", 1, 1),
+            ]
+            for event in events:
+                reported.append(event)
+                progress(event)
             return summary
 
         def close(self):
@@ -757,15 +779,22 @@ def test_index_quality_human_and_json_output(monkeypatch, tmp_path, capsys) -> N
     monkeypatch.setattr(cli, "RepositoryIndexer", FakeIndexer)
 
     assert cli.index_command(False, False, False) == 0
-    human = capsys.readouterr().out
+    captured = capsys.readouterr()
+    human = captured.out
     assert "Index quality:" in human
     assert "GOOD: 7" in human
     assert "MEH:  2" in human
     assert "BAD:   1" in human
     assert "Binary: 3" in human
+    assert [event.stage for event in reported] == [
+        "discovery",
+        "checking",
+        "complete",
+    ]
 
     assert cli.index_command(False, True, True) == 0
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
     assert payload["good_files"] == 7
     assert payload["binary_files_skipped"] == 3
+    assert len(reported) == 6

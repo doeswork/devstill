@@ -170,9 +170,10 @@ class ComposerMode(str, Enum):
 
 PLAN_LABEL_OPTIONS = (
     ("🔵 Read", PlanLabel.READ.value),
-    ("🟣 Modify", PlanLabel.MODIFY.value),
-    ("🔴 Delete", PlanLabel.DELETE.value),
     ("🟢 Add", PlanLabel.ADD.value),
+    ("🟠 Remove", PlanLabel.REMOVE.value),
+    ("🟣 Modify", PlanLabel.MODIFY.value),
+    ("⚫ Delete", PlanLabel.DELETE.value),
 )
 SEARCH_LABEL_OPTIONS = (
     ("⚪ Search", PlanLabel.SEARCH.value),
@@ -188,6 +189,19 @@ class PlanImpactRow(Vertical):
             self.index = row.index
             self.label = label
 
+    class ReasonEdited(Message):
+        def __init__(self, row: PlanImpactRow, reason: str) -> None:
+            super().__init__()
+            self.row = row
+            self.index = row.index
+            self.reason = reason
+
+    class DiscardRequested(Message):
+        def __init__(self, row: PlanImpactRow) -> None:
+            super().__init__()
+            self.row = row
+            self.index = row.index
+
     def __init__(self, index: int, item: PlanItem) -> None:
         super().__init__(classes="plan-impact-row")
         self.index = index
@@ -201,8 +215,8 @@ class PlanImpactRow(Vertical):
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="plan-impact-heading"):
-            if self.item.label is PlanLabel.NEW_FILE:
-                yield Static("🩷 New File", classes="plan-impact-fixed-label")
+            if self.item.label is PlanLabel.NEW:
+                yield Static("🩷 New", classes="plan-impact-fixed-label")
             else:
                 options = (
                     SEARCH_LABEL_OPTIONS
@@ -220,7 +234,20 @@ class PlanImpactRow(Vertical):
                 self._target_text(self.item),
                 classes="plan-impact-target",
             )
-        yield Static(escape(self.item.reason), classes="plan-impact-reason")
+            if self.item.label is PlanLabel.NEW:
+                yield Button(
+                    "Discard",
+                    classes="plan-impact-discard",
+                    compact=True,
+                    flat=True,
+                )
+        yield Input(
+            value=self.item.reason,
+            placeholder="Plan reason",
+            max_length=240,
+            classes="plan-impact-reason",
+            compact=True,
+        )
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select not in self.query(Select) or not isinstance(event.value, str):
@@ -228,7 +255,31 @@ class PlanImpactRow(Vertical):
         event.stop()
         self.post_message(self.LabelSelected(self, PlanLabel(event.value)))
 
+    def _post_reason(self, value: str) -> None:
+        normalized = value.strip()
+        if normalized != self.item.reason:
+            self.post_message(self.ReasonEdited(self, normalized))
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input not in self.query(Input):
+            return
+        event.stop()
+        self._post_reason(event.value)
+
+    def on_input_blurred(self, event: Input.Blurred) -> None:
+        if event.input not in self.query(Input):
+            return
+        self._post_reason(event.value)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.has_class("plan-impact-discard"):
+            event.stop()
+            self.post_message(self.DiscardRequested(self))
+
     def update_item(self, item: PlanItem) -> None:
+        reason = self.query_one(".plan-impact-reason", Input)
+        if reason.value != item.reason:
+            reason.value = item.reason
         if item == self.item:
             select = self.query_one_optional(Select)
             if select is not None and select.value != item.label.value:
@@ -236,7 +287,6 @@ class PlanImpactRow(Vertical):
             return
         self.item = item
         self.query_one(".plan-impact-target", Static).update(self._target_text(item))
-        self.query_one(".plan-impact-reason", Static).update(escape(item.reason))
         select = self.query_one_optional(Select)
         if select is not None:
             select.set_options(
@@ -250,6 +300,82 @@ class PlanImpactRow(Vertical):
         select = self.query_one_optional(Select)
         if select is not None:
             select.disabled = not editable
+        self.query_one(".plan-impact-reason", Input).disabled = not editable
+        discard = self.query_one_optional(".plan-impact-discard", Button)
+        if discard is not None:
+            discard.disabled = not editable
+
+
+class PlanNewFileForm(Vertical):
+    class Submitted(Message):
+        def __init__(self, form: PlanNewFileForm, target: str, reason: str) -> None:
+            super().__init__()
+            self.form = form
+            self.target = target
+            self.reason = reason
+
+    class Cancelled(Message):
+        pass
+
+    def compose(self) -> ComposeResult:
+        yield Input(
+            placeholder="Exact repository-relative new file path",
+            max_length=240,
+            classes="plan-new-file-path",
+            compact=True,
+        )
+        yield Input(
+            placeholder="Why this new file is needed",
+            max_length=240,
+            classes="plan-new-file-reason",
+            compact=True,
+        )
+        with Horizontal(classes="plan-new-file-actions"):
+            yield Button(
+                "Cancel",
+                classes="plan-new-file-cancel",
+                compact=True,
+                flat=True,
+            )
+            yield Button(
+                "Add",
+                variant="success",
+                classes="plan-new-file-save",
+                compact=True,
+            )
+
+    def on_mount(self) -> None:
+        self.display = False
+
+    def open(self) -> None:
+        self.display = True
+        self.query_one(".plan-new-file-path", Input).focus()
+
+    def close(self) -> None:
+        self.query_one(".plan-new-file-path", Input).value = ""
+        self.query_one(".plan-new-file-reason", Input).value = ""
+        self.display = False
+
+    def submit(self) -> None:
+        target = self.query_one(".plan-new-file-path", Input).value.strip()
+        reason = self.query_one(".plan-new-file-reason", Input).value.strip()
+        self.post_message(self.Submitted(self, target, reason))
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        if event.input.has_class("plan-new-file-path"):
+            self.query_one(".plan-new-file-reason", Input).focus()
+        else:
+            self.submit()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.has_class("plan-new-file-cancel"):
+            event.stop()
+            self.close()
+            self.post_message(self.Cancelled())
+        elif event.button.has_class("plan-new-file-save"):
+            event.stop()
+            self.submit()
 
 
 class PlanSessionEntry(Vertical):
@@ -287,6 +413,14 @@ class PlanSessionEntry(Vertical):
             )
             for index, item in enumerate(self.plan.items):
                 yield PlanImpactRow(index, item)
+            yield Button(
+                "+ Add New file",
+                classes="plan-add-new",
+                compact=True,
+                flat=True,
+                disabled=True,
+            )
+            yield PlanNewFileForm(classes="plan-new-file-form")
             yield Static("", classes="plan-impact-status")
 
     def _active_rows(self) -> list[PlanImpactRow]:
@@ -296,6 +430,15 @@ class PlanSessionEntry(Vertical):
         self.plan = plan
         for row, item in zip(self._active_rows(), plan.items, strict=True):
             row.update_item(item)
+
+    async def append_plan_item(self, item: PlanItem, plan: PlanOutput) -> None:
+        row = PlanImpactRow(len(plan.items) - 1, item)
+        await self.query_one(".plan-impact-body", Vertical).mount(
+            row,
+            before=self.query_one(".plan-add-new", Button),
+        )
+        self.plan = plan
+        row.set_editable(True)
 
     def remove_plan_item(self, index: int, plan: PlanOutput) -> None:
         rows = self._active_rows()
@@ -313,6 +456,28 @@ class PlanSessionEntry(Vertical):
     def set_editable(self, editable: bool) -> None:
         for row in self._active_rows():
             row.set_editable(editable)
+        add_new = self.query_one(".plan-add-new", Button)
+        add_new.disabled = not editable
+        add_new.display = editable
+        if not editable:
+            self.query_one(PlanNewFileForm).close()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if not event.button.has_class("plan-add-new"):
+            return
+        event.stop()
+        event.button.display = False
+        self.query_one(PlanNewFileForm).open()
+
+    def on_plan_new_file_form_cancelled(
+        self,
+        _event: PlanNewFileForm.Cancelled,
+    ) -> None:
+        self.query_one(".plan-add-new", Button).display = True
+
+    def close_new_file_form(self) -> None:
+        self.query_one(PlanNewFileForm).close()
+        self.query_one(".plan-add-new", Button).display = True
 
     def set_status(self, message: str, *, error: bool = False) -> None:
         status = self.query_one(".plan-impact-status", Static)
@@ -442,9 +607,48 @@ class DevstillApp(App[None]):
     }
 
     .plan-impact-reason {
-        height: auto;
+        height: 1;
         padding: 0 1;
         color: $text-muted;
+        background: transparent;
+    }
+
+    .plan-impact-discard {
+        width: auto;
+        min-width: 9;
+        margin-left: 1;
+        color: $error;
+    }
+
+    .plan-add-new {
+        display: none;
+        width: auto;
+        min-width: 16;
+        margin: 0 1;
+        color: $secondary;
+    }
+
+    .plan-new-file-form {
+        height: auto;
+        margin: 0 1;
+        padding: 0 1;
+        border-left: solid $secondary 60%;
+    }
+
+    .plan-new-file-path, .plan-new-file-reason {
+        height: 1;
+        margin-bottom: 1;
+    }
+
+    .plan-new-file-actions {
+        height: 1;
+        align-horizontal: right;
+    }
+
+    .plan-new-file-actions Button {
+        width: auto;
+        min-width: 8;
+        margin-left: 1;
     }
 
     .plan-impact-status {
@@ -1138,7 +1342,7 @@ class DevstillApp(App[None]):
         if old_item.label is PlanLabel.SEARCH:
             self._begin_search_resolution(event.index, event.label)
             return
-        if event.label is PlanLabel.SEARCH or old_item.label is PlanLabel.NEW_FILE:
+        if event.label is PlanLabel.SEARCH or old_item.label is PlanLabel.NEW:
             if isinstance(self._handoff_entry, PlanSessionEntry):
                 self._handoff_entry.update_plan(plan)
             return
@@ -1150,6 +1354,91 @@ class DevstillApp(App[None]):
         )
         if self._persist_reviewed_plan(plan.model_copy(update={"items": items})):
             self._refresh_handoff()
+
+    async def on_plan_impact_row_reason_edited(
+        self,
+        event: PlanImpactRow.ReasonEdited,
+    ) -> None:
+        if (
+            self._composer_mode is not ComposerMode.PI_HANDOFF
+            or self._handoff_offer is None
+            or self._handoff_offer.plan is None
+            or not isinstance(self._handoff_entry, PlanSessionEntry)
+            or event.row not in self._handoff_entry.query(PlanImpactRow)
+        ):
+            return
+        plan = self._handoff_offer.plan
+        old_item = plan.items[event.index]
+        try:
+            edited = PlanItem(
+                label=old_item.label,
+                target=old_item.target,
+                reason=event.reason,
+            )
+        except ValueError as exc:
+            self._handoff_entry.update_plan(plan)
+            self._handoff_entry.set_status(str(exc), error=True)
+            return
+        if edited == old_item:
+            event.row.update_item(old_item)
+            return
+        items = list(plan.items)
+        items[event.index] = edited
+        if self._persist_reviewed_plan(plan.model_copy(update={"items": items})):
+            self._refresh_handoff()
+
+    async def on_plan_new_file_form_submitted(
+        self,
+        event: PlanNewFileForm.Submitted,
+    ) -> None:
+        if (
+            self._composer_mode is not ComposerMode.PI_HANDOFF
+            or self._handoff_offer is None
+            or self._handoff_offer.plan is None
+            or not isinstance(self._handoff_entry, PlanSessionEntry)
+            or event.form not in self._handoff_entry.query(PlanNewFileForm)
+        ):
+            return
+        try:
+            item = PlanItem(
+                label=PlanLabel.NEW,
+                target=event.target,
+                reason=event.reason,
+            )
+        except ValueError as exc:
+            self._handoff_entry.set_status(str(exc), error=True)
+            return
+        plan = self._handoff_offer.plan
+        reviewed = plan.model_copy(update={"items": [*plan.items, item]})
+        if not self._persist_reviewed_plan(reviewed, update_entry=False):
+            return
+        await self._handoff_entry.append_plan_item(item, reviewed)
+        self._handoff_entry.close_new_file_form()
+        self._refresh_handoff()
+        self._scroll_feed_after_layout()
+
+    async def on_plan_impact_row_discard_requested(
+        self,
+        event: PlanImpactRow.DiscardRequested,
+    ) -> None:
+        if (
+            self._composer_mode is not ComposerMode.PI_HANDOFF
+            or self._handoff_offer is None
+            or self._handoff_offer.plan is None
+            or not isinstance(self._handoff_entry, PlanSessionEntry)
+            or event.row not in self._handoff_entry.query(PlanImpactRow)
+        ):
+            return
+        plan = self._handoff_offer.plan
+        if plan.items[event.index].label is not PlanLabel.NEW:
+            return
+        items = list(plan.items)
+        del items[event.index]
+        reviewed = plan.model_copy(update={"items": items})
+        if not self._persist_reviewed_plan(reviewed, update_entry=False):
+            return
+        self._handoff_entry.remove_plan_item(event.index, reviewed)
+        self._refresh_handoff()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id

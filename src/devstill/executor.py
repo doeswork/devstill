@@ -194,7 +194,7 @@ def _safe_target(repo_root: Path, target: str, *, must_exist: bool) -> Path:
         if not candidate.is_file():
             raise ExecutionError(f"Plan target is missing or not a file: {target}")
     elif candidate.exists() or candidate.is_symlink():
-        raise ExecutionError(f"New File target already exists: {target}")
+        raise ExecutionError(f"New target already exists: {target}")
     return candidate
 
 
@@ -223,7 +223,7 @@ def _validate_plan_targets(
         paths[item.target] = _safe_target(
             repo_root,
             item.target,
-            must_exist=item.label is not PlanLabel.NEW_FILE,
+            must_exist=item.label is not PlanLabel.NEW,
         )
     return labels, paths
 
@@ -276,7 +276,7 @@ def _copy_plan_files(
     hashes: dict[str, str] = {}
     for target, label in labels.items():
         destination = workspace.joinpath(*PurePosixPath(target).parts)
-        if label is PlanLabel.NEW_FILE:
+        if label is PlanLabel.NEW:
             destination.parent.mkdir(parents=True, exist_ok=True)
             continue
         source = paths[target]
@@ -319,12 +319,18 @@ def _verify_staged_changes(
             raise ExecutionError(f"Pi created a non-file target: {target}")
     for target, label in labels.items():
         staged = workspace.joinpath(*PurePosixPath(target).parts)
-        if label in {PlanLabel.MODIFY, PlanLabel.ADD} and not staged.is_file():
+        if label in {
+            PlanLabel.ADD,
+            PlanLabel.REMOVE,
+            PlanLabel.MODIFY,
+        } and not staged.is_file():
             raise ExecutionError(
                 f"Pi deleted a target that the plan did not label Delete: {target}"
             )
-        if label is PlanLabel.NEW_FILE and not staged.is_file():
-            raise ExecutionError(f"Pi did not create planned New File target: {target}")
+        if label is PlanLabel.DELETE and staged.exists():
+            raise ExecutionError(f"Pi did not delete planned Delete target: {target}")
+        if label is PlanLabel.NEW and not staged.is_file():
+            raise ExecutionError(f"Pi did not create planned New target: {target}")
 
 
 def _write_execution_artifacts(
@@ -442,7 +448,7 @@ class RepositoryExecutor:
                 new_paths={
                     target
                     for target, label in labels.items()
-                    if label is PlanLabel.NEW_FILE
+                    if label is PlanLabel.NEW
                 },
                 temporary=temporary,
             )
@@ -469,7 +475,7 @@ class RepositoryExecutor:
             path = self.repo_root.joinpath(*PurePosixPath(target).parts)
             if path.exists() or path.is_symlink():
                 raise ExecutionError(
-                    f"New File target appeared after preview; regenerate execution: {target}"
+                    f"New target appeared after preview; regenerate execution: {target}"
                 )
         if prepared.patch:
             notify("Checking patch against the working tree")

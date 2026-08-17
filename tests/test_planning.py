@@ -54,8 +54,14 @@ class FakeClient:
         return self.responses.pop(0)
 
 
-def test_all_six_labels_validate_and_render(tmp_path: Path) -> None:
-    existing = ["core/views.py", "core/models.py", "core/urls.py", "README.md"]
+def test_all_seven_labels_validate_and_render(tmp_path: Path) -> None:
+    existing = [
+        "core/views.py",
+        "core/models.py",
+        "core/urls.py",
+        "core/legacy.py",
+        "README.md",
+    ]
     make_files(tmp_path, *existing)
     results = [
         make_result(path=path, name=f"symbol_{index}")
@@ -70,12 +76,13 @@ def test_all_six_labels_validate_and_render(tmp_path: Path) -> None:
             "core/models.py",
             "Modify the user record to store activation state.",
         ),
-        plan_item("Delete", "core/urls.py", "Delete the obsolete activation route."),
+        plan_item("Remove", "core/urls.py", "Remove the obsolete activation route."),
+        plan_item("Delete", "core/legacy.py", "Delete the obsolete module."),
         plan_item(
             "Read", "README.md", "Read the documented account workflow for constraints."
         ),
         plan_item(
-            "New File",
+            "New",
             "core/services/activation.py",
             "Create a focused activation service.",
         ),
@@ -87,11 +94,12 @@ def test_all_six_labels_validate_and_render(tmp_path: Path) -> None:
     items = validate_plan_items(parsed, results, tmp_path)
     assert {item.label for item in items} == set(PlanLabel)
     assert LABEL_STYLES[PlanLabel.READ] == "blue"
-    assert LABEL_STYLES[PlanLabel.MODIFY] == "purple"
-    assert LABEL_STYLES[PlanLabel.DELETE] == "red"
     assert LABEL_STYLES[PlanLabel.ADD] == "green"
+    assert LABEL_STYLES[PlanLabel.REMOVE] == "dark_orange"
+    assert LABEL_STYLES[PlanLabel.MODIFY] == "purple"
+    assert LABEL_STYLES[PlanLabel.DELETE] == "bright_black"
     assert LABEL_STYLES[PlanLabel.SEARCH] == "white"
-    assert LABEL_STYLES[PlanLabel.NEW_FILE] == "bright_magenta"
+    assert LABEL_STYLES[PlanLabel.NEW] == "bright_magenta"
 
     output = PlanOutput(
         query="add activation",
@@ -108,10 +116,28 @@ def test_all_six_labels_validate_and_render(tmp_path: Path) -> None:
         "  Add activation-code handling to registration." in markdown
     )
     assert (
-        "- 🩷 New File — core/services/activation.py  \n"
+        "- 🩷 New — core/services/activation.py  \n"
         "  Create a focused activation service." in markdown
     )
+    assert "- 🟠 Remove — core/urls.py" in markdown
+    assert "- ⚫ Delete — core/legacy.py" in markdown
     assert "\n\n" not in markdown
+
+
+def test_legacy_new_file_label_is_normalized_on_output(tmp_path: Path) -> None:
+    item = PlanItem(
+        label="New File",
+        target="core/services/activation.py",
+        reason="Create a focused activation service.",
+    )
+    assert item.label is PlanLabel.NEW
+    output = PlanOutput(
+        query="add activation",
+        repository=str(tmp_path),
+        model="local-12b",
+        items=[item],
+    )
+    assert json.loads(render_plan_json(output))["items"][0]["label"] == "New"
 
 
 def test_repeated_chunks_are_grouped_by_path_before_validation(tmp_path: Path) -> None:
@@ -168,15 +194,15 @@ def test_repeated_chunks_are_grouped_by_path_before_validation(tmp_path: Path) -
         ([plan_item("Modify", "other.py")], "was not supplied as context"),
         ([plan_item("Search", "symbol")], "did not label retrieved files"),
         (
-            [plan_item("Read", "core/views.py"), plan_item("New File", "/tmp/new.py")],
+            [plan_item("Read", "core/views.py"), plan_item("New", "/tmp/new.py")],
             "safe repository-relative path",
         ),
         (
-            [plan_item("Read", "core/views.py"), plan_item("New File", "../new.py")],
+            [plan_item("Read", "core/views.py"), plan_item("New", "../new.py")],
             "safe repository-relative path",
         ),
         (
-            [plan_item("Read", "core/views.py"), plan_item("New File", "new/*.py")],
+            [plan_item("Read", "core/views.py"), plan_item("New", "new/*.py")],
             "exact path",
         ),
         (
@@ -200,7 +226,7 @@ def test_semantic_plan_validation_rejects_unsafe_output(
         )
 
 
-def test_new_file_collision_and_missing_retrieved_file_are_rejected(
+def test_new_collision_and_missing_retrieved_file_are_rejected(
     tmp_path: Path,
 ) -> None:
     make_files(tmp_path, "core/views.py", "core/services/activation.py")
@@ -208,7 +234,7 @@ def test_new_file_collision_and_missing_retrieved_file_are_rejected(
         {
             "items": [
                 plan_item("Read", "core/views.py"),
-                plan_item("New File", "core/services/activation.py"),
+                plan_item("New", "core/services/activation.py"),
             ]
         }
     )

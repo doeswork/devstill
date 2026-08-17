@@ -23,13 +23,13 @@ We need to include other major coding laguanges like rust, ruby, go, sql, etc to
 - `devstill remove` safely removes a repository integration with preview, confirmation, index-only cleanup, custom-layout preservation, and managed `.gitignore` cleanup.
 - `devstill agent` stores and reports repository-local OpenAI-compatible endpoint settings and tests strict structured connectivity without revealing secrets.
 - `/agent configure` now provides an in-TUI setup form with Save, Save & Test, and Forget actions. Tokens can persist in a user-only `0600` credential file outside the repository, while the configured environment variable remains the higher-priority override.
-- `devstill plan` now retrieves five context chunks by default and produces a validated six-label file-impact plan without editing source.
+- `devstill plan` now retrieves five context chunks by default and produces a validated seven-label file-impact plan without editing source.
 - Successful plans overwrite `.devstill/.plan.md` and `.devstill/.plan.json`; validation failures preserve prior artifacts and receive at most one repair request.
 - `devstill deep-plan` and `/deep-plan` preserve normal Plan behavior while adding a separate five-to-ten-chunk reason-driven refinement pass with independent initial and final artifacts.
 - The standard WSL setup installs Pi and its compatible standalone Node.js runtime by default; `DEVSTILL_SKIP_PI=1` keeps a search-only installation.
 - `devstill execute` and `/execute` run the newest approved Plan through a bounded, shell-free Pi staging workspace, show a validated patch, and require confirmation before applying it.
 - Successful TUI Plan and Deep Plan runs offer a popup-free, focused Pi handoff in the bottom composer; a blank instruction reuses the original plan query without expanding approved file boundaries.
-- Plan labels are clickable dropdowns in the main feed and persist immediately; unresolved Search rows use the composer for an exact existing path, while one-sentence reasons remain read-only.
+- Existing-file Plan labels are clickable dropdowns in the main feed and persist immediately; unresolved Search rows use the composer for an exact existing path, reasons are editable one-line inputs, and an inline form adds or discards pink New rows.
 - Pi patch approval stays inline with the complete diff in the feed and explicit Cancel/Apply patch actions at the bottom-right of the composer; Enter cannot approve a patch.
 - Execution rejects unresolved Search entries, unsafe paths, symlinks, unlisted changes, and modifications to blue Read files; source hashes are rechecked before `git apply --check` and application.
 - Successful previews overwrite `.devstill/.execute.patch` and `.devstill/.execute.json`; sanitized Pi events are written to `.devstill/logs/pi-execute.jsonl`.
@@ -44,6 +44,7 @@ We need to include other major coding laguanges like rust, ruby, go, sql, etc to
 - Large embedding runs now emit real grouped current/total progress with an ETA, and Chroma upserts/deletes respect its runtime batch limit.
 - Dirty cross-store indexes are marked as requiring recovery, block incomplete retrieval, and reconcile canonical SQLite search units through the same batched progress path.
 - `/index` keeps a compact repository file-count row visible beside the independent active-stage unit progress, including during embedding and dirty recovery.
+- Manual `devstill index` uses the same progress events for a live terminal display and suppresses the irrelevant optional-ONNX `optimum` warning during model loading.
 - Plain TUI input performs local hybrid search; `/context`, `/plan`, `/deep-plan`, `/execute`, `/index`, `/files`, `/agent`, `/agent configure`, and `/agent test` expose the daily workflow without replacing the manual CLI.
 - CPU, database, and network commands run through one background worker with visible index progress and recoverable in-session errors.
 

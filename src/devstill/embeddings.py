@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from threading import Lock
@@ -45,12 +46,22 @@ class EmbeddingBackend:
             from sentence_transformers import SentenceTransformer
 
             try:
-                model = SentenceTransformer(
-                    str(self.model_path),
-                    trust_remote_code=True,
-                    local_files_only=True,
-                    device="cpu",
-                )
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        message=(
+                            r"optimum is not installed\. To use OnnxConfig and "
+                            r"BertOnnxConfig, make sure that `optimum` package is "
+                            r"installed"
+                        ),
+                        category=UserWarning,
+                    )
+                    model = SentenceTransformer(
+                        str(self.model_path),
+                        trust_remote_code=True,
+                        local_files_only=True,
+                        device="cpu",
+                    )
                 model.max_seq_length = self.max_sequence_length
             except Exception as exc:
                 self._model = None

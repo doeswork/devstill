@@ -24,6 +24,7 @@ from devstill.tui import (
     DevstillApp,
     ExecutionSessionEntry,
     PlanImpactRow,
+    PlanNewFileForm,
     PlanSessionEntry,
     PromptTextArea,
     SessionEntry,
@@ -702,9 +703,165 @@ def test_inline_label_save_failure_reverts_the_dropdown(tmp_path: Path) -> None:
             assert "artifact storage is unavailable" in str(
                 entry.query_one(".plan-impact-status", Static).content
             )
-            assert plan.items[0].reason in str(
-                entry.query_one(".plan-impact-reason", Static).content
+            assert (
+                entry.query_one(".plan-impact-reason", Input).value
+                == plan.items[0].reason
             )
+
+            reason = entry.query_one(".plan-impact-reason", Input)
+            reason.value = "Use a different explanation."
+            reason_event = Input.Blurred(reason, reason.value)
+            row = entry.query_one(PlanImpactRow)
+            row.on_input_blurred(reason_event)
+            await pilot.pause()
+            assert reason.value == plan.items[0].reason
+            assert "artifact storage is unavailable" in str(
+                entry.query_one(".plan-impact-status", Static).content
+            )
+
+    asyncio.run(scenario())
+
+
+def test_plan_review_edits_reason_and_adds_then_discards_new_file(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+    plan = PlanOutput(
+        query="update app",
+        repository=str(tmp_path),
+        model="local-model",
+        items=[
+            PlanItem(
+                label=PlanLabel.READ,
+                target="app.py",
+                reason="Inspect the current implementation.",
+            )
+        ],
+    )
+
+    class EditingWorkflow(FakeWorkflow):
+        def __init__(self) -> None:
+            super().__init__()
+            self.saved_plan: PlanOutput | None = None
+
+        def execute(self, command, progress=None):
+            self.calls.append(command)
+            return TuiResult(
+                "Plan",
+                "# Plan",
+                execution_offer=TuiExecutionOffer("plan", plan.query, 0, plan),
+            )
+
+        def save_manual_plan(self, source, reviewed, *, allow_unresolved=False):
+            assert source == "plan"
+            assert allow_unresolved
+            validate_reviewed_plan(reviewed, tmp_path)
+            self.saved_plan = reviewed
+            unresolved = sum(
+                item.label is PlanLabel.SEARCH for item in reviewed.items
+            )
+            return (
+                TuiExecutionOffer(source, reviewed.query, unresolved, reviewed),
+                "# Plan",
+            )
+
+    async def scenario() -> None:
+        workflow = EditingWorkflow()
+        app = build_app(tmp_path, workflow)
+        async with app.run_test(size=(120, 48)) as pilot:
+            await app.submit_text("/plan update app")
+            for _ in range(100):
+                if app._composer_mode is ComposerMode.PI_HANDOFF:
+                    break
+                await pilot.pause(0.02)
+
+            entry = app.query_one(PlanSessionEntry)
+            row = entry.query_one(PlanImpactRow)
+            select = row.query_one(Select)
+            assert [
+                value for _prompt, value in select._options if isinstance(value, str)
+            ] == ["Read", "Add", "Remove", "Modify", "Delete"]
+
+            select.value = PlanLabel.REMOVE.value
+            for _ in range(20):
+                if (
+                    workflow.saved_plan is not None
+                    and workflow.saved_plan.items[0].label is PlanLabel.REMOVE
+                ):
+                    break
+                await pilot.pause(0.01)
+            assert workflow.saved_plan is not None
+            assert workflow.saved_plan.items[0].label is PlanLabel.REMOVE
+            await pilot.pause()
+
+            reason = row.query_one(".plan-impact-reason", Input)
+            edited_reason = (
+                "Remove the obsolete fallback while keeping this module."
+            )
+            reason.value = edited_reason
+            row.on_input_blurred(Input.Blurred(reason, reason.value))
+            for _ in range(20):
+                if workflow.saved_plan.items[0].reason == edited_reason:
+                    break
+                await pilot.pause(0.01)
+            assert workflow.saved_plan.items[0].reason == edited_reason
+            await pilot.pause()
+
+            reason.value = "   "
+            await app.on_plan_impact_row_reason_edited(
+                PlanImpactRow.ReasonEdited(row, reason.value.strip())
+            )
+            assert reason.value == workflow.saved_plan.items[0].reason
+            assert "at least 1 character" in str(
+                entry.query_one(".plan-impact-status", Static).content
+            )
+
+            form = entry.query_one(PlanNewFileForm)
+            form.open()
+            assert form.display
+            path_input = entry.query_one(".plan-new-file-path", Input)
+            new_reason = entry.query_one(".plan-new-file-reason", Input)
+            path_input.value = "app.py"
+            new_reason.value = "Create a separate helper."
+            await app.on_plan_new_file_form_submitted(
+                PlanNewFileForm.Submitted(form, path_input.value, new_reason.value)
+            )
+            assert "Duplicate plan target" in str(
+                entry.query_one(".plan-impact-status", Static).content
+            )
+
+            path_input.value = "helpers/new_helper.py"
+            await app.on_plan_new_file_form_submitted(
+                PlanNewFileForm.Submitted(form, path_input.value, new_reason.value)
+            )
+            assert workflow.saved_plan is not None
+            assert [item.label for item in workflow.saved_plan.items] == [
+                PlanLabel.REMOVE,
+                PlanLabel.NEW,
+            ]
+            visible_rows = [row for row in entry.query(PlanImpactRow) if row.display]
+            assert len(visible_rows) == 2
+            assert visible_rows[1].item.target == "helpers/new_helper.py"
+            assert "🩷 New" in str(
+                visible_rows[1].query_one(".plan-impact-fixed-label", Static).content
+            )
+
+            await app.on_plan_impact_row_discard_requested(
+                PlanImpactRow.DiscardRequested(visible_rows[1])
+            )
+            assert workflow.saved_plan is not None
+            assert len(workflow.saved_plan.items) == 1
+            assert workflow.saved_plan.items[0].label is PlanLabel.REMOVE
+            assert len(
+                [row for row in entry.query(PlanImpactRow) if row.display]
+            ) == 1
+
+            await pilot.click("#cancel-pi-handoff")
+            await pilot.pause()
+            assert select.disabled
+            assert reason.disabled
+            assert not entry.query_one(".plan-add-new", Button).display
 
     asyncio.run(scenario())
 
