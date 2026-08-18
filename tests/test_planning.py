@@ -18,7 +18,9 @@ from devstill.planning import (
     PlanItem,
     PlanLabel,
     PlanOutput,
+    classify_replacement,
     generate_plan,
+    refine_plan,
     render_plan_json,
     render_plan_markdown,
     validate_plan_items,
@@ -140,6 +142,25 @@ def test_legacy_new_file_label_is_normalized_on_output(tmp_path: Path) -> None:
     assert json.loads(render_plan_json(output))["items"][0]["label"] == "New"
 
 
+def test_legacy_plan_defaults_refinements_and_artifacts_include_history(
+    tmp_path: Path,
+) -> None:
+    legacy = PlanOutput.model_validate(
+        {
+            "query": "change it",
+            "repository": str(tmp_path),
+            "model": "local",
+            "items": [],
+        }
+    )
+    assert legacy.refinements == []
+    refined = legacy.model_copy(update={"refinements": ["Keep the API stable."]})
+    assert json.loads(render_plan_json(refined))["refinements"] == [
+        "Keep the API stable."
+    ]
+    assert "## Refinements" in render_plan_markdown(refined)
+
+
 def test_repeated_chunks_are_grouped_by_path_before_validation(tmp_path: Path) -> None:
     make_files(tmp_path, "core/views.py")
     results = [
@@ -182,6 +203,88 @@ def test_repeated_chunks_are_grouped_by_path_before_validation(tmp_path: Path) -
     assert len(context[0]["chunks"]) == 2
     assert client.calls[0][1]["max_output_tokens"] == 6144
     assert client.calls[0][1]["reasoning"] == "off"
+
+
+def test_replacement_classification_is_exactly_one_existing_file(
+    tmp_path: Path,
+) -> None:
+    make_files(tmp_path, "core/views.py")
+    results = [make_result(path="core/views.py", name="register_api")]
+    client = FakeClient(
+        json.dumps(
+            plan_item(
+                "Modify",
+                "core/views.py",
+                "Adjust registration behavior.",
+            )
+        )
+    )
+    item = classify_replacement(
+        client,
+        query="change registration",
+        repository=str(tmp_path),
+        repo_root=tmp_path,
+        results=results,
+    )
+    assert item.label is PlanLabel.MODIFY
+    assert set(
+        client.calls[0][1]["schema"]["properties"]["label"]["enum"]
+    ) == {"Read", "Add", "Remove", "Modify", "Delete"}
+
+
+def test_refinement_preserves_pinned_rows_and_records_history(tmp_path: Path) -> None:
+    make_files(tmp_path, "app.py", "helper.py")
+    current = PlanOutput(
+        query="change app",
+        repository=str(tmp_path),
+        model="local-12b",
+        items=[
+            PlanItem(label=PlanLabel.READ, target="app.py", reason="Pinned reason.")
+        ],
+    )
+    client = FakeClient(
+        json.dumps(
+            {
+                "items": [
+                    plan_item("Modify", "helper.py", "Update the helper behavior.")
+                ]
+            }
+        )
+    )
+    refined = refine_plan(
+        client,
+        current=current,
+        refinement="Keep the public API stable.",
+        repo_root=tmp_path,
+        results=[make_result(path="helper.py", name="helper")],
+        pinned_targets={"app.py"},
+        excluded_targets=set(),
+    )
+    assert refined.items[0] == current.items[0]
+    assert refined.items[1].target == "helper.py"
+    assert refined.refinements == ["Keep the public API stable."]
+
+
+def test_plan_rejects_model_synthesized_retrieval_exclusion(tmp_path: Path) -> None:
+    make_files(tmp_path, "core/views.py")
+    response = json.dumps(
+        {
+            "items": [
+                plan_item("Read", "core/views.py"),
+                plan_item("New", "banned/generated.py"),
+            ]
+        }
+    )
+    client = FakeClient(response, response)
+    with pytest.raises(ValueError, match="permanently excluded"):
+        generate_plan(
+            client,
+            query="change app",
+            repository=str(tmp_path),
+            repo_root=tmp_path,
+            results=[make_result(path="core/views.py", name="view")],
+            retrieval_exclude=["banned/**"],
+        )
 
 
 @pytest.mark.parametrize(

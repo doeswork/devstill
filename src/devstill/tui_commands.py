@@ -15,6 +15,7 @@ from devstill.config import (
     resolve_index_path,
     resolve_model_path,
     resolve_repo_root,
+    update_retrieval_config,
 )
 from devstill.context import (
     DEEP_PLAN_MAX_CHUNKS,
@@ -45,7 +46,9 @@ from devstill.models import FileQuality, IndexProgress, IndexSummary, SearchResu
 from devstill.planning import (
     PlanLabel,
     PlanOutput,
+    classify_replacement,
     generate_plan,
+    refine_plan,
     render_plan_json,
     render_plan_markdown,
     write_deep_plan_artifacts,
@@ -154,6 +157,15 @@ class TuiExecutionOffer:
     query: str
     unresolved_searches: int = 0
     plan: PlanOutput | None = None
+    suppressed_paths: frozenset[str] = frozenset()
+    pinned_targets: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True, slots=True)
+class TuiReviewResult:
+    offer: TuiExecutionOffer
+    markdown: str
+    message: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,7 +334,7 @@ def help_markdown() -> str:
             "",
             "## Clipboard",
             "",
-            "Select text and press `Ctrl+C` to copy it. With no selection, `Ctrl+C` exits.",
+            "Select text and press `Ctrl+C` or right-click to copy it. With no selection, `Ctrl+C` exits.",
             "Use your terminal's `Ctrl+Shift+V` or right-click Paste for external clipboard text.",
             "The TUI composer sends with `Enter` and inserts a line break with `Shift+Enter`.",
         ]
@@ -514,12 +526,22 @@ class TuiWorkflow:
         plan: PlanOutput,
         *,
         allow_unresolved: bool = False,
+        suppressed_paths: frozenset[str] = frozenset(),
+        pinned_targets: frozenset[str] = frozenset(),
     ) -> tuple[TuiExecutionOffer, str]:
         """Validate and persist user-reviewed labels for the selected final plan."""
         if allow_unresolved:
-            validate_reviewed_plan(plan, self.repo_root)
+            validate_reviewed_plan(
+                plan,
+                self.repo_root,
+                self.config.retrieval.exclude,
+            )
         else:
-            validate_execution_plan(plan, self.repo_root)
+            validate_execution_plan(
+                plan,
+                self.repo_root,
+                self.config.retrieval.exclude,
+            )
         title = (
             "Devstill Deep Plan"
             if source == "deep-plan"
@@ -536,7 +558,271 @@ class TuiWorkflow:
         else:
             write_plan_artifacts(self.artifact_root, markdown, json_output)
         unresolved = sum(item.label is PlanLabel.SEARCH for item in plan.items)
-        return TuiExecutionOffer(source, plan.query, unresolved, plan), markdown
+        return (
+            TuiExecutionOffer(
+                source,
+                plan.query,
+                unresolved,
+                plan,
+                suppressed_paths,
+                pinned_targets,
+            ),
+            markdown,
+        )
+
+    def remove_review_item(
+        self,
+        offer: TuiExecutionOffer,
+        index: int,
+    ) -> TuiReviewResult:
+        plan = self._offer_plan(offer)
+        item = plan.items[index]
+        suppressed = set(offer.suppressed_paths)
+        if item.label not in {PlanLabel.NEW, PlanLabel.SEARCH}:
+            suppressed.add(item.target)
+        updated = plan.model_copy(
+            update={"items": [*plan.items[:index], *plan.items[index + 1 :]]}
+        )
+        next_offer, markdown = self.save_manual_plan(
+            offer.source,
+            updated,
+            allow_unresolved=True,
+            suppressed_paths=frozenset(suppressed),
+            pinned_targets=offer.pinned_targets - {item.target},
+        )
+        return TuiReviewResult(next_offer, markdown, f"Removed {item.target} from this plan")
+
+    def replace_review_item(
+        self,
+        offer: TuiExecutionOffer,
+        index: int,
+        report: ProgressCallback | None = None,
+    ) -> TuiReviewResult:
+        item = self._offer_plan(offer).items[index]
+        if item.label in {PlanLabel.NEW, PlanLabel.SEARCH}:
+            raise ValueError("Only exact existing files can be replaced")
+        removed = self.remove_review_item(offer, index)
+        return self._replacement_for_removed(removed, index, report)
+
+    def _replacement_for_removed(
+        self,
+        removed: TuiReviewResult,
+        index: int,
+        report: ProgressCallback | None = None,
+    ) -> TuiReviewResult:
+        notify = report or (lambda _message: None)
+        plan = self._offer_plan(removed.offer)
+        query = "\n\n".join((plan.query, *plan.refinements))
+        notify("Retrieving the next eligible file")
+        try:
+            engine = self._open_search(notify)
+            try:
+                candidates = engine.query(query, limit=80)
+            finally:
+                engine.close()
+        except Exception as error:  # noqa: BLE001
+            return TuiReviewResult(
+                removed.offer,
+                removed.markdown,
+                f"Removed the file; replacement retrieval failed: {error}",
+            )
+        blocked = {
+            *(item.target for item in plan.items),
+            *removed.offer.suppressed_paths,
+        }
+        eligible = [result for result in candidates if result.chunk.path not in blocked]
+        if not eligible:
+            return TuiReviewResult(
+                removed.offer,
+                removed.markdown,
+                "Removed the file; no eligible backup was available",
+            )
+        target = eligible[0].chunk.path
+        context = [result for result in eligible if result.chunk.path == target][:3]
+        notify(f"Classifying replacement {target}")
+        client = AgentClient(
+            self.config.llm,
+            log_path=self.artifact_root / "logs" / "agent.jsonl",
+        )
+        try:
+            try:
+                item = classify_replacement(
+                    client,
+                    query=query,
+                    repository=str(self.repo_root),
+                    repo_root=self.repo_root,
+                    results=context,
+                )
+            except Exception as error:  # noqa: BLE001
+                return TuiReviewResult(
+                    removed.offer,
+                    removed.markdown,
+                    f"Removed the file; replacement classification failed: {error}",
+                )
+        finally:
+            client.close()
+        items = list(plan.items)
+        items.insert(min(index, len(items)), item)
+        updated = plan.model_copy(update={"items": items})
+        next_offer, markdown = self.save_manual_plan(
+            removed.offer.source,
+            updated,
+            allow_unresolved=True,
+            suppressed_paths=removed.offer.suppressed_paths,
+            pinned_targets=removed.offer.pinned_targets,
+        )
+        return TuiReviewResult(next_offer, markdown, f"Replaced it with {target}")
+
+    def permanently_exclude_review_item(
+        self,
+        offer: TuiExecutionOffer,
+        index: int,
+        report: ProgressCallback | None = None,
+    ) -> TuiReviewResult:
+        plan = self._offer_plan(offer)
+        target = plan.items[index].target
+        if plan.items[index].label in {PlanLabel.NEW, PlanLabel.SEARCH}:
+            raise ValueError("Only exact existing files can be permanently excluded")
+        original_config = self.config
+        removed_plan = plan.model_copy(
+            update={"items": [*plan.items[:index], *plan.items[index + 1 :]]}
+        )
+        excluded = [*self.config.retrieval.exclude]
+        if target not in excluded:
+            excluded.append(target)
+        config_updated = False
+        plan_write_attempted = False
+        try:
+            updated_config = update_retrieval_config(
+                self.config_path,
+                self.config,
+                exclude=excluded,
+            )
+            config_updated = True
+            self.update_config(updated_config)
+            plan_write_attempted = True
+            removed_offer, removed_markdown = self.save_manual_plan(
+                offer.source,
+                removed_plan,
+                allow_unresolved=True,
+                suppressed_paths=offer.suppressed_paths | {target},
+                pinned_targets=offer.pinned_targets - {target},
+            )
+        except Exception as error:
+            rollback_errors: list[str] = []
+            if config_updated:
+                try:
+                    restored = update_retrieval_config(
+                        self.config_path,
+                        self.config,
+                        exclude=original_config.retrieval.exclude,
+                    )
+                    self.update_config(restored)
+                except Exception as rollback_error:  # noqa: BLE001
+                    rollback_errors.append(f"configuration: {rollback_error}")
+            if plan_write_attempted:
+                try:
+                    self.save_manual_plan(
+                        offer.source,
+                        plan,
+                        allow_unresolved=True,
+                        suppressed_paths=offer.suppressed_paths,
+                        pinned_targets=offer.pinned_targets,
+                    )
+                except Exception as rollback_error:  # noqa: BLE001
+                    rollback_errors.append(f"plan artifact: {rollback_error}")
+            if rollback_errors:
+                raise RuntimeError(
+                    "Permanent exclusion failed and rollback was incomplete. Disable "
+                    "this handoff, inspect devstill.json and the plan artifacts, then "
+                    f"create a fresh plan. Recovery errors: {'; '.join(rollback_errors)}"
+                ) from error
+            raise
+        removed = TuiReviewResult(
+            removed_offer,
+            removed_markdown,
+            f"Permanently excluded {target}",
+        )
+        try:
+            replacement = self._replacement_for_removed(removed, index, report)
+        except Exception:  # noqa: BLE001
+            # The permanent removal is already committed; replacement is best-effort.
+            return TuiReviewResult(
+                removed.offer,
+                removed.markdown,
+                f"Permanently excluded {target}; no backup was available",
+            )
+        return replacement
+
+    def refine_review_plan(
+        self,
+        offer: TuiExecutionOffer,
+        refinement: str,
+        report: ProgressCallback | None = None,
+    ) -> TuiReviewResult:
+        notify = report or (lambda _message: None)
+        plan = self._offer_plan(offer)
+        query = "\n\n".join((plan.query, *plan.refinements, refinement.strip()))
+        notify("Retrieving context for the refinement")
+        engine = self._open_search(notify)
+        try:
+            candidates = engine.query(
+                query,
+                limit=planning_retrieval_limit(
+                    DEEP_PLAN_MAX_CHUNKS
+                    if offer.source == "deep-plan"
+                    else PLAN_MAX_CHUNKS
+                ),
+            )
+        finally:
+            engine.close()
+        candidates = [
+            result
+            for result in candidates
+            if result.chunk.path not in offer.suppressed_paths
+        ]
+        maximum = DEEP_PLAN_MAX_CHUNKS if offer.source == "deep-plan" else PLAN_MAX_CHUNKS
+        minimum = DEEP_PLAN_MIN_CHUNKS if offer.source == "deep-plan" else PLAN_MIN_CHUNKS
+        results = select_adaptive_context_results(
+            candidates,
+            min_limit=minimum,
+            max_limit=maximum,
+            include_tests=False,
+        )
+        if not results:
+            raise ValueError("No eligible retrieval context is available for refinement")
+        notify("Asking the agent to refine the live plan")
+        client = AgentClient(
+            self.config.llm,
+            log_path=self.artifact_root / "logs" / "agent.jsonl",
+        )
+        try:
+            updated = refine_plan(
+                client,
+                current=plan,
+                refinement=refinement,
+                repo_root=self.repo_root,
+                results=results,
+                pinned_targets=set(offer.pinned_targets),
+                excluded_targets=set(offer.suppressed_paths),
+                retrieval_exclude=self.config.retrieval.exclude,
+            )
+        finally:
+            client.close()
+        next_offer, markdown = self.save_manual_plan(
+            offer.source,
+            updated,
+            allow_unresolved=True,
+            suppressed_paths=offer.suppressed_paths,
+            pinned_targets=offer.pinned_targets,
+        )
+        return TuiReviewResult(next_offer, markdown, "Plan refinement accepted")
+
+    @staticmethod
+    def _offer_plan(offer: TuiExecutionOffer) -> PlanOutput:
+        if offer.plan is None:
+            raise ValueError("The active handoff has no editable plan")
+        return offer.plan
 
     def close(self) -> None:
         self._runtime.close()
@@ -638,6 +924,7 @@ class TuiWorkflow:
                     repository=str(self.repo_root),
                     repo_root=self.repo_root,
                     results=results,
+                    retrieval_exclude=self.config.retrieval.exclude,
                 )
             finally:
                 client.close()
@@ -753,6 +1040,7 @@ class TuiWorkflow:
                     include_tests=False,
                     on_initial=initial_ready,
                     on_context=context_ready,
+                    retrieval_exclude=self.config.retrieval.exclude,
                 )
             finally:
                 client.close()

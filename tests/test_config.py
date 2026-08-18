@@ -21,6 +21,7 @@ def test_config_upward_discovery_and_strict_validation(tmp_path) -> None:
     assert config.files.scan_all_text is True
     assert config.files.index_noisy_files is False
     assert config.files.include_ignored == []
+    assert config.retrieval.exclude == []
     assert config.llm.api_key_env == "DEVSTILL_AGENT_API_KEY"
     assert config.llm.timeout_seconds == 300
     assert config.llm.max_output_tokens == 2048
@@ -73,4 +74,17 @@ def test_chunk_overlap_must_be_smaller_than_line_limit(tmp_path) -> None:
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="fallback_overlap_lines"):
+        load_config(config_path)
+
+
+def test_retrieval_exclusions_validate_and_deduplicate(tmp_path) -> None:
+    config_path = write_default_config(tmp_path / "devstill.json")
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    raw["retrieval"] = {"exclude": ["vendor/**", "vendor/**", "old/file.py"]}
+    config_path.write_text(json.dumps(raw), encoding="utf-8")
+    assert load_config(config_path).retrieval.exclude == ["vendor/**", "old/file.py"]
+
+    raw["retrieval"] = {"exclude": ["../outside.py"]}
+    config_path.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="stay inside"):
         load_config(config_path)

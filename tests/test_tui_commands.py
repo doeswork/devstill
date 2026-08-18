@@ -484,6 +484,66 @@ def test_manual_plan_labels_are_validated_and_persisted(
     workflow.close()
 
 
+def test_review_removal_persists_empty_plan_and_temporary_suppression(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+    config_path = tmp_path / "devstill.json"
+    config_path.write_text("{}", encoding="utf-8")
+    workflow = TuiWorkflow(
+        config_path,
+        DevstillConfig(),
+        embedder=FakeWarmEmbedder(),
+        chroma_store=object(),
+    )
+    plan = PlanOutput(
+        query="change app",
+        repository=str(tmp_path),
+        model="local-model",
+        items=[
+            PlanItem(label=PlanLabel.MODIFY, target="app.py", reason="Change it.")
+        ],
+    )
+    offer, _ = workflow.save_manual_plan("plan", plan)
+    removed = workflow.remove_review_item(offer, 0)
+    assert removed.offer.plan is not None
+    assert removed.offer.plan.items == []
+    assert removed.offer.suppressed_paths == frozenset({"app.py"})
+    saved = PlanOutput.model_validate_json(
+        (tmp_path / ".devstill/.plan.json").read_text(encoding="utf-8")
+    )
+    assert saved.items == []
+    workflow.close()
+
+
+def test_review_permanent_exclusion_updates_config_and_keeps_removal(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    config_path = tmp_path / "devstill.json"
+    config_path.write_text("{}", encoding="utf-8")
+    workflow = TuiWorkflow(
+        config_path,
+        DevstillConfig(),
+        embedder=FakeWarmEmbedder(),
+        chroma_store=object(),
+    )
+    plan = PlanOutput(
+        query="change app",
+        repository=str(tmp_path),
+        model="local-model",
+        items=[
+            PlanItem(label=PlanLabel.MODIFY, target="app.py", reason="Change it.")
+        ],
+    )
+    offer, _ = workflow.save_manual_plan("plan", plan)
+    result = workflow.permanently_exclude_review_item(offer, 0)
+    assert result.offer.plan is not None and not result.offer.plan.items
+    assert json.loads(config_path.read_text())["retrieval"]["exclude"] == ["app.py"]
+    workflow.close()
+
+
 def test_index_workflow_forwards_progress_and_closes_indexer(
     monkeypatch,
     tmp_path: Path,

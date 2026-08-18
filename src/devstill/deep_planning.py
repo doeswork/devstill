@@ -174,6 +174,7 @@ def run_deep_plan(
     max_followup_queries: int = 3,
     on_initial: InitialCallback | None = None,
     on_context: ContextCallback | None = None,
+    retrieval_exclude: list[str] | None = None,
 ) -> DeepPlanRun:
     if deep_limit < len(initial_results):
         raise ValueError("Deep Plan limit must be at least the initial result count")
@@ -185,6 +186,7 @@ def run_deep_plan(
         results=initial_results,
         schema_name="devstill_deep_plan_initial",
         repair_schema_name="devstill_deep_plan_initial_repair",
+        retrieval_exclude=retrieval_exclude,
     )
     if on_initial is not None:
         on_initial(initial_plan)
@@ -206,6 +208,7 @@ def run_deep_plan(
         repo_root=repo_root,
         initial_plan=initial_plan,
         results=expanded_results,
+        retrieval_exclude=retrieval_exclude,
     )
     return DeepPlanRun(
         initial_plan=initial_plan,

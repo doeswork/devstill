@@ -4,6 +4,7 @@ import subprocess
 
 import pytest
 
+from devstill.config import DevstillConfig
 from devstill.indexer import RepositoryIndexer
 from devstill.search import HybridSearch
 
@@ -70,3 +71,37 @@ def test_dirty_index_rejects_search_until_reconciled(configured_repo: tuple) -> 
             embedder=FakeEmbedder(),
             chroma_store=FakeChroma(),
         )
+
+
+def test_retrieval_exclusions_filter_indexed_results(configured_repo: tuple) -> None:
+    repo, config_path, config = configured_repo
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "visible.py").write_text("def shared_feature():\n    return 1\n")
+    (repo / "hidden.py").write_text("def shared_feature_hidden():\n    return 2\n")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    embedder = FakeEmbedder()
+    chroma = FakeChroma()
+    indexer = RepositoryIndexer(
+        config_path, config, embedder=embedder, chroma_store=chroma
+    )
+    indexer.run()
+    indexer.close()
+    excluded = DevstillConfig.model_validate(
+        {
+            **config.model_dump(mode="json"),
+            "retrieval": {"exclude": ["hidden.py"]},
+        }
+    )
+    search = HybridSearch(
+        config_path,
+        excluded,
+        embedder=embedder,
+        chroma_store=chroma,
+    )
+    try:
+        assert all(
+            result.chunk.path != "hidden.py"
+            for result in search.query("shared_feature", limit=20)
+        )
+    finally:
+        search.close()

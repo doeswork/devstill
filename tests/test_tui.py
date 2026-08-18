@@ -4,6 +4,7 @@ import asyncio
 import threading
 from pathlib import Path
 
+from textual import events
 from textual.widgets import (
     Button,
     Collapsible,
@@ -35,6 +36,7 @@ from devstill.tui_commands import (
     TuiExecutionOffer,
     TuiPreview,
     TuiResult,
+    TuiReviewResult,
 )
 
 
@@ -159,6 +161,72 @@ def test_ctrl_c_copies_prompt_selection_without_exiting(tmp_path: Path) -> None:
             assert app.is_running
             assert app.clipboard == "copy this"
             assert "copied" in str(app.query_one("#activity", Static).content).lower()
+
+    asyncio.run(scenario())
+
+
+def test_right_click_copies_prompt_selection(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        workflow = FakeWorkflow()
+        app = build_app(tmp_path, workflow)
+        async with app.run_test(size=(120, 40)) as pilot:
+            prompt = app.query_one("#command-input", PromptTextArea)
+            prompt.text = "copy this"
+            prompt.action_select_all()
+
+            app.on_mouse_down(
+                events.MouseDown(
+                    prompt,
+                    x=0,
+                    y=0,
+                    delta_x=0,
+                    delta_y=0,
+                    button=3,
+                    shift=False,
+                    meta=False,
+                    ctrl=False,
+                )
+            )
+            await pilot.pause()
+
+            assert app.clipboard == "copy this"
+            assert "copied" in str(app.query_one("#activity", Static).content).lower()
+
+    asyncio.run(scenario())
+
+
+def test_right_click_copies_session_selection(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        workflow = FakeWorkflow()
+        app = build_app(tmp_path, workflow)
+        async with app.run_test(size=(120, 40)) as pilot:
+            prompt = app.query_one("#command-input", PromptTextArea)
+            prompt.text = ""
+            monkeypatch.setattr(
+                app.screen,
+                "get_selected_text",
+                lambda: "highlighted session text",
+            )
+
+            app.on_mouse_down(
+                events.MouseDown(
+                    app.query_one("#welcome", Static),
+                    x=0,
+                    y=0,
+                    delta_x=0,
+                    delta_y=0,
+                    button=3,
+                    shift=False,
+                    meta=False,
+                    ctrl=False,
+                )
+            )
+            await pilot.pause()
+
+            assert app.clipboard == "highlighted session text"
 
     asyncio.run(scenario())
 
@@ -418,19 +486,34 @@ def test_inline_execution_cancellation_closes_the_prepared_workspace(
     asyncio.run(scenario())
 
 
-def test_successful_plan_offers_pi_with_optional_execution_instruction(
+def test_successful_plan_requires_explicit_pi_preview(
     tmp_path: Path,
 ) -> None:
     class HandoffWorkflow(FakeWorkflow):
         def execute(self, command, progress=None):
             self.calls.append(command)
             if command.kind is TuiCommandKind.PLAN:
+                target = tmp_path / "app.py"
+                target.write_text("value = 1\n", encoding="utf-8")
+                reviewed = PlanOutput(
+                    query="geo location needs to auto load",
+                    repository=str(tmp_path),
+                    model="local-model",
+                    items=[
+                        PlanItem(
+                            label=PlanLabel.MODIFY,
+                            target="app.py",
+                            reason="Update the behavior.",
+                        )
+                    ],
+                )
                 return TuiResult(
                     "Plan",
                     "# Devstill File-Impact Plan",
                     execution_offer=TuiExecutionOffer(
                         "plan",
                         "geo location needs to auto load",
+                        plan=reviewed,
                     ),
                 )
             return TuiResult("Execution", "# Pi preview complete")
@@ -458,9 +541,6 @@ def test_successful_plan_offers_pi_with_optional_execution_instruction(
             await app.submit_text("/files")
             assert len(workflow.calls) == 1
             assert "active Pi step" in str(app.query_one("#activity", Static).content)
-            app.query_one(
-                "#command-input", PromptTextArea
-            ).text = "Reuse the existing permission helper."
             await pilot.click("#start-pi-handoff")
             await wait_until_idle(app, pilot)
 
@@ -470,7 +550,83 @@ def test_successful_plan_offers_pi_with_optional_execution_instruction(
             ]
             execution = workflow.calls[1]
             assert execution.query == "plan"
-            assert execution.instruction == "Reuse the existing permission helper."
+            assert execution.instruction == ""
+
+    asyncio.run(scenario())
+
+
+def test_plan_refinement_keeps_one_card_and_controls_explicit_preview(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    plan = PlanOutput(
+        query="change app",
+        repository=str(tmp_path),
+        model="local-model",
+        items=[
+            PlanItem(label=PlanLabel.MODIFY, target="app.py", reason="Change it."),
+            PlanItem(label=PlanLabel.NEW, target="notes.md", reason="Create notes."),
+        ],
+    )
+
+    class RefiningWorkflow(FakeWorkflow):
+        def execute(self, command, progress=None):
+            self.calls.append(command)
+            return TuiResult(
+                "Plan",
+                "# Plan",
+                execution_offer=TuiExecutionOffer("plan", plan.query, 0, plan),
+            )
+
+        def refine_review_plan(self, offer, refinement, progress=None):
+            assert offer.plan is not None
+            updated = offer.plan.model_copy(
+                update={"refinements": [*offer.plan.refinements, refinement]}
+            )
+            return TuiReviewResult(
+                TuiExecutionOffer(
+                    offer.source,
+                    offer.query,
+                    offer.unresolved_searches,
+                    updated,
+                    offer.suppressed_paths,
+                    offer.pinned_targets,
+                ),
+                "# Plan",
+                "Plan refinement accepted",
+            )
+
+    async def scenario() -> None:
+        app = build_app(tmp_path, RefiningWorkflow())
+        async with app.run_test(size=(120, 44)) as pilot:
+            await app.submit_text("/plan change app")
+            for _ in range(100):
+                if app._composer_mode is ComposerMode.PI_HANDOFF:
+                    break
+                await pilot.pause(0.02)
+            entry = app.query_one(PlanSessionEntry)
+            rows = list(entry.query(PlanImpactRow))
+            assert rows[0].query_one(".plan-impact-refresh", Button).display
+            assert rows[0].query_one(".plan-impact-ban", Button).display
+            assert not rows[1].query_one(".plan-impact-refresh", Button).display
+            assert not rows[1].query_one(".plan-impact-ban", Button).display
+
+            prompt = app.query_one("#command-input", PromptTextArea)
+            prompt.text = "Keep compatibility."
+            await pilot.pause()
+            assert app.query_one("#start-pi-handoff", Button).disabled
+            await app.on_prompt_text_area_submitted(PromptTextArea.Submitted(prompt))
+            for _ in range(100):
+                if app._review_worker is None:
+                    break
+                await pilot.pause(0.02)
+            assert app.query_one(PlanSessionEntry) is entry
+            assert entry.plan.refinements == ["Keep compatibility."]
+            assert "Keep compatibility." in str(
+                entry.query_one(".plan-refinement-history", Static).content
+            )
+            assert prompt.text == ""
+            assert not app.query_one("#start-pi-handoff", Button).disabled
 
     asyncio.run(scenario())
 
@@ -518,7 +674,8 @@ def test_pi_handoff_explains_unresolved_search_blocker(tmp_path: Path) -> None:
             screen_text = "\n".join(str(widget.content) for widget in app.query(Static))
             assert "2 unresolved Search items" in screen_text
             assert not app.query_one("#command-input", PromptTextArea).disabled
-            assert not app.query_one("#start-pi-handoff", Button).display
+            assert app.query_one("#start-pi-handoff", Button).display
+            assert app.query_one("#start-pi-handoff", Button).disabled
             await pilot.click("#cancel-pi-handoff")
             await pilot.pause()
             assert app._composer_mode is ComposerMode.NORMAL
@@ -647,13 +804,13 @@ def test_manual_plan_review_resolves_search_and_relabels_existing_file(
                 "Identify the check-in page component."
             )
 
+            app.query_one("#command-input", PromptTextArea).text = ""
+            await pilot.pause()
             await pilot.click("#start-pi-handoff")
             await wait_until_idle(app, pilot)
             assert workflow.calls[-1].kind is TuiCommandKind.EXECUTE
             assert workflow.calls[-1].query == "deep-plan"
-            assert workflow.calls[-1].instruction == (
-                "Keep the existing permission helper."
-            )
+            assert workflow.calls[-1].instruction == ""
 
     asyncio.run(scenario())
 

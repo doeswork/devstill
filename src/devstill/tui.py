@@ -48,6 +48,7 @@ from devstill.tui_commands import (
     TuiExecutionOffer,
     TuiPreview,
     TuiResult,
+    TuiReviewResult,
     TuiWorkflow,
     help_markdown,
     matching_commands,
@@ -196,7 +197,22 @@ class PlanImpactRow(Vertical):
             self.index = row.index
             self.reason = reason
 
-    class DiscardRequested(Message):
+    class RemoveRequested(Message):
+        def __init__(self, row: PlanImpactRow) -> None:
+            super().__init__()
+            self.row = row
+            self.index = row.index
+
+    # Kept for callers loading older TUI integrations.
+    DiscardRequested = RemoveRequested
+
+    class RefreshRequested(Message):
+        def __init__(self, row: PlanImpactRow) -> None:
+            super().__init__()
+            self.row = row
+            self.index = row.index
+
+    class BanRequested(Message):
         def __init__(self, row: PlanImpactRow) -> None:
             super().__init__()
             self.row = row
@@ -234,13 +250,21 @@ class PlanImpactRow(Vertical):
                 self._target_text(self.item),
                 classes="plan-impact-target",
             )
-            if self.item.label is PlanLabel.NEW:
-                yield Button(
-                    "Discard",
-                    classes="plan-impact-discard",
-                    compact=True,
-                    flat=True,
-                )
+            remove = Button("×", classes="plan-impact-remove", compact=True, flat=True)
+            remove.tooltip = "Remove from this handoff without a replacement"
+            yield remove
+            refresh = Button(
+                "↻", classes="plan-impact-refresh", compact=True, flat=True
+            )
+            refresh.tooltip = "Replace with the next-best eligible file"
+            yield refresh
+            ban = Button("!", classes="plan-impact-ban", compact=True, flat=True)
+            ban.tooltip = "Permanently exclude this file from retrieval"
+            yield ban
+            yield Button("Ban?", classes="plan-impact-ban-confirm", compact=True)
+            yield Button(
+                "No", classes="plan-impact-ban-cancel", compact=True, flat=True
+            )
         yield Input(
             value=self.item.reason,
             placeholder="Plan reason",
@@ -272,9 +296,25 @@ class PlanImpactRow(Vertical):
         self._post_reason(event.value)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.has_class("plan-impact-discard"):
+        if event.button.has_class("plan-impact-remove"):
             event.stop()
-            self.post_message(self.DiscardRequested(self))
+            self.post_message(self.RemoveRequested(self))
+        elif event.button.has_class("plan-impact-refresh"):
+            event.stop()
+            self.post_message(self.RefreshRequested(self))
+        elif event.button.has_class("plan-impact-ban"):
+            event.stop()
+            event.button.display = False
+            self.query_one(".plan-impact-ban-confirm", Button).display = True
+            self.query_one(".plan-impact-ban-cancel", Button).display = True
+        elif event.button.has_class("plan-impact-ban-confirm"):
+            event.stop()
+            self.post_message(self.BanRequested(self))
+        elif event.button.has_class("plan-impact-ban-cancel"):
+            event.stop()
+            self.query_one(".plan-impact-ban", Button).display = True
+            self.query_one(".plan-impact-ban-confirm", Button).display = False
+            event.button.display = False
 
     def update_item(self, item: PlanItem) -> None:
         reason = self.query_one_optional(".plan-impact-reason", Input)
@@ -289,6 +329,7 @@ class PlanImpactRow(Vertical):
             select = self.query_one_optional(Select)
             if select is not None and select.value != item.label.value:
                 select.value = item.label.value
+            self._sync_actions()
             return
         previous = self.item
         self.item = item
@@ -306,37 +347,67 @@ class PlanImpactRow(Vertical):
                 )
             if select.value != item.label.value:
                 select.value = item.label.value
+        self._sync_actions()
 
     def set_editable(self, editable: bool) -> None:
         select = self.query_one_optional(Select)
         if select is not None:
             select.disabled = not editable
         self.query_one(".plan-impact-reason", Input).disabled = not editable
-        discard = self.query_one_optional(".plan-impact-discard", Button)
-        if discard is not None:
-            discard.disabled = not editable
+        for button in self.query(Button):
+            button.disabled = not editable
+
+    def on_mount(self) -> None:
+        for selector in (".plan-impact-ban-confirm", ".plan-impact-ban-cancel"):
+            button = self.query_one_optional(selector, Button)
+            if button is not None:
+                button.display = False
+        self._sync_actions()
+
+    def _sync_actions(self) -> None:
+        concrete = self.item.label not in {PlanLabel.NEW, PlanLabel.SEARCH}
+        refresh = self.query_one_optional(".plan-impact-refresh", Button)
+        ban = self.query_one_optional(".plan-impact-ban", Button)
+        if refresh is not None:
+            refresh.display = concrete
+        if ban is not None:
+            ban.display = concrete
 
 
 class PlanNewFileForm(Vertical):
     class Submitted(Message):
-        def __init__(self, form: PlanNewFileForm, target: str, reason: str) -> None:
+        def __init__(
+            self,
+            form: PlanNewFileForm,
+            target: str,
+            reason: str,
+            label: PlanLabel = PlanLabel.READ,
+        ) -> None:
             super().__init__()
             self.form = form
             self.target = target
             self.reason = reason
+            self.label = label
 
     class Cancelled(Message):
         pass
 
     def compose(self) -> ComposeResult:
         yield Input(
-            placeholder="Exact repository-relative new file path",
+            placeholder="Exact repository-relative existing or new path",
             max_length=240,
             classes="plan-new-file-path",
             compact=True,
         )
+        yield Select(
+            PLAN_LABEL_OPTIONS,
+            allow_blank=False,
+            value=PlanLabel.READ.value,
+            classes="plan-manual-label",
+            compact=True,
+        )
         yield Input(
-            placeholder="Why this new file is needed",
+            placeholder="Why this file or context is needed",
             max_length=240,
             classes="plan-new-file-reason",
             compact=True,
@@ -365,12 +436,18 @@ class PlanNewFileForm(Vertical):
     def close(self) -> None:
         self.query_one(".plan-new-file-path", Input).value = ""
         self.query_one(".plan-new-file-reason", Input).value = ""
+        self.query_one(".plan-manual-label", Select).value = PlanLabel.READ.value
         self.display = False
 
     def submit(self) -> None:
         target = self.query_one(".plan-new-file-path", Input).value.strip()
         reason = self.query_one(".plan-new-file-reason", Input).value.strip()
-        self.post_message(self.Submitted(self, target, reason))
+        label = PlanLabel(self.query_one(".plan-manual-label", Select).value)
+        self.post_message(self.Submitted(self, target, reason, label))
+
+    def set_editable(self, editable: bool) -> None:
+        for control in self.query("Input, Select, Button"):
+            control.disabled = not editable
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
@@ -422,16 +499,25 @@ class PlanSessionEntry(Vertical):
                 f"Model: {escape(self.plan.model)}",
                 classes="plan-impact-provenance",
             )
+            yield Static(
+                "  ".join(f"↳ {escape(value)}" for value in self.plan.refinements),
+                classes="plan-refinement-history",
+            )
             for index, item in enumerate(self.plan.items):
                 yield PlanImpactRow(index, item)
             yield Button(
-                "+ Add New file",
+                "＋ Manually add file/context",
                 classes="plan-add-new",
                 compact=True,
                 flat=True,
                 disabled=True,
             )
             yield PlanNewFileForm(classes="plan-new-file-form")
+            yield Static(
+                "[red]×[/red] remove  [blue]↻[/blue] replace  "
+                "[red]![/red] permanently exclude",
+                classes="plan-impact-legend",
+            )
             yield Static("", classes="plan-impact-status")
 
     def _active_rows(self) -> list[PlanImpactRow]:
@@ -439,8 +525,25 @@ class PlanSessionEntry(Vertical):
 
     def update_plan(self, plan: PlanOutput) -> None:
         self.plan = plan
+        self.query_one(".plan-refinement-history", Static).update(
+            "  ".join(f"↳ {escape(value)}" for value in plan.refinements)
+        )
         for row, item in zip(self._active_rows(), plan.items, strict=True):
             row.update_item(item)
+
+    async def rebuild_plan(self, plan: PlanOutput) -> None:
+        for row in list(self.query(PlanImpactRow)):
+            await row.remove()
+        body = self.query_one(".plan-impact-body", Vertical)
+        anchor = self.query_one(".plan-add-new", Button)
+        for index, item in enumerate(plan.items):
+            row = PlanImpactRow(index, item)
+            await body.mount(row, before=anchor)
+            row.set_editable(True)
+        self.plan = plan
+        self.query_one(".plan-refinement-history", Static).update(
+            "  ".join(f"↳ {escape(value)}" for value in plan.refinements)
+        )
 
     async def append_plan_item(self, item: PlanItem, plan: PlanOutput) -> None:
         row = PlanImpactRow(len(plan.items) - 1, item)
@@ -464,14 +567,18 @@ class PlanSessionEntry(Vertical):
             row.index = new_index
             row.update_item(item)
 
-    def set_editable(self, editable: bool) -> None:
+    def set_editable(self, editable: bool, *, close_form: bool = True) -> None:
         for row in self._active_rows():
             row.set_editable(editable)
+        form = self.query_one(PlanNewFileForm)
+        form_was_open = bool(form.display)
+        form.set_editable(editable)
+        if not editable and close_form:
+            form.close()
+            form_was_open = False
         add_new = self.query_one(".plan-add-new", Button)
         add_new.disabled = not editable
-        add_new.display = editable
-        if not editable:
-            self.query_one(PlanNewFileForm).close()
+        add_new.display = editable and not form_was_open
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if not event.button.has_class("plan-add-new"):
@@ -590,6 +697,12 @@ class DevstillApp(App[None]):
         color: $text-muted;
     }
 
+    .plan-refinement-history {
+        height: auto;
+        color: $text-muted;
+        padding: 0 1;
+    }
+
     .plan-impact-row {
         height: auto;
     }
@@ -624,11 +737,43 @@ class DevstillApp(App[None]):
         background: transparent;
     }
 
-    .plan-impact-discard {
+    .plan-impact-reason:focus {
+        color: black;
+        background: white;
+        border: none;
+        text-style: none;
+    }
+
+    .plan-impact-reason:focus > .input--cursor {
+        background: black;
+        color: white;
+    }
+
+    .plan-impact-reason:focus > .input--selection {
+        background: $primary;
+        color: white;
+    }
+
+    .plan-impact-remove, .plan-impact-refresh, .plan-impact-ban,
+    .plan-impact-ban-confirm, .plan-impact-ban-cancel {
         width: auto;
-        min-width: 9;
-        margin-left: 1;
+        min-width: 3;
+        margin-left: 0;
+        padding: 0 1;
+    }
+
+    .plan-impact-remove, .plan-impact-ban, .plan-impact-ban-confirm {
         color: $error;
+    }
+
+    .plan-impact-refresh {
+        color: $primary;
+    }
+
+    .plan-impact-legend {
+        height: 1;
+        color: $text-muted;
+        padding: 0 1;
     }
 
     .plan-add-new {
@@ -646,7 +791,7 @@ class DevstillApp(App[None]):
         border-left: solid $secondary 60%;
     }
 
-    .plan-new-file-path, .plan-new-file-reason {
+    .plan-new-file-path, .plan-new-file-reason, .plan-manual-label {
         height: 1;
         margin-bottom: 1;
     }
@@ -805,6 +950,8 @@ class DevstillApp(App[None]):
         self._workflow_injected = workflow is not None
         self.workflow = workflow or TuiWorkflow(config_path, config)
         self._active_worker: Worker[TuiResult | None] | None = None
+        self._review_worker: Worker[TuiReviewResult] | None = None
+        self._review_draft_to_clear: str | None = None
         self._active_command: TuiCommand | None = None
         self._busy = False
         self._live_entry: SessionEntry | None = None
@@ -925,19 +1072,10 @@ class DevstillApp(App[None]):
             prompt.disabled = self._busy
             self._show_composer_actions()
         elif mode is ComposerMode.PI_HANDOFF:
-            unresolved = bool(
-                self._handoff_offer and self._handoff_offer.unresolved_searches
-            )
-            prompt.placeholder = (
-                "Optional Pi instructions; resolve Search labels to unlock preview"
-                if unresolved
-                else "Optional Pi instructions; blank uses the original request"
-            )
+            prompt.placeholder = "Refine this plan, then press Enter"
             prompt.disabled = self._busy
-            buttons = ["cancel-pi-handoff"]
-            if not unresolved:
-                buttons.append("start-pi-handoff")
-            self._show_composer_actions(*buttons)
+            self._show_composer_actions("cancel-pi-handoff", "start-pi-handoff")
+            self._sync_preview_button()
         elif mode is ComposerMode.SEARCH_PATH:
             prompt.placeholder = "Exact repository-relative file path"
             prompt.disabled = self._busy
@@ -954,7 +1092,12 @@ class DevstillApp(App[None]):
             return
         if isinstance(entry, PlanSessionEntry):
             entry.set_editable(True)
-            if offer.unresolved_searches:
+            if offer.plan is None or not offer.plan.items:
+                entry.set_status(
+                    "Pi is blocked because the reviewed plan is empty. Manually add "
+                    "a file or submit a refinement."
+                )
+            elif offer.unresolved_searches:
                 count = offer.unresolved_searches
                 entry.set_status(
                     f"Pi is blocked by {count} unresolved Search item"
@@ -963,12 +1106,13 @@ class DevstillApp(App[None]):
                 )
             else:
                 entry.set_status(
-                    "Implement this plan with Pi? Enter optional instructions "
-                    "below, or leave them blank to reuse the original request."
+                    "Review the files, submit follow-up refinements with Enter, "
+                    "then explicitly choose Preview with Pi."
                 )
         prompt = self.query_one("#command-input", PromptTextArea)
         prompt.text = self._handoff_instruction_draft
         self._set_composer_mode(ComposerMode.PI_HANDOFF)
+        self._sync_preview_button()
         if not offer.unresolved_searches:
             prompt.focus()
         elif isinstance(entry, PlanSessionEntry):
@@ -1047,6 +1191,8 @@ class DevstillApp(App[None]):
         plan: PlanOutput,
         *,
         update_entry: bool = True,
+        pin_target: str | None = None,
+        restore_target: str | None = None,
     ) -> bool:
         offer = self._handoff_offer
         entry = self._handoff_entry
@@ -1058,22 +1204,87 @@ class DevstillApp(App[None]):
                 "This TUI workflow cannot persist manual Plan labels.", error=True
             )
             return False
+        entry.set_editable(False, close_form=False)
         try:
-            updated_offer, _markdown = save_manual_plan(
-                offer.source,
-                plan,
-                allow_unresolved=True,
-            )
+            suppressed = set(offer.suppressed_paths)
+            if restore_target is not None:
+                suppressed.discard(restore_target)
+            pinned = set(offer.pinned_targets)
+            if pin_target is not None:
+                pinned.add(pin_target)
+            try:
+                updated_offer, _markdown = save_manual_plan(
+                    offer.source,
+                    plan,
+                    allow_unresolved=True,
+                    suppressed_paths=frozenset(suppressed),
+                    pinned_targets=frozenset(pinned),
+                )
+            except TypeError as exc:
+                if "unexpected keyword argument" not in str(exc):
+                    raise
+                updated_offer, _markdown = save_manual_plan(
+                    offer.source,
+                    plan,
+                    allow_unresolved=True,
+                )
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             if offer.plan is not None:
                 entry.update_plan(offer.plan)
+            entry.set_editable(True)
             entry.set_status(str(exc), error=True)
             return False
         self._handoff_offer = updated_offer
         if update_entry:
             entry.update_plan(plan)
+        entry.set_editable(True)
         self.query_one("#activity", Static).update("Plan label saved")
+        self._sync_preview_button()
         return True
+
+    def _sync_preview_button(self) -> None:
+        button = self.query_one_optional("#start-pi-handoff", Button)
+        offer = self._handoff_offer
+        prompt = self.query_one_optional("#command-input", PromptTextArea)
+        if button is None:
+            return
+        draft = prompt.text.strip() if prompt is not None else ""
+        button.disabled = bool(
+            self._busy
+            or offer is None
+            or offer.plan is None
+            or not offer.plan.items
+            or offer.unresolved_searches
+            or draft
+        )
+
+    def _start_review_worker(
+        self,
+        operation: object,
+        *,
+        activity: str,
+        clear_draft: str | None = None,
+    ) -> None:
+        if self._busy or not callable(operation):
+            return
+        self._busy = True
+        self._review_draft_to_clear = clear_draft
+        if isinstance(self._handoff_entry, PlanSessionEntry):
+            self._handoff_entry.set_editable(False)
+            self._handoff_entry.set_status(activity)
+        prompt = self.query_one("#command-input", PromptTextArea)
+        prompt.disabled = True
+        self.query_one("#busy", LoadingIndicator).display = True
+        self.query_one("#cancel-pi-handoff", Button).disabled = True
+        self.query_one("#activity", Static).update(activity)
+        self._sync_preview_button()
+        self._review_worker = self.run_worker(
+            operation,
+            name="plan-review",
+            group="plan-review",
+            exit_on_error=False,
+            thread=True,
+        )
 
     def _use_search_path(self) -> None:
         offer = self._handoff_offer
@@ -1109,7 +1320,12 @@ class DevstillApp(App[None]):
             _duplicate_index, existing = duplicate
             del items[index]
             reviewed = offer.plan.model_copy(update={"items": items})
-            if not self._persist_reviewed_plan(reviewed, update_entry=False):
+            if not self._persist_reviewed_plan(
+                reviewed,
+                update_entry=False,
+                pin_target=existing.target,
+                restore_target=existing.target,
+            ):
                 self.query_one("#command-input", PromptTextArea).focus()
                 return
             if isinstance(self._handoff_entry, PlanSessionEntry):
@@ -1136,7 +1352,11 @@ class DevstillApp(App[None]):
             return
         items[index] = PlanItem(label=label, target=target, reason=old_item.reason)
         reviewed = offer.plan.model_copy(update={"items": items})
-        if not self._persist_reviewed_plan(reviewed):
+        if not self._persist_reviewed_plan(
+            reviewed,
+            pin_target=target,
+            restore_target=target,
+        ):
             self.query_one("#command-input", PromptTextArea).focus()
             return
         self._resolving_search_index = None
@@ -1206,7 +1426,7 @@ class DevstillApp(App[None]):
             "[dim]Startup warm · ~1.1 GiB[/dim]\n\n"
             f"[b]AGENT KEY[/b]\n{key_state}\n\n"
             "[b]CLIPBOARD[/b]\n"
-            "Select + Ctrl+C: copy\n"
+            "Select + Ctrl+C/right-click: copy\n"
             "Ctrl+Shift+V: paste\n\n"
             "[b]COMPOSER[/b]\n"
             "Enter: send\n"
@@ -1214,19 +1434,30 @@ class DevstillApp(App[None]):
             "[dim]Ctrl+B sidebar\nCtrl+L clear[/dim]"
         )
 
-    def action_copy_or_quit(self) -> None:
-        """Copy selected TUI text, or retain Ctrl+C's interrupt-to-exit behavior."""
+    def _copy_selected_text(self) -> bool:
+        """Copy the active widget or screen selection when one exists."""
         focused = self.focused
         if isinstance(focused, (Input, TextArea)) and focused.selected_text:
             self.copy_to_clipboard(focused.selected_text)
             self.query_one("#activity", Static).update("Selected text copied")
-            return
+            return True
         selected = self.screen.get_selected_text()
         if selected:
             self.copy_to_clipboard(selected)
             self.query_one("#activity", Static).update("Selected text copied")
+            return True
+        return False
+
+    def action_copy_or_quit(self) -> None:
+        """Copy selected TUI text, or retain Ctrl+C's interrupt-to-exit behavior."""
+        if self._copy_selected_text():
             return
         self.exit()
+
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+        """Copy an existing selection when it is right-clicked."""
+        if event.button == 3:
+            self._copy_selected_text()
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         if event.text_area.id != "command-input":
@@ -1238,6 +1469,7 @@ class DevstillApp(App[None]):
         elif self._composer_mode is ComposerMode.PI_HANDOFF:
             self._handoff_instruction_draft = prompt.text
             self._hide_palette()
+            self._sync_preview_button()
         else:
             self._hide_palette()
 
@@ -1269,8 +1501,20 @@ class DevstillApp(App[None]):
         if event.prompt.id != "command-input" or self._busy:
             return
         if self._composer_mode is ComposerMode.PI_HANDOFF:
-            if self._handoff_offer and not self._handoff_offer.unresolved_searches:
-                self._start_pi_preview()
+            draft = event.prompt.text.strip()
+            if draft:
+                offer = self._handoff_offer
+                refine = getattr(self.workflow, "refine_review_plan", None)
+                if offer is not None and callable(refine):
+                    self._start_review_worker(
+                        lambda: refine(offer, draft, self._thread_progress),
+                        activity="Refining the live Plan",
+                        clear_draft=draft,
+                    )
+            else:
+                self.query_one("#activity", Static).update(
+                    "Enter a refinement or click Preview with Pi"
+                )
             return
         if self._composer_mode is ComposerMode.SEARCH_PATH:
             self._use_search_path()
@@ -1374,7 +1618,10 @@ class DevstillApp(App[None]):
             target=old_item.target,
             reason=old_item.reason,
         )
-        if self._persist_reviewed_plan(plan.model_copy(update={"items": items})):
+        if self._persist_reviewed_plan(
+            plan.model_copy(update={"items": items}),
+            pin_target=old_item.target,
+        ):
             self._refresh_handoff()
 
     async def on_plan_impact_row_reason_edited(
@@ -1406,7 +1653,10 @@ class DevstillApp(App[None]):
             return
         items = list(plan.items)
         items[event.index] = edited
-        if self._persist_reviewed_plan(plan.model_copy(update={"items": items})):
+        if self._persist_reviewed_plan(
+            plan.model_copy(update={"items": items}),
+            pin_target=old_item.target,
+        ):
             self._refresh_handoff()
 
     async def on_plan_new_file_form_submitted(
@@ -1421,27 +1671,32 @@ class DevstillApp(App[None]):
             or event.form not in self._handoff_entry.query(PlanNewFileForm)
         ):
             return
+        target = event.target.strip().replace("\\", "/")
+        repo_root = getattr(self.workflow, "repo_root", self.config_path.parent)
+        candidate = repo_root.joinpath(*target.split("/"))
+        label = event.label if candidate.is_file() else PlanLabel.NEW
         try:
-            item = PlanItem(
-                label=PlanLabel.NEW,
-                target=event.target,
-                reason=event.reason,
-            )
+            item = PlanItem(label=label, target=target, reason=event.reason)
         except ValueError as exc:
             self._handoff_entry.set_status(str(exc), error=True)
             return
         plan = self._handoff_offer.plan
         reviewed = plan.model_copy(update={"items": [*plan.items, item]})
-        if not self._persist_reviewed_plan(reviewed, update_entry=False):
+        if not self._persist_reviewed_plan(
+            reviewed,
+            update_entry=False,
+            pin_target=item.target,
+            restore_target=item.target if label is not PlanLabel.NEW else None,
+        ):
             return
         await self._handoff_entry.append_plan_item(item, reviewed)
         self._handoff_entry.close_new_file_form()
         self._refresh_handoff()
         self._scroll_feed_after_layout()
 
-    async def on_plan_impact_row_discard_requested(
+    async def on_plan_impact_row_remove_requested(
         self,
-        event: PlanImpactRow.DiscardRequested,
+        event: PlanImpactRow.RemoveRequested,
     ) -> None:
         if (
             self._composer_mode is not ComposerMode.PI_HANDOFF
@@ -1451,16 +1706,65 @@ class DevstillApp(App[None]):
             or event.row not in self._handoff_entry.query(PlanImpactRow)
         ):
             return
-        plan = self._handoff_offer.plan
-        if plan.items[event.index].label is not PlanLabel.NEW:
+        remove = getattr(self.workflow, "remove_review_item", None)
+        offer = self._handoff_offer
+        if callable(remove):
+            self._start_review_worker(
+                lambda: remove(offer, event.index),
+                activity=f"Removing {offer.plan.items[event.index].target}",
+            )
             return
+        plan = offer.plan
         items = list(plan.items)
         del items[event.index]
         reviewed = plan.model_copy(update={"items": items})
-        if not self._persist_reviewed_plan(reviewed, update_entry=False):
-            return
-        self._handoff_entry.remove_plan_item(event.index, reviewed)
-        self._refresh_handoff()
+        if self._persist_reviewed_plan(reviewed, update_entry=False):
+            self._handoff_entry.remove_plan_item(event.index, reviewed)
+            self._refresh_handoff()
+
+    async def on_plan_impact_row_discard_requested(
+        self,
+        event: PlanImpactRow.DiscardRequested,
+    ) -> None:
+        await self.on_plan_impact_row_remove_requested(event)
+
+    async def on_plan_impact_row_refresh_requested(
+        self,
+        event: PlanImpactRow.RefreshRequested,
+    ) -> None:
+        offer = self._handoff_offer
+        replace = getattr(self.workflow, "replace_review_item", None)
+        if (
+            self._composer_mode is ComposerMode.PI_HANDOFF
+            and offer is not None
+            and offer.plan is not None
+            and callable(replace)
+            and isinstance(self._handoff_entry, PlanSessionEntry)
+            and event.row in self._handoff_entry.query(PlanImpactRow)
+        ):
+            self._start_review_worker(
+                lambda: replace(offer, event.index, self._thread_progress),
+                activity=f"Finding a replacement for {offer.plan.items[event.index].target}",
+            )
+
+    async def on_plan_impact_row_ban_requested(
+        self,
+        event: PlanImpactRow.BanRequested,
+    ) -> None:
+        offer = self._handoff_offer
+        ban = getattr(self.workflow, "permanently_exclude_review_item", None)
+        if (
+            self._composer_mode is ComposerMode.PI_HANDOFF
+            and offer is not None
+            and offer.plan is not None
+            and callable(ban)
+            and isinstance(self._handoff_entry, PlanSessionEntry)
+            and event.row in self._handoff_entry.query(PlanImpactRow)
+        ):
+            self._start_review_worker(
+                lambda: ban(offer, event.index, self._thread_progress),
+                activity=f"Permanently excluding {offer.plan.items[event.index].target}",
+            )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id
@@ -1479,9 +1783,15 @@ class DevstillApp(App[None]):
 
     def _start_pi_preview(self) -> None:
         offer = self._handoff_offer
-        if offer is None or offer.unresolved_searches:
+        if (
+            offer is None
+            or offer.plan is None
+            or not offer.plan.items
+            or offer.unresolved_searches
+            or self._busy
+            or self.query_one("#command-input", PromptTextArea).text.strip()
+        ):
             return
-        instruction = self.query_one("#command-input", PromptTextArea).text.strip()
         source = offer.source
         entry = self._handoff_entry
         if isinstance(entry, PlanSessionEntry):
@@ -1499,7 +1809,7 @@ class DevstillApp(App[None]):
                 TuiCommandKind.EXECUTE,
                 f"/execute {source}",
                 source,
-                instruction,
+                "",
             )
         )
 
@@ -1760,6 +2070,52 @@ class DevstillApp(App[None]):
         self.refresh_repository_status()
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.worker is self._review_worker:
+            entry = self._handoff_entry
+            if event.state is WorkerState.SUCCESS:
+                result = event.worker.result
+                workflow_config = getattr(self.workflow, "config", None)
+                if isinstance(workflow_config, DevstillConfig):
+                    self.config = workflow_config
+                self._handoff_offer = result.offer
+                if isinstance(entry, PlanSessionEntry) and result.offer.plan is not None:
+                    await entry.rebuild_plan(result.offer.plan)
+                prompt = self.query_one("#command-input", PromptTextArea)
+                if (
+                    self._review_draft_to_clear is not None
+                    and prompt.text.strip() == self._review_draft_to_clear
+                ):
+                    prompt.text = ""
+                    self._handoff_instruction_draft = ""
+                self.query_one("#activity", Static).update(result.message)
+                self._finish_review_worker()
+                self._refresh_handoff()
+                if isinstance(entry, PlanSessionEntry):
+                    entry.set_status(result.message)
+                self._scroll_feed_after_layout()
+            elif event.state is WorkerState.ERROR:
+                error = event.worker.error or RuntimeError("Plan review failed")
+                if isinstance(entry, PlanSessionEntry):
+                    entry.set_status(str(error), error=True)
+                self.query_one("#activity", Static).update("Plan review failed")
+                if "rollback was incomplete" in str(error):
+                    self._busy = False
+                    self._review_worker = None
+                    self._review_draft_to_clear = None
+                    self.query_one("#busy", LoadingIndicator).display = False
+                    self.query_one("#command-input", PromptTextArea).disabled = True
+                    self.query_one("#cancel-pi-handoff", Button).disabled = False
+                    if isinstance(entry, PlanSessionEntry):
+                        entry.set_editable(False)
+                    self._sync_preview_button()
+                    self.query_one("#start-pi-handoff", Button).disabled = True
+                else:
+                    self._finish_review_worker()
+            elif event.state is WorkerState.CANCELLED:
+                if isinstance(entry, PlanSessionEntry):
+                    entry.set_status("Plan review cancelled", error=True)
+                self._finish_review_worker()
+            return
         if event.worker is not self._active_worker:
             return
         if event.state is WorkerState.SUCCESS:
@@ -1866,6 +2222,19 @@ class DevstillApp(App[None]):
                     error=True,
                 )
             self._finish_worker("Command cancelled")
+
+    def _finish_review_worker(self) -> None:
+        self._busy = False
+        self._review_worker = None
+        self._review_draft_to_clear = None
+        self.query_one("#busy", LoadingIndicator).display = False
+        self.query_one("#cancel-pi-handoff", Button).disabled = False
+        prompt = self.query_one("#command-input", PromptTextArea)
+        prompt.disabled = False
+        if isinstance(self._handoff_entry, PlanSessionEntry):
+            self._handoff_entry.set_editable(True)
+        self._sync_preview_button()
+        prompt.focus()
 
     def _finish_worker(self, activity: str) -> None:
         self._busy = False

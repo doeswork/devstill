@@ -10,6 +10,7 @@ from devstill.config import DevstillConfig, resolve_index_path, resolve_model_pa
 from devstill.embeddings import EmbeddingBackend
 from devstill.models import SearchResult
 from devstill.paths import IndexPaths
+from devstill.retrieval_policy import matches_retrieval_exclude
 from devstill.storage import ChromaStore, SQLiteStore
 
 RRF_K = 60.0
@@ -45,6 +46,7 @@ class HybridSearch:
                 f"No Devstill index found at {paths.root}. Run `devstill index`."
             )
         self.store = SQLiteStore(paths.sqlite)
+        self.retrieval_exclude = config.retrieval.exclude
         self.embedder = embedder or EmbeddingBackend(
             resolve_model_path(config),
             max_sequence_length=config.embedding.max_sequence_length,
@@ -209,6 +211,8 @@ class HybridSearch:
         seen_ranges: set[tuple[str, int, int]] = set()
         for result in ordered:
             chunk = result.chunk
+            if matches_retrieval_exclude(chunk.path, self.retrieval_exclude):
+                continue
             if kind and chunk.kind != kind:
                 continue
             if path and not chunk.path.startswith(path):

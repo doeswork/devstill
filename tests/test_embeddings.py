@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import types
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pytest
@@ -71,6 +72,44 @@ def test_embedding_backend_forces_offline_cpu_and_restores_order(
     backend.close()
     assert backend.state == "cold"
     assert not backend.is_loaded
+
+
+def test_embedding_backend_uses_thread_lock_for_disabled_tqdm_in_worker(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from tqdm import std as tqdm_std
+    from tqdm.autonotebook import trange
+
+    def reject_multiprocessing_lock(_lock_type):
+        raise AssertionError("tqdm attempted to create a multiprocessing lock")
+
+    class TqdmModel:
+        def __init__(self, *_args, **_kwargs):
+            self.max_seq_length = None
+
+        def encode(self, texts, **_kwargs):
+            for _index in trange(0, len(texts), 1, disable=True):
+                pass
+            return np.array([[len(text), 1.0] for text in texts], dtype=float)
+
+    monkeypatch.delattr(tqdm_std.tqdm, "_lock", raising=False)
+    monkeypatch.setattr(
+        tqdm_std.TqdmDefaultWriteLock,
+        "create_mp_lock",
+        classmethod(reject_multiprocessing_lock),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "sentence_transformers",
+        types.SimpleNamespace(SentenceTransformer=TqdmModel),
+    )
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        result = pool.submit(EmbeddingBackend(tmp_path).encode, ["worker"]).result()
+
+    assert result == [[6.0, 1.0]]
+    assert tqdm_std.tqdm.get_lock() is embeddings._TQDM_THREAD_LOCK
 
 
 def test_embedding_warm_failure_returns_to_cold_and_can_retry(

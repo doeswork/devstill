@@ -52,6 +52,11 @@ def test_cli_exposes_index_and_search_options() -> None:
     assert update.command == "update"
     assert update.check
 
+    retrieval = parser().parse_args(["retrieval-ignore", "add", "vendor/**"])
+    assert retrieval.command == "retrieval-ignore"
+    assert retrieval.retrieval_action == "add"
+    assert retrieval.pattern == "vendor/**"
+
 
 def test_cli_exposes_context_defaults_and_options() -> None:
     context = parser().parse_args(
@@ -73,6 +78,19 @@ def test_cli_exposes_context_defaults_and_options() -> None:
     assert context.include_tests
     assert context.semantic_only
     assert not context.json
+
+
+def test_retrieval_ignore_cli_add_list_remove(monkeypatch, tmp_path: Path) -> None:
+    config_path = write_default_config(tmp_path / "devstill.json")
+    monkeypatch.chdir(tmp_path)
+    assert cli.retrieval_ignore_command("add", "vendor/**") == 0
+    assert load_config(config_path).retrieval.exclude == ["vendor/**"]
+    assert cli.retrieval_ignore_command("add", "vendor/**") == 0
+    assert cli.retrieval_ignore_command(None, None) == 0
+    assert cli.retrieval_ignore_command("remove", "vendor/**") == 0
+    assert load_config(config_path).retrieval.exclude == []
+    with pytest.raises(ValueError, match="not configured"):
+        cli.retrieval_ignore_command("remove", "vendor/**")
 
 
 def test_cli_exposes_agent_and_plan_commands() -> None:

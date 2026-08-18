@@ -96,6 +96,13 @@ if [[ ! -f "$DEVSTILL_SOURCE/pyproject.toml" ]]; then
     exit 1
 fi
 
+echo "Installing Devstill for the current user."
+echo "  Application data: $DEVSTILL_DATA_HOME"
+echo "  Private Python environment: $VENV_DIR"
+echo "  Embedding model: $MODEL_DIR"
+echo "  Command link: $COMMAND_LINK"
+echo "Pip download caching is disabled; existing shared pip caches are untouched."
+echo
 echo "Installing Ubuntu/WSL packages..."
 sudo apt-get update
 sudo apt-get install -y python3 python3-venv python3-pip python3-dev \
@@ -113,7 +120,16 @@ if [[ ! -d "$VENV_DIR" ]]; then
     python3 -m venv "$VENV_DIR"
 fi
 source "$VENV_DIR/bin/activate"
-python -m pip install --upgrade pip setuptools wheel
+ACTIVE_VENV="$(python -c 'import pathlib, sys; print(pathlib.Path(sys.prefix).resolve())')"
+EXPECTED_VENV="$(cd "$VENV_DIR" && pwd -P)"
+if [[ "$ACTIVE_VENV" != "$EXPECTED_VENV" ]]; then
+    echo "Refusing package changes outside Devstill's private environment." >&2
+    echo "Expected $EXPECTED_VENV but Python is using $ACTIVE_VENV." >&2
+    exit 1
+fi
+export PIP_NO_CACHE_DIR=1
+PIP_INSTALL=(python -m pip install --no-cache-dir)
+"${PIP_INSTALL[@]}" --upgrade pip setuptools wheel
 
 has_nvidia_gpu() {
     command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1
@@ -130,9 +146,51 @@ del probe
 PYCODE
 }
 
+remove_cuda_only_packages() {
+    local cuda_packages=()
+    mapfile -t cuda_packages < <(python - <<'PYCODE'
+import importlib.metadata
+
+packages = []
+for distribution in importlib.metadata.distributions():
+    name = (distribution.metadata.get("Name") or "").strip()
+    normalized = name.casefold().replace("_", "-")
+    if (
+        normalized.startswith(("nvidia-", "cuda-"))
+        or normalized == "triton"
+        or normalized.startswith("triton-")
+    ):
+        packages.append(name)
+print("\n".join(sorted(set(packages), key=str.casefold)))
+PYCODE
+    )
+    if [[ ${#cuda_packages[@]} -eq 0 ]]; then
+        return
+    fi
+    echo "Removing CUDA-only packages from $VENV_DIR before CPU installation..."
+    python -m pip uninstall --yes "${cuda_packages[@]}"
+}
+
+print_cuda_install_notice() {
+    echo "CUDA acceleration selected."
+    echo "  Private install destination: $VENV_DIR"
+    echo "  Expected installed footprint: approximately 7-10 GiB"
+    echo "  CUDA libraries stay inside Devstill's virtual environment."
+    echo "  Pip download caching is disabled; no duplicate wheel cache is retained."
+}
+
+path_size() {
+    if [[ -e "$1" ]]; then
+        du -sh "$1" | cut -f1
+    else
+        echo "0"
+    fi
+}
+
 install_cpu_torch() {
+    remove_cuda_only_packages
     echo "Installing CPU PyTorch..."
-    python -m pip install --upgrade --force-reinstall torch \
+    "${PIP_INSTALL[@]}" --upgrade --force-reinstall torch \
         --index-url "$CPU_TORCH_INDEX" || return 1
     RESOLVED_DEVICE="cpu"
     RESOLVED_TORCH_INDEX="$CPU_TORCH_INDEX"
@@ -140,8 +198,9 @@ install_cpu_torch() {
 
 install_cuda_torch() {
     local index_url="${TORCH_INDEX_OVERRIDE:-$DEFAULT_CUDA_TORCH_INDEX}"
+    print_cuda_install_notice
     echo "Installing CUDA PyTorch from $index_url..."
-    python -m pip install --upgrade --force-reinstall torch \
+    "${PIP_INSTALL[@]}" --upgrade --force-reinstall torch \
         --index-url "$index_url" || return 1
     RESOLVED_DEVICE="cuda"
     RESOLVED_TORCH_INDEX="$index_url"
@@ -173,7 +232,7 @@ else
 fi
 
 echo "Installing Devstill into $VENV_DIR..."
-python -m pip install --upgrade --upgrade-strategy only-if-needed "$DEVSTILL_SOURCE"
+"${PIP_INSTALL[@]}" --upgrade --upgrade-strategy only-if-needed "$DEVSTILL_SOURCE"
 python -m pip check
 
 export PATH="$BIN_DIR:$PI_NODE_BIN:$PATH"
@@ -306,6 +365,8 @@ export TOKENIZERS_PARALLELISM=false
 echo
 echo "Installed Devstill at $COMMAND_LINK"
 echo "Runtime environment: $VENV_DIR"
+echo "Runtime environment size: $(path_size "$VENV_DIR")"
+echo "Embedding model size: $(path_size "$MODEL_DIR")"
 echo "Embedding device: $RESOLVED_DEVICE (requested: $DEVICE_REQUESTED)"
 echo "The source checkout can now be moved or removed."
 echo "Run: source ~/.bashrc"

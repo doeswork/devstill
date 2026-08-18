@@ -3,8 +3,10 @@ from __future__ import annotations
 import warnings
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from threading import Lock
+from threading import Lock, RLock
 from typing import Any
+
+from tqdm import tqdm
 
 from devstill.devices import (
     EmbeddingDevice,
@@ -12,6 +14,13 @@ from devstill.devices import (
     inspect_device,
     is_cuda_out_of_memory,
 )
+
+_TQDM_THREAD_LOCK = RLock()
+
+
+def _configure_tqdm_thread_lock() -> None:
+    """Keep hidden Sentence Transformers progress local to this process."""
+    tqdm.set_lock(_TQDM_THREAD_LOCK)
 
 
 class EmbeddingBackend:
@@ -23,6 +32,7 @@ class EmbeddingBackend:
         normalize: bool = True,
         device: EmbeddingDevice = "auto",
     ) -> None:
+        _configure_tqdm_thread_lock()
         self.model_path = model_path
         self.max_sequence_length = max_sequence_length
         self.batch_size = batch_size
@@ -51,6 +61,7 @@ class EmbeddingBackend:
         return self._load(on_loading)
 
     def _load(self, on_loading: Callable[[], None] | None = None) -> Any:
+        _configure_tqdm_thread_lock()
         if self._model is not None:
             return self._model
         with self._load_lock:
@@ -106,6 +117,7 @@ class EmbeddingBackend:
         show_progress: bool = False,
         progress: Callable[[int, int], None] | None = None,
     ) -> list[list[float]]:
+        _configure_tqdm_thread_lock()
         if not texts:
             return []
         model = self._load()

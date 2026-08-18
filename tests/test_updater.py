@@ -99,6 +99,7 @@ def test_install_release_preserves_dependencies_and_runs_checks(monkeypatch, tmp
     updater.install_release(release, metadata, runner=run)
 
     assert "--upgrade-strategy" in calls[0]
+    assert "--no-cache-dir" in calls[0]
     assert "only-if-needed" in calls[0]
     assert calls[1][-2:] == ["pip", "check"]
     assert calls[2][-2:] == ["devstill.cli", "doctor"]

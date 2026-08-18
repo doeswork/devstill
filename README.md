@@ -84,6 +84,13 @@ Automatic mode is the only mode that falls back. Rerun setup to change the insta
 PyTorch build; the per-project `devstill device` command cannot add CUDA support to a
 CPU-only PyTorch installation.
 
+Before downloading CUDA, setup identifies the private installation destination and
+warns that the CUDA-enabled environment commonly occupies roughly 7–10 GiB. These
+libraries stay under `~/.local/share/devstill/venv`; they are not installed into
+`/opt`, `/etc`, or the system Python. CPU installations are substantially smaller.
+Setup disables pip's download cache for all of its package installations and removes
+CUDA-only packages when changing to CPU or falling back from failed CUDA verification.
+
 Setup also installs the Pi coding executor and a compatible Node.js runtime when
 needed. Pi is used only for `devstill execute` or `/execute`. For search and planning
 without code execution, use either form:
@@ -102,6 +109,18 @@ The public installation is independent of the cloned source tree:
 ~/.local/share/devstill/models/jina-embeddings-v2-base-code/
 ~/.local/bin/devstill
 ```
+
+Setup prints the final environment and embedding-model sizes when it completes. It
+never purges pip's shared cache because that cache may belong to other Python
+projects. Users upgrading from an older Devstill installer can optionally reclaim
+all shared pip downloads after confirming Devstill works:
+
+```bash
+~/.local/share/devstill/venv/bin/python -m pip cache purge
+```
+
+That command affects pip's user-wide cache, not just Devstill. It does not remove
+installed packages or the embedding model.
 
 After setup succeeds, the cloned checkout can be moved or deleted. Confirm the
 installation and selected accelerator with:
@@ -352,6 +371,9 @@ Example `devstill.json`
       "__pycache__/**"
     ]
   },
+  "retrieval": {
+    "exclude": []
+  },
   "llm": {
     "enabled": false,
     "base_url": "http://127.0.0.1:8080/v1",
@@ -391,6 +413,18 @@ Use `devstill files --ignored` to see exact paths and reasons.
 whose embedded text is intentionally useful. It cannot override
 `files.exclude` or hard safety exclusions. `files.index_noisy_files` remains a
 compatibility switch for noisy/generated files only; it does not enable assets.
+
+`retrieval.exclude` is a separate, reversible “do not use for answers or plans”
+list. Repository-relative POSIX paths and globs remain indexed but are filtered at
+query time from search, context, Plan, Deep Plan, refinements, and replacements.
+Manage it without reindexing:
+
+```bash
+devstill retrieval-ignore
+devstill retrieval-ignore add "vendor/**"
+devstill retrieval-ignore add src/obsolete.py
+devstill retrieval-ignore remove src/obsolete.py
+```
 The indexer must not scan:
 `.git/`
 `.devstill/`
@@ -696,16 +730,22 @@ confirmation; `--dry-run` only generates the preview and `--yes` is required for
 noninteractive application. Devstill rechecks original file hashes and runs
 `git apply --check` immediately before applying. It never commits or pushes.
 
-After a successful `/plan` or `/deep-plan`, the TUI asks whether to implement that
-plan with Pi without opening a popup. The bottom composer accepts optional multiline
-execution instructions; leaving it blank reuses the Plan's original query. The
-colored status on each existing file is an inline dropdown for `Read`, `Add`,
-`Remove`, `Modify`, or `Delete`. Reasons remain visible as one-line inputs and save
-on Enter or focus loss. An inline **Add New file** form collects an exact path and
-reason for a pink `New` row, and pink rows can be discarded. Valid changes are saved
-immediately. Choosing a concrete label for a white `Search` row temporarily uses the
-composer for its exact repository-relative path. Pi remains blocked until every
-`Search` entry is resolved.
+After a successful `/plan` or `/deep-plan`, its card becomes a live review workspace.
+The colored status on each existing file is an inline dropdown for `Read`, `Add`,
+`Remove`, `Modify`, or `Delete`. A red `×` removes a row for this handoff, a blue `↻`
+replaces an existing file with the next eligible hybrid result, and a confirmed red
+`!` permanently adds that exact path to `retrieval.exclude`. `New` and unresolved
+`Search` rows only offer `×`. Reasons use a white, high-contrast editor while focused
+and save on Enter or focus loss.
+
+The green **＋ Manually add file/context** form accepts an exact path, reason, and
+existing-file label. Missing safe paths become fixed pink `New` rows. Manually
+adding a temporarily suppressed existing path restores and pins it; permanently
+excluded paths must be unbanned first. Enter in the bottom composer submits a
+follow-up refinement and keeps its compact history on the same card. Manual edits
+stay pinned while untouched retrieval rows may change. Pi starts only through
+**Preview with Pi**, which is disabled for an unsent draft, empty plan, unresolved
+`Search`, or active review work. Every accepted mutation is saved immediately.
 
 The composer shows focused, right-aligned actions for **Not now**, **Preview with
 Pi**, **Use file**, **Cancel**, and **Apply patch** as appropriate. Normal commands
@@ -838,8 +878,9 @@ complete it in the prompt without executing it. The right sidebar offers the sam
 commands and also prefills the prompt. Search runs locally; `/plan`, `/deep-plan`,
 `/execute`, and `/agent test` contact the configured endpoint. Context, Plan, Deep
 Plan, and execution commands keep the same artifact behavior as the CLI. Successful
-Plan and Deep Plan commands open an optional Pi handoff: enter a more specific
-execution request, or submit it blank to reuse the original planning query. Pi
+Plan and Deep Plan commands open an iterative Pi handoff: Enter submits a follow-up
+refinement and **Preview with Pi** is the only execution trigger. The original query
+and all accepted refinements are persisted and sent to Pi. Pi
 handoff, label review, Search resolution, and patch approval stay inline: Plan
 statuses are clickable dropdowns in the feed and action buttons appear at the
 bottom-right of the composer. `/agent configure` remains a separate setup form.

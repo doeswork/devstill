@@ -114,6 +114,7 @@ def install_release(
             "-m",
             "pip",
             "install",
+            "--no-cache-dir",
             "--upgrade",
             "--upgrade-strategy",
             "only-if-needed",

@@ -15,6 +15,7 @@ from typing import Any, Literal
 from devstill.config import DevstillConfig
 from devstill.pi_runtime import PiRunner, PiRunResult, write_provider_config
 from devstill.planning import PlanLabel, PlanOutput
+from devstill.retrieval_policy import matches_retrieval_exclude
 
 PlanSource = Literal["plan", "deep-plan"]
 ExecutionProgress = Callable[[str], None]
@@ -175,7 +176,12 @@ def load_plan_artifact(path: Path) -> PlanOutput:
 
 
 def _safe_target(repo_root: Path, target: str, *, must_exist: bool) -> Path:
-    if "\\" in target or target.startswith("/"):
+    if (
+        "\\" in target
+        or target.startswith(("/", "./"))
+        or target.endswith("/")
+        or any(character in target for character in "*?[]{}")
+    ):
         raise ExecutionError(f"Unsafe plan target: {target}")
     relative = PurePosixPath(target)
     if not target or relative.is_absolute() or ".." in relative.parts:
@@ -203,6 +209,7 @@ def _validate_plan_targets(
     repo_root: Path,
     *,
     allow_search: bool,
+    retrieval_exclude: list[str] | None = None,
 ) -> tuple[dict[str, PlanLabel], dict[str, Path]]:
     if Path(plan.repository).expanduser().resolve() != repo_root.resolve():
         raise ExecutionError(
@@ -210,6 +217,8 @@ def _validate_plan_targets(
         )
     labels: dict[str, PlanLabel] = {}
     paths: dict[str, Path] = {}
+    if not plan.items and not allow_search:
+        raise ExecutionError("The reviewed plan is empty. Add at least one file before execution.")
     for item in plan.items:
         if item.label is PlanLabel.SEARCH:
             if allow_search:
@@ -219,6 +228,11 @@ def _validate_plan_targets(
             )
         if item.target in labels:
             raise ExecutionError(f"Duplicate plan target: {item.target}")
+        if matches_retrieval_exclude(item.target, retrieval_exclude or []):
+            raise ExecutionError(
+                f"Plan target is permanently excluded from retrieval: {item.target}. "
+                "Remove the matching retrieval-ignore entry or create a fresh reviewed plan."
+            )
         labels[item.target] = item.label
         paths[item.target] = _safe_target(
             repo_root,
@@ -228,16 +242,39 @@ def _validate_plan_targets(
     return labels, paths
 
 
-def validate_reviewed_plan(plan: PlanOutput, repo_root: Path) -> None:
+def validate_reviewed_plan(
+    plan: PlanOutput,
+    repo_root: Path,
+    retrieval_exclude: list[str] | None = None,
+) -> None:
     """Validate concrete targets while permitting unresolved Search entries."""
-    _validate_plan_targets(plan, repo_root, allow_search=True)
+    _validate_plan_targets(
+        plan,
+        repo_root,
+        allow_search=True,
+        retrieval_exclude=retrieval_exclude,
+    )
 
 
 def validate_execution_plan(
     plan: PlanOutput,
     repo_root: Path,
+    retrieval_exclude: list[str] | None = None,
 ) -> tuple[dict[str, PlanLabel], dict[str, Path]]:
-    return _validate_plan_targets(plan, repo_root, allow_search=False)
+    return _validate_plan_targets(
+        plan,
+        repo_root,
+        allow_search=False,
+        retrieval_exclude=retrieval_exclude,
+    )
+
+
+def plan_execution_request(plan: PlanOutput, instruction: str | None = None) -> str:
+    parts = [plan.query, *plan.refinements]
+    extra = (instruction or "").strip()
+    if extra:
+        parts.append(extra)
+    return "\n\n".join(parts)
 
 
 def _execution_prompt(
@@ -246,6 +283,7 @@ def _execution_prompt(
     instruction: str | None = None,
 ) -> str:
     execution_instruction = (instruction or "").strip() or plan.query
+    cumulative_request = plan_execution_request(plan)
     writable = [path for path, label in labels.items() if label is not PlanLabel.READ]
     read_only = [path for path, label in labels.items() if label is PlanLabel.READ]
     return "\n".join(
@@ -259,6 +297,10 @@ def _execution_prompt(
             (
                 "EXECUTION_REQUEST: "
                 f"{json.dumps(execution_instruction, ensure_ascii=False)}"
+            ),
+            (
+                "CUMULATIVE_PLAN_REQUEST: "
+                f"{json.dumps(cumulative_request, ensure_ascii=False)}"
             ),
             f"WRITABLE_PATHS: {json.dumps(writable)}",
             f"READ_ONLY_PATHS: {json.dumps(read_only)}",
@@ -376,7 +418,11 @@ class RepositoryExecutor:
         selected_source, artifact = select_plan_artifact(self.artifact_root, source)
         plan = load_plan_artifact(artifact)
         execution_instruction = (instruction or "").strip() or plan.query
-        labels, paths = validate_execution_plan(plan, self.repo_root)
+        labels, paths = validate_execution_plan(
+            plan,
+            self.repo_root,
+            self.config.retrieval.exclude,
+        )
         notify(f"Using {artifact}")
         temporary = tempfile.TemporaryDirectory(prefix="devstill-execute-")
         temporary_root = Path(temporary.name)
@@ -403,7 +449,7 @@ class RepositoryExecutor:
                 workspace=workspace,
                 config_dir=config_dir,
                 policy_extension=policy,
-                prompt=_execution_prompt(plan, labels, execution_instruction),
+                prompt=_execution_prompt(plan, labels, instruction),
                 llm=self.config.llm,
                 executor=self.config.executor,
                 environment={

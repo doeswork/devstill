@@ -20,6 +20,7 @@ from pydantic import (
 
 from devstill.devices import EmbeddingDevice
 from devstill.installation import data_home
+from devstill.retrieval_policy import normalize_retrieval_pattern
 
 CONFIG_FILENAME = "devstill.json"
 
@@ -115,6 +116,20 @@ class FilesConfig(StrictModel):
     )
 
 
+class RetrievalConfig(StrictModel):
+    exclude: list[str] = Field(default_factory=list)
+
+    @field_validator("exclude")
+    @classmethod
+    def validate_excludes(cls, values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for value in values:
+            pattern = normalize_retrieval_pattern(value)
+            if pattern not in normalized:
+                normalized.append(pattern)
+        return normalized
+
+
 class LlmConfig(StrictModel):
     enabled: bool = False
     base_url: str = "http://127.0.0.1:8080/v1"
@@ -198,6 +213,7 @@ class DevstillConfig(StrictModel):
     index: IndexConfig = Field(default_factory=IndexConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     files: FilesConfig = Field(default_factory=FilesConfig)
+    retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
     executor: ExecutorConfig = Field(default_factory=ExecutorConfig)
 
@@ -285,6 +301,7 @@ def default_config_dict() -> dict[str, Any]:
             "include": FilesConfig().include,
             "exclude": FilesConfig().exclude,
         },
+        "retrieval": {"exclude": []},
         "llm": {
             "enabled": False,
             "base_url": "http://127.0.0.1:8080/v1",
@@ -325,6 +342,7 @@ def write_config(config_path: Path, config: DevstillConfig) -> Path:
         raise FileNotFoundError(config_path)
     raw = json.loads(config_path.read_text(encoding="utf-8"))
     raw["embedding"] = config.embedding.model_dump(mode="json")
+    raw["retrieval"] = config.retrieval.model_dump(mode="json")
     raw["llm"] = config.llm.model_dump(mode="json")
     raw["executor"] = config.executor.model_dump(mode="json")
     validated = DevstillConfig.model_validate(raw)
@@ -333,6 +351,7 @@ def write_config(config_path: Path, config: DevstillConfig) -> Path:
             {
                 **raw,
                 "embedding": validated.embedding.model_dump(mode="json"),
+                "retrieval": validated.retrieval.model_dump(mode="json"),
                 "llm": validated.llm.model_dump(mode="json"),
                 "executor": validated.executor.model_dump(mode="json"),
             },
@@ -382,6 +401,19 @@ def update_embedding_config(
 ) -> DevstillConfig:
     raw = config.model_dump(mode="json")
     raw["embedding"] = {**raw["embedding"], **updates}
+    updated = DevstillConfig.model_validate(raw)
+    write_config(config_path, updated)
+    return updated
+
+
+def update_retrieval_config(
+    config_path: Path,
+    config: DevstillConfig,
+    *,
+    exclude: list[str],
+) -> DevstillConfig:
+    raw = config.model_dump(mode="json")
+    raw["retrieval"] = {"exclude": exclude}
     updated = DevstillConfig.model_validate(raw)
     write_config(config_path, updated)
     return updated

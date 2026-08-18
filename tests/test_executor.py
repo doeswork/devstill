@@ -191,6 +191,43 @@ def test_blank_execution_instruction_uses_original_plan_query(tmp_path: Path) ->
         prepared.close()
 
 
+def test_execution_passes_refinement_history_and_blocks_excluded_target(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("value = 1\n", encoding="utf-8")
+    artifacts = repo / ".devstill"
+    plan = PlanOutput(
+        query="change app",
+        repository=str(repo),
+        model="local-model",
+        items=[PlanItem(label=PlanLabel.MODIFY, target="app.py", reason="Update it.")],
+        refinements=["Keep compatibility."],
+    )
+    artifacts.mkdir()
+    (artifacts / ".plan.json").write_text(render_plan_json(plan), encoding="utf-8")
+    runner = FakePiRunner(
+        lambda workspace: (workspace / "app.py").write_text("value = 2\n")
+    )
+    prepared = RepositoryExecutor(repo, artifacts, configured(), runner=runner).prepare()
+    try:
+        assert 'CUMULATIVE_PLAN_REQUEST: "change app\\n\\nKeep compatibility."' in (
+            runner.prompts[0]
+        )
+    finally:
+        prepared.close()
+
+    excluded = DevstillConfig.model_validate(
+        {
+            **configured().model_dump(mode="json"),
+            "retrieval": {"exclude": ["app.py"]},
+        }
+    )
+    with pytest.raises(ExecutionError, match="permanently excluded"):
+        RepositoryExecutor(repo, artifacts, excluded, runner=runner).prepare()
+
+
 def test_search_entries_block_execution(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

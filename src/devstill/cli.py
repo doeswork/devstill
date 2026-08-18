@@ -28,6 +28,7 @@ from devstill.config import (
     resolve_repo_root,
     update_embedding_config,
     update_llm_config,
+    update_retrieval_config,
     write_default_config,
 )
 from devstill.context import (
@@ -66,6 +67,7 @@ from devstill.planning import (
 )
 from devstill.removal import build_removal_plan, execute_removal
 from devstill.repository import ensure_devstill_gitignore
+from devstill.retrieval_policy import normalize_retrieval_pattern
 from devstill.search import HybridSearch
 from devstill.tui import DevstillApp
 from devstill.updater import (
@@ -136,6 +138,21 @@ def parser() -> argparse.ArgumentParser:
     )
     update.add_argument("--check", action="store_true")
     update.add_argument("--yes", action="store_true")
+
+    retrieval_ignore = sub.add_parser(
+        "retrieval-ignore",
+        help="List or change paths excluded from all retrieval and planning.",
+    )
+    retrieval_actions = retrieval_ignore.add_subparsers(dest="retrieval_action")
+    retrieval_actions.add_parser("list", help="List retrieval exclusions.")
+    retrieval_add = retrieval_actions.add_parser(
+        "add", help="Permanently exclude a repository-relative path or glob."
+    )
+    retrieval_add.add_argument("pattern")
+    retrieval_remove = retrieval_actions.add_parser(
+        "remove", help="Restore a repository-relative path or glob to retrieval."
+    )
+    retrieval_remove.add_argument("pattern")
 
     files = sub.add_parser("files", help="List files eligible for indexing.")
     files_output = files.add_mutually_exclusive_group()
@@ -536,6 +553,35 @@ def update_command(check_only: bool, assume_yes: bool) -> int:
     install_release(release, metadata)
     console.print(f"[green]Updated Devstill to {release.version}.[/green]")
     return 0
+
+
+def retrieval_ignore_command(action: str | None, value: str | None) -> int:
+    config_path, config = _configured()
+    if action in {None, "list"}:
+        if not config.retrieval.exclude:
+            console.print("[dim]No permanent retrieval exclusions.[/dim]")
+            return 0
+        for pattern in config.retrieval.exclude:
+            console.print(pattern)
+        return 0
+    pattern = normalize_retrieval_pattern(value or "")
+    excluded = list(config.retrieval.exclude)
+    if action == "add":
+        if pattern in excluded:
+            console.print(f"[dim]Already excluded: {pattern}[/dim]")
+            return 0
+        excluded.append(pattern)
+        update_retrieval_config(config_path, config, exclude=excluded)
+        console.print(f"[green]Excluded from retrieval: {pattern}[/green]")
+        return 0
+    if action == "remove":
+        if pattern not in excluded:
+            raise ValueError(f"Retrieval exclusion is not configured: {pattern}")
+        excluded.remove(pattern)
+        update_retrieval_config(config_path, config, exclude=excluded)
+        console.print(f"[green]Restored to retrieval: {pattern}[/green]")
+        return 0
+    raise ValueError(f"Unknown retrieval-ignore action: {action}")
 
 
 def _configured() -> tuple[Path, DevstillConfig]:
@@ -992,6 +1038,7 @@ def plan_command(args: argparse.Namespace) -> int:
             repository=str(repo_root),
             repo_root=repo_root,
             results=results,
+            retrieval_exclude=config.retrieval.exclude,
         )
     finally:
         client.close()
@@ -1099,6 +1146,7 @@ def deep_plan_command(args: argparse.Namespace) -> int:
             include_tests=args.include_tests,
             on_initial=initial_ready,
             on_context=context_ready,
+            retrieval_exclude=config.retrieval.exclude,
         )
     finally:
         client.close()
@@ -1204,6 +1252,13 @@ def main() -> None:
             raise SystemExit(device_command(args.value))
         if args.command == "update":
             raise SystemExit(update_command(args.check, args.yes))
+        if args.command == "retrieval-ignore":
+            raise SystemExit(
+                retrieval_ignore_command(
+                    args.retrieval_action,
+                    getattr(args, "pattern", None),
+                )
+            )
         if args.command == "files":
             raise SystemExit(files_command(args.json, args.count, args.ignored))
         if args.command == "parse":
