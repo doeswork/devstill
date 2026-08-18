@@ -738,14 +738,19 @@ replaces an existing file with the next eligible hybrid result, and a confirmed 
 `Search` rows only offer `×`. Reasons use a white, high-contrast editor while focused
 and save on Enter or focus loss.
 
-The green **＋ Manually add file/context** form accepts an exact path, reason, and
-existing-file label. Missing safe paths become fixed pink `New` rows. Manually
-adding a temporarily suppressed existing path restores and pins it; permanently
-excluded paths must be unbanned first. Enter in the bottom composer submits a
-follow-up refinement and keeps its compact history on the same card. Manual edits
-stay pinned while untouched retrieval rows may change. Pi starts only through
-**Preview with Pi**, which is disabled for an unsent draft, empty plan, unresolved
-`Search`, or active review work. Every accepted mutation is saved immediately.
+An **Add another file** form stays visible throughout Plan review. Type any part of
+a repository path to get substring and fuzzy matches, use Up/Down and Enter to pick
+one, or press `Ctrl+P` to focus the picker from anywhere in the review. Exact paths
+still work for files that are not indexed. Choose an existing-file label and add an
+optional reason; a safe default is supplied when the reason is blank. The form
+clears and remains focused after each addition so several files can be added in a
+row. Missing safe paths become fixed pink `New` rows. Manually adding a temporarily
+suppressed existing path restores and pins it; permanently excluded paths must be
+unbanned first. Enter in the bottom composer submits a follow-up refinement and
+keeps its compact history on the same card. Manual edits stay pinned while untouched
+retrieval rows may change. Pi starts only through **Preview with Pi**, which is
+disabled for an unsent draft, empty plan, unresolved `Search`, or active review
+work. Every accepted mutation is saved immediately.
 
 The composer shows focused, right-aligned actions for **Not now**, **Preview with
 Pi**, **Use file**, **Cancel**, and **Apply patch** as appropriate. Normal commands

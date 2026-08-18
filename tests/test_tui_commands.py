@@ -249,6 +249,7 @@ def test_plan_workflow_reports_destination_and_preserves_context(
     assert result.execution_offer.source == "plan"
     assert result.execution_offer.query == "add activation"
     assert result.execution_offer.unresolved_searches == 0
+    assert result.execution_offer.repository_paths == ("core/views.py",)
     assert "🟢 Add — core/views.py" in result.markdown
     assert any(
         isinstance(message, str) and "Sending 1 source chunks" in message

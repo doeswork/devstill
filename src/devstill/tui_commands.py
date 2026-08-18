@@ -54,6 +54,7 @@ from devstill.planning import (
     write_deep_plan_artifacts,
     write_plan_artifacts,
 )
+from devstill.retrieval_policy import matches_retrieval_exclude
 from devstill.search import HybridSearch
 from devstill.storage import ChromaStore
 
@@ -159,6 +160,7 @@ class TuiExecutionOffer:
     plan: PlanOutput | None = None
     suppressed_paths: frozenset[str] = frozenset()
     pinned_targets: frozenset[str] = frozenset()
+    repository_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,6 +339,7 @@ def help_markdown() -> str:
             "Select text and press `Ctrl+C` or right-click to copy it. With no selection, `Ctrl+C` exits.",
             "Use your terminal's `Ctrl+Shift+V` or right-click Paste for external clipboard text.",
             "The TUI composer sends with `Enter` and inserts a line break with `Shift+Enter`.",
+            "During Plan review, press `Ctrl+P` to focus the always-visible repository file picker.",
         ]
     )
     return "\n".join(lines)
@@ -860,6 +863,32 @@ class TuiWorkflow:
             chroma_store=chroma,
         )
 
+    def _plan_picker_paths(
+        self,
+        engine: HybridSearch,
+        results: list[SearchResult],
+    ) -> tuple[str, ...]:
+        """Collect current indexed paths without rescanning or re-embedding files."""
+        paths = {result.chunk.path for result in results}
+        list_quality = getattr(getattr(engine, "store", None), "list_quality", None)
+        if callable(list_quality):
+            paths.update(
+                item.path
+                for item in list_quality()
+                if item.disposition == "indexed"
+            )
+        return tuple(
+            sorted(
+                path
+                for path in paths
+                if (self.repo_root / path).is_file()
+                and not matches_retrieval_exclude(
+                    path,
+                    self.config.retrieval.exclude,
+                )
+            )
+        )
+
     def execute(
         self,
         command: TuiCommand,
@@ -904,6 +933,7 @@ class TuiWorkflow:
                     command.query,
                     limit=planning_retrieval_limit(PLAN_MAX_CHUNKS),
                 )
+                repository_paths = self._plan_picker_paths(engine, candidates)
             finally:
                 engine.close()
             results = select_adaptive_context_results(
@@ -939,6 +969,7 @@ class TuiWorkflow:
                     plan.query,
                     sum(item.label is PlanLabel.SEARCH for item in plan.items),
                     plan,
+                    repository_paths=repository_paths,
                 ),
             )
 
@@ -956,6 +987,7 @@ class TuiWorkflow:
                     command.query,
                     limit=planning_retrieval_limit(PLAN_MAX_CHUNKS),
                 )
+                repository_paths = self._plan_picker_paths(engine, candidates)
                 initial_results = select_adaptive_context_results(
                     candidates,
                     min_limit=PLAN_MIN_CHUNKS,
@@ -1065,6 +1097,7 @@ class TuiWorkflow:
                         item.label is PlanLabel.SEARCH for item in run.final_plan.items
                     ),
                     run.final_plan,
+                    repository_paths=repository_paths,
                 ),
             )
 

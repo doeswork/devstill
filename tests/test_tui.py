@@ -21,6 +21,7 @@ from devstill.executor import validate_reviewed_plan
 from devstill.models import IndexFileProgress, IndexProgress
 from devstill.planning import PlanItem, PlanLabel, PlanOutput
 from devstill.tui import (
+    DEFAULT_MANUAL_PLAN_REASON,
     ComposerMode,
     DevstillApp,
     ExecutionSessionEntry,
@@ -29,6 +30,7 @@ from devstill.tui import (
     PlanSessionEntry,
     PromptTextArea,
     SessionEntry,
+    matching_repository_paths,
 )
 from devstill.tui_agent import AgentSetupScreen
 from devstill.tui_commands import (
@@ -78,6 +80,23 @@ async def wait_until_idle(app: DevstillApp, pilot) -> None:
             return
         await pilot.pause(0.02)
     raise AssertionError("TUI command did not finish")
+
+
+def test_plan_file_picker_prioritizes_path_substrings_and_fuzzy_matches() -> None:
+    paths = (
+        "frontend/src/pages/HomePage/HeaderPanel/index.tsx",
+        "frontend/src/pages/HomePage/HeaderPanel/StreakBox.tsx",
+        "frontend/src/hooks/useFocusedFieldScroll.ts",
+    )
+
+    assert matching_repository_paths("streak", paths)[0].endswith("StreakBox.tsx")
+    assert matching_repository_paths("HomePage\\HeaderPanel", paths)[:2] == [
+        "frontend/src/pages/HomePage/HeaderPanel/index.tsx",
+        "frontend/src/pages/HomePage/HeaderPanel/StreakBox.tsx",
+    ]
+    assert matching_repository_paths("hedrpanel index", paths)[0].endswith(
+        "HeaderPanel/index.tsx"
+    )
 
 
 def test_tui_layout_autofocus_and_responsive_sidebar(tmp_path: Path) -> None:
@@ -884,6 +903,9 @@ def test_plan_review_edits_reason_and_adds_then_discards_new_file(
 ) -> None:
     target = tmp_path / "app.py"
     target.write_text("value = 1\n", encoding="utf-8")
+    header_panel = tmp_path / "frontend/src/pages/HomePage/HeaderPanel/index.tsx"
+    header_panel.parent.mkdir(parents=True)
+    header_panel.write_text("export const HeaderPanel = () => null;\n", encoding="utf-8")
     plan = PlanOutput(
         query="update app",
         repository=str(tmp_path),
@@ -907,7 +929,16 @@ def test_plan_review_edits_reason_and_adds_then_discards_new_file(
             return TuiResult(
                 "Plan",
                 "# Plan",
-                execution_offer=TuiExecutionOffer("plan", plan.query, 0, plan),
+                execution_offer=TuiExecutionOffer(
+                    "plan",
+                    plan.query,
+                    0,
+                    plan,
+                    repository_paths=(
+                        "app.py",
+                        "frontend/src/pages/HomePage/HeaderPanel/index.tsx",
+                    ),
+                ),
             )
 
         def save_manual_plan(self, source, reviewed, *, allow_unresolved=False):
@@ -975,10 +1006,28 @@ def test_plan_review_edits_reason_and_adds_then_discards_new_file(
             )
 
             form = entry.query_one(PlanNewFileForm)
-            form.open()
             assert form.display
             path_input = entry.query_one(".plan-new-file-path", Input)
             new_reason = entry.query_one(".plan-new-file-reason", Input)
+            app.query_one("#command-input", PromptTextArea).focus()
+            await pilot.press("ctrl+p")
+            await pilot.pause()
+            assert path_input.has_focus
+            path_input.value = "hedrpanel index"
+            await pilot.pause()
+            assert form.matches[0] == (
+                "frontend/src/pages/HomePage/HeaderPanel/index.tsx"
+            )
+            assert entry.query_one(".plan-file-matches", OptionList).display
+            path_input.focus()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert path_input.value == (
+                "frontend/src/pages/HomePage/HeaderPanel/index.tsx"
+            )
+            assert new_reason.has_focus
+
+            form.reset()
             path_input.value = "app.py"
             new_reason.value = "Create a separate helper."
             await app.on_plan_new_file_form_submitted(
@@ -987,8 +1036,8 @@ def test_plan_review_edits_reason_and_adds_then_discards_new_file(
             assert "Duplicate plan target" in str(
                 entry.query_one(".plan-impact-status", Static).content
             )
-
-            path_input.value = "helpers/new_helper.py"
+            path_input.value = "helpers\\new_helper.py"
+            new_reason.value = ""
             await app.on_plan_new_file_form_submitted(
                 PlanNewFileForm.Submitted(form, path_input.value, new_reason.value)
             )
@@ -1000,9 +1049,14 @@ def test_plan_review_edits_reason_and_adds_then_discards_new_file(
             visible_rows = [row for row in entry.query(PlanImpactRow) if row.display]
             assert len(visible_rows) == 2
             assert visible_rows[1].item.target == "helpers/new_helper.py"
+            assert visible_rows[1].item.reason == DEFAULT_MANUAL_PLAN_REASON
             assert "🩷 New" in str(
                 visible_rows[1].query_one(".plan-impact-fixed-label", Static).content
             )
+            assert form.display
+            assert path_input.value == ""
+            await pilot.pause()
+            assert path_input.has_focus
 
             await app.on_plan_impact_row_discard_requested(
                 PlanImpactRow.DiscardRequested(visible_rows[1])
@@ -1018,7 +1072,7 @@ def test_plan_review_edits_reason_and_adds_then_discards_new_file(
             await pilot.pause()
             assert select.disabled
             assert reason.disabled
-            assert not entry.query_one(".plan-add-new", Button).display
+            assert not form.display
 
     asyncio.run(scenario())
 

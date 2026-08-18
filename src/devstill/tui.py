@@ -5,6 +5,7 @@ from enum import Enum
 from pathlib import Path
 from typing import ClassVar
 
+from rapidfuzz import fuzz, process
 from rich.markup import escape
 from textual import events
 from textual.app import App, ComposeResult
@@ -180,6 +181,50 @@ SEARCH_LABEL_OPTIONS = (
     ("⚪ Search", PlanLabel.SEARCH.value),
     *PLAN_LABEL_OPTIONS,
 )
+
+PLAN_FILE_MATCH_LIMIT = 8
+DEFAULT_MANUAL_PLAN_REASON = "Included manually during plan review."
+
+
+def matching_repository_paths(
+    query: str,
+    paths: tuple[str, ...] | list[str],
+    *,
+    limit: int = PLAN_FILE_MATCH_LIMIT,
+) -> list[str]:
+    """Return path-first substring and fuzzy matches for the Plan file picker."""
+    normalized = query.strip().replace("\\", "/").casefold()
+    if not normalized or limit < 1:
+        return []
+
+    choices = sorted(set(paths))
+    substring_matches = [
+        path for path in choices if normalized in path.casefold()
+    ]
+    substring_matches.sort(
+        key=lambda path: (
+            not Path(path).name.casefold().startswith(normalized),
+            not path.casefold().startswith(normalized),
+            path.casefold().find(normalized),
+            len(path),
+            path.casefold(),
+        )
+    )
+    matches = substring_matches[:limit]
+    if len(matches) >= limit:
+        return matches
+
+    matched = set(matches)
+    fuzzy_matches = process.extract(
+        normalized,
+        [path for path in choices if path not in matched],
+        scorer=fuzz.WRatio,
+        processor=lambda value: value.replace("\\", "/").casefold(),
+        score_cutoff=35,
+        limit=limit - len(matches),
+    )
+    matches.extend(path for path, _score, _index in fuzzy_matches)
+    return matches
 
 
 class PlanImpactRow(Vertical):
@@ -389,16 +434,31 @@ class PlanNewFileForm(Vertical):
             self.reason = reason
             self.label = label
 
-    class Cancelled(Message):
-        pass
+    def __init__(
+        self,
+        repository_paths: tuple[str, ...] = (),
+        *,
+        plan_targets: tuple[str, ...] = (),
+        classes: str | None = None,
+    ) -> None:
+        super().__init__(classes=classes)
+        self.repository_paths = repository_paths
+        self.plan_targets = set(plan_targets)
+        self.matches: list[str] = []
+        self._selected_value: str | None = None
 
     def compose(self) -> ComposeResult:
+        yield Static(
+            "[b]Add another file[/b]  [dim]Type a partial path or press Ctrl+P[/dim]",
+            classes="plan-new-file-heading",
+        )
         yield Input(
-            placeholder="Exact repository-relative existing or new path",
+            placeholder="Search repository files (for example: HeaderPanel)",
             max_length=240,
             classes="plan-new-file-path",
             compact=True,
         )
+        yield OptionList(classes="plan-file-matches", compact=True)
         yield Select(
             PLAN_LABEL_OPTIONS,
             allow_blank=False,
@@ -407,20 +467,14 @@ class PlanNewFileForm(Vertical):
             compact=True,
         )
         yield Input(
-            placeholder="Why this file or context is needed",
+            placeholder="Why this file is needed (optional)",
             max_length=240,
             classes="plan-new-file-reason",
             compact=True,
         )
         with Horizontal(classes="plan-new-file-actions"):
             yield Button(
-                "Cancel",
-                classes="plan-new-file-cancel",
-                compact=True,
-                flat=True,
-            )
-            yield Button(
-                "Add",
+                "Add to plan",
                 variant="success",
                 classes="plan-new-file-save",
                 compact=True,
@@ -428,16 +482,28 @@ class PlanNewFileForm(Vertical):
 
     def on_mount(self) -> None:
         self.display = False
+        self.query_one(".plan-file-matches", OptionList).display = False
 
-    def open(self) -> None:
+    def open(self, *, focus: bool = True) -> None:
         self.display = True
-        self.query_one(".plan-new-file-path", Input).focus()
+        if focus:
+            self.query_one(".plan-new-file-path", Input).focus()
 
     def close(self) -> None:
+        self.reset()
+        self.display = False
+
+    def reset(self, *, focus: bool = False) -> None:
+        self._selected_value = None
         self.query_one(".plan-new-file-path", Input).value = ""
         self.query_one(".plan-new-file-reason", Input).value = ""
         self.query_one(".plan-manual-label", Select).value = PlanLabel.READ.value
-        self.display = False
+        self._replace_matches([])
+        if focus and not self.query_one(".plan-new-file-path", Input).disabled:
+            self.query_one(".plan-new-file-path", Input).focus()
+
+    def focus_picker(self) -> None:
+        self.open()
 
     def submit(self) -> None:
         target = self.query_one(".plan-new-file-path", Input).value.strip()
@@ -446,24 +512,102 @@ class PlanNewFileForm(Vertical):
         self.post_message(self.Submitted(self, target, reason, label))
 
     def set_editable(self, editable: bool) -> None:
-        for control in self.query("Input, Select, Button"):
+        for control in self.query("Input, Select, Button, OptionList"):
             control.disabled = not editable
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if not event.input.has_class("plan-new-file-path"):
+            return
+        if event.value == self._selected_value:
+            self._selected_value = None
+            self._replace_matches([])
+            return
+        self._replace_matches(
+            matching_repository_paths(
+                event.value,
+                [
+                    path
+                    for path in self.repository_paths
+                    if path not in self.plan_targets
+                ],
+            )
+        )
+
+    def set_plan_targets(self, targets: list[str]) -> None:
+        self.plan_targets = set(targets)
+        path_input = self.query_one_optional(".plan-new-file-path", Input)
+        if path_input is not None:
+            self._replace_matches(
+                matching_repository_paths(
+                    path_input.value,
+                    [
+                        path
+                        for path in self.repository_paths
+                        if path not in self.plan_targets
+                    ],
+                )
+            )
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
         if event.input.has_class("plan-new-file-path"):
-            self.query_one(".plan-new-file-reason", Input).focus()
+            matches = self.query_one(".plan-file-matches", OptionList)
+            highlighted = matches.highlighted
+            if matches.display and highlighted is not None:
+                self._select_match(highlighted)
+            else:
+                self.query_one(".plan-new-file-reason", Input).focus()
         else:
             self.submit()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.has_class("plan-new-file-cancel"):
-            event.stop()
-            self.close()
-            self.post_message(self.Cancelled())
-        elif event.button.has_class("plan-new-file-save"):
+        if event.button.has_class("plan-new-file-save"):
             event.stop()
             self.submit()
+
+    def on_option_list_option_selected(
+        self,
+        event: OptionList.OptionSelected,
+    ) -> None:
+        if not event.option_list.has_class("plan-file-matches"):
+            return
+        event.stop()
+        highlighted = event.option_list.highlighted
+        if highlighted is not None:
+            self._select_match(highlighted)
+
+    def on_key(self, event: events.Key) -> None:
+        path_input = self.query_one(".plan-new-file-path", Input)
+        matches = self.query_one(".plan-file-matches", OptionList)
+        if path_input.has_focus and matches.display and event.key in {"up", "down"}:
+            matches.focus()
+            if event.key == "up":
+                matches.action_cursor_up()
+            else:
+                matches.action_cursor_down()
+            event.stop().prevent_default()
+        elif matches.has_focus and event.key == "escape":
+            path_input.focus()
+            event.stop().prevent_default()
+
+    def _replace_matches(self, matches: list[str]) -> None:
+        option_list = self.query_one(".plan-file-matches", OptionList)
+        self.matches = matches
+        option_list.clear_options()
+        option_list.add_options(
+            Option(escape(path), id=path) for path in self.matches
+        )
+        option_list.display = bool(self.matches)
+        option_list.highlighted = 0 if self.matches else None
+
+    def _select_match(self, index: int) -> None:
+        if index < 0 or index >= len(self.matches):
+            return
+        path_input = self.query_one(".plan-new-file-path", Input)
+        self._selected_value = self.matches[index]
+        path_input.value = self._selected_value
+        self._replace_matches([])
+        self.query_one(".plan-new-file-reason", Input).focus()
 
 
 class PlanSessionEntry(Vertical):
@@ -472,11 +616,13 @@ class PlanSessionEntry(Vertical):
         command: str,
         plan: PlanOutput,
         source: str,
+        repository_paths: tuple[str, ...] = (),
     ) -> None:
         super().__init__(classes="session-entry plan-session-entry")
         self.command = command
         self.plan = plan
         self.source = source
+        self.repository_paths = repository_paths
 
     @property
     def title(self) -> str:
@@ -505,14 +651,11 @@ class PlanSessionEntry(Vertical):
             )
             for index, item in enumerate(self.plan.items):
                 yield PlanImpactRow(index, item)
-            yield Button(
-                "＋ Manually add file/context",
-                classes="plan-add-new",
-                compact=True,
-                flat=True,
-                disabled=True,
+            yield PlanNewFileForm(
+                self.repository_paths,
+                plan_targets=tuple(item.target for item in self.plan.items),
+                classes="plan-new-file-form",
             )
-            yield PlanNewFileForm(classes="plan-new-file-form")
             yield Static(
                 "[red]×[/red] remove  [blue]↻[/blue] replace  "
                 "[red]![/red] permanently exclude",
@@ -525,6 +668,9 @@ class PlanSessionEntry(Vertical):
 
     def update_plan(self, plan: PlanOutput) -> None:
         self.plan = plan
+        self.query_one(PlanNewFileForm).set_plan_targets(
+            [item.target for item in plan.items]
+        )
         self.query_one(".plan-refinement-history", Static).update(
             "  ".join(f"↳ {escape(value)}" for value in plan.refinements)
         )
@@ -535,12 +681,15 @@ class PlanSessionEntry(Vertical):
         for row in list(self.query(PlanImpactRow)):
             await row.remove()
         body = self.query_one(".plan-impact-body", Vertical)
-        anchor = self.query_one(".plan-add-new", Button)
+        anchor = self.query_one(PlanNewFileForm)
         for index, item in enumerate(plan.items):
             row = PlanImpactRow(index, item)
             await body.mount(row, before=anchor)
             row.set_editable(True)
         self.plan = plan
+        self.query_one(PlanNewFileForm).set_plan_targets(
+            [item.target for item in plan.items]
+        )
         self.query_one(".plan-refinement-history", Static).update(
             "  ".join(f"↳ {escape(value)}" for value in plan.refinements)
         )
@@ -549,9 +698,12 @@ class PlanSessionEntry(Vertical):
         row = PlanImpactRow(len(plan.items) - 1, item)
         await self.query_one(".plan-impact-body", Vertical).mount(
             row,
-            before=self.query_one(".plan-add-new", Button),
+            before=self.query_one(PlanNewFileForm),
         )
         self.plan = plan
+        self.query_one(PlanNewFileForm).set_plan_targets(
+            [item.target for item in plan.items]
+        )
         row.set_editable(True)
 
     def remove_plan_item(self, index: int, plan: PlanOutput) -> None:
@@ -561,6 +713,9 @@ class PlanSessionEntry(Vertical):
         removed.display = False
         remaining = [row for position, row in enumerate(rows) if position != index]
         self.plan = plan
+        self.query_one(PlanNewFileForm).set_plan_targets(
+            [item.target for item in plan.items]
+        )
         for new_index, (row, item) in enumerate(
             zip(remaining, plan.items, strict=True)
         ):
@@ -571,31 +726,17 @@ class PlanSessionEntry(Vertical):
         for row in self._active_rows():
             row.set_editable(editable)
         form = self.query_one(PlanNewFileForm)
-        form_was_open = bool(form.display)
         form.set_editable(editable)
-        if not editable and close_form:
+        if editable:
+            form.open(focus=False)
+        elif close_form:
             form.close()
-            form_was_open = False
-        add_new = self.query_one(".plan-add-new", Button)
-        add_new.disabled = not editable
-        add_new.display = editable and not form_was_open
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if not event.button.has_class("plan-add-new"):
-            return
-        event.stop()
-        event.button.display = False
-        self.query_one(PlanNewFileForm).open()
-
-    def on_plan_new_file_form_cancelled(
-        self,
-        _event: PlanNewFileForm.Cancelled,
-    ) -> None:
-        self.query_one(".plan-add-new", Button).display = True
 
     def close_new_file_form(self) -> None:
-        self.query_one(PlanNewFileForm).close()
-        self.query_one(".plan-add-new", Button).display = True
+        self.query_one(PlanNewFileForm).reset(focus=True)
+
+    def focus_file_picker(self) -> None:
+        self.query_one(PlanNewFileForm).focus_picker()
 
     def set_status(self, message: str, *, error: bool = False) -> None:
         status = self.query_one(".plan-impact-status", Static)
@@ -776,14 +917,6 @@ class DevstillApp(App[None]):
         padding: 0 1;
     }
 
-    .plan-add-new {
-        display: none;
-        width: auto;
-        min-width: 16;
-        margin: 0 1;
-        color: $secondary;
-    }
-
     .plan-new-file-form {
         height: auto;
         margin: 0 1;
@@ -791,9 +924,22 @@ class DevstillApp(App[None]):
         border-left: solid $secondary 60%;
     }
 
+    .plan-new-file-heading {
+        height: 1;
+        color: $secondary;
+    }
+
     .plan-new-file-path, .plan-new-file-reason, .plan-manual-label {
         height: 1;
         margin-bottom: 1;
+    }
+
+    .plan-file-matches {
+        display: none;
+        height: auto;
+        max-height: 8;
+        margin-bottom: 1;
+        border: round $secondary 60%;
     }
 
     .plan-new-file-actions {
@@ -934,6 +1080,7 @@ class DevstillApp(App[None]):
         Binding("ctrl+q", "quit", "Quit"),
         Binding("ctrl+l", "clear_feed", "Clear"),
         Binding("ctrl+b", "toggle_sidebar", "Sidebar"),
+        Binding("ctrl+p", "focus_plan_file_picker", show=False, priority=True),
         Binding("ctrl+r", "refresh", "Refresh"),
     ]
 
@@ -1270,7 +1417,7 @@ class DevstillApp(App[None]):
         self._busy = True
         self._review_draft_to_clear = clear_draft
         if isinstance(self._handoff_entry, PlanSessionEntry):
-            self._handoff_entry.set_editable(False)
+            self._handoff_entry.set_editable(False, close_form=False)
             self._handoff_entry.set_status(activity)
         prompt = self.query_one("#command-input", PromptTextArea)
         prompt.disabled = True
@@ -1672,11 +1819,12 @@ class DevstillApp(App[None]):
         ):
             return
         target = event.target.strip().replace("\\", "/")
+        reason = event.reason.strip() or DEFAULT_MANUAL_PLAN_REASON
         repo_root = getattr(self.workflow, "repo_root", self.config_path.parent)
         candidate = repo_root.joinpath(*target.split("/"))
         label = event.label if candidate.is_file() else PlanLabel.NEW
         try:
-            item = PlanItem(label=label, target=target, reason=event.reason)
+            item = PlanItem(label=label, target=target, reason=reason)
         except ValueError as exc:
             self._handoff_entry.set_status(str(exc), error=True)
             return
@@ -1690,8 +1838,8 @@ class DevstillApp(App[None]):
         ):
             return
         await self._handoff_entry.append_plan_item(item, reviewed)
-        self._handoff_entry.close_new_file_form()
         self._refresh_handoff()
+        self._handoff_entry.close_new_file_form()
         self._scroll_feed_after_layout()
 
     async def on_plan_impact_row_remove_requested(
@@ -2298,7 +2446,12 @@ class DevstillApp(App[None]):
         entries = list(feed.query(".session-entry"))
         while len(entries) >= MAX_SESSION_ENTRIES:
             await entries.pop(0).remove()
-        entry = PlanSessionEntry(command, offer.plan, offer.source)
+        entry = PlanSessionEntry(
+            command,
+            offer.plan,
+            offer.source,
+            offer.repository_paths,
+        )
         await feed.mount(entry)
         self._scroll_feed_after_layout()
         return entry
@@ -2407,6 +2560,18 @@ class DevstillApp(App[None]):
     async def action_clear_feed(self) -> None:
         await self.clear_feed()
         self.query_one("#command-input", PromptTextArea).focus()
+
+    def action_focus_plan_file_picker(self) -> None:
+        if (
+            self._composer_mode is ComposerMode.PI_HANDOFF
+            and isinstance(self._handoff_entry, PlanSessionEntry)
+            and not self._busy
+        ):
+            self._handoff_entry.focus_file_picker()
+            return
+        self.query_one("#activity", Static).update(
+            "Ctrl+P file search is available while reviewing a Plan"
+        )
 
     def action_toggle_sidebar(self) -> None:
         sidebar = self.query_one("#sidebar", Vertical)
