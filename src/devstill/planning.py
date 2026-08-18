@@ -14,8 +14,8 @@ from devstill.context import context_record
 from devstill.models import SearchResult
 from devstill.retrieval_policy import matches_retrieval_exclude
 
-PLAN_PROMPT_VERSION = "file-impact-plan:3"
-DEEP_PLAN_PROMPT_VERSION = "deep-file-impact-plan:3"
+PLAN_PROMPT_VERSION = "file-impact-plan:4"
+DEEP_PLAN_PROMPT_VERSION = "deep-file-impact-plan:4"
 REPLACEMENT_PROMPT_VERSION = "replacement-file-impact:1"
 
 
@@ -152,11 +152,13 @@ Use exactly these labels:
 - Modify: existing behavior or declarations in a retrieved file must change.
 - Delete: the entire retrieved file must be deleted.
 - Search: more investigation is required; target is a path, glob, symbol, or concise concept.
-- New: confidently create the exact repository-relative target, which does not exist.
+- New: confidently create one exact repository-relative file, which does not exist.
 
 Every EXPECTED_PATH must appear exactly once using Read, Add, Remove, Modify, or Delete.
 Do not apply those five labels to any other path.
 Additional items may only use Search or New.
+New never represents a directory or folder. Name each new file explicitly; its parent
+directories are created automatically. Do not invent a directory target or authorize a subtree.
 Use one short, single-line sentence for each reason. Return JSON only.
 """
 
@@ -246,6 +248,20 @@ def _safe_new_file(repo_root: Path, target: str) -> None:
             raise ValueError(f"New target has a non-directory parent: {target}")
 
 
+_DIRECTORY_INTENT = re.compile(
+    r"\b(?:create|add|make|introduce)\b.{0,80}\b(?:directory|folder)\b",
+    re.IGNORECASE,
+)
+
+
+def validate_new_file_intent(item: PlanItem) -> None:
+    if item.label is PlanLabel.NEW and _DIRECTORY_INTENT.search(item.reason):
+        raise ValueError(
+            f"New target must name an exact file, not a directory: {item.target}. "
+            "Name each child file explicitly; parent directories are automatic."
+        )
+
+
 def _safe_search_target(target: str) -> None:
     if target.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", target):
         raise ValueError(f"Search target must not be absolute: {target}")
@@ -282,6 +298,7 @@ def validate_plan_items(
             labeled_existing.add(item.target)
         elif item.label is PlanLabel.NEW:
             _safe_new_file(repo_root, item.target)
+            validate_new_file_intent(item)
         else:
             _safe_search_target(item.target)
     missing = [path for path in expected if path not in labeled_existing]

@@ -43,6 +43,7 @@ from devstill.executor import (
 from devstill.git_files import discover_repository_inventory
 from devstill.indexer import RepositoryIndexer
 from devstill.models import FileQuality, IndexProgress, IndexSummary, SearchResult
+from devstill.pi_runtime import resolve_pi_limits
 from devstill.planning import (
     PlanLabel,
     PlanOutput,
@@ -1174,6 +1175,7 @@ class TuiWorkflow:
         if command.kind is TuiCommandKind.AGENT:
             llm = self.config.llm
             key_state = api_key_source(llm)
+            limits = resolve_pi_limits(llm, self.config.executor)
             markdown = "\n".join(
                 (
                     "# Agent status",
@@ -1187,15 +1189,24 @@ class TuiWorkflow:
                         "- Planning max output tokens: "
                         f"**{llm.planning_max_output_tokens}**"
                     ),
+                    f"- Pi requested context: **{self.config.executor.context_window}**",
                     (
-                        "- Pi max output tokens: "
-                        f"**{self.config.executor.max_output_tokens}**"
+                        f"- Pi resolved context: **{limits.context_window}** "
+                        f"({limits.source})"
                     ),
+                    f"- Pi output cap: **{limits.max_output_tokens}**",
+                    f"- Pi reasoning: **{self.config.executor.reasoning}**",
+                    "- Pi tools: **strict Plan only**",
                     f"- Planning reasoning: **{llm.planning_reasoning}**",
                     f"- API key environment: `{llm.api_key_env}` (**{key_state}**)",
                     f"- Response log: `{self.artifact_root / 'logs' / 'agent.jsonl'}`",
                     "",
                     "The API key value is never displayed.",
+                    *(
+                        (f"\n> Warning: {limits.warning}",)
+                        if limits.warning
+                        else ()
+                    ),
                 )
             )
             return TuiResult("Agent", markdown)

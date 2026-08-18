@@ -29,7 +29,11 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 from textual.worker import Worker, WorkerState
 
-from devstill.config import DevstillConfig, update_llm_config
+from devstill.config import (
+    DevstillConfig,
+    update_executor_config,
+    update_llm_config,
+)
 from devstill.credentials import (
     api_key_source,
     credential_id,
@@ -452,20 +456,21 @@ class PlanNewFileForm(Vertical):
             "[b]Add another file[/b]  [dim]Type a partial path or press Ctrl+P[/dim]",
             classes="plan-new-file-heading",
         )
-        yield Input(
-            placeholder="Search repository files (for example: HeaderPanel)",
-            max_length=240,
-            classes="plan-new-file-path",
-            compact=True,
-        )
+        with Horizontal(classes="plan-new-file-target-row"):
+            yield Select(
+                PLAN_LABEL_OPTIONS,
+                allow_blank=False,
+                value=PlanLabel.READ.value,
+                classes="plan-manual-label",
+                compact=True,
+            )
+            yield Input(
+                placeholder="Search repository files (for example: HeaderPanel)",
+                max_length=240,
+                classes="plan-new-file-path",
+                compact=True,
+            )
         yield OptionList(classes="plan-file-matches", compact=True)
-        yield Select(
-            PLAN_LABEL_OPTIONS,
-            allow_blank=False,
-            value=PlanLabel.READ.value,
-            classes="plan-manual-label",
-            compact=True,
-        )
         yield Input(
             placeholder="Why this file is needed (optional)",
             max_length=240,
@@ -929,16 +934,33 @@ class DevstillApp(App[None]):
         color: $secondary;
     }
 
-    .plan-new-file-path, .plan-new-file-reason, .plan-manual-label {
+    .plan-new-file-target-row {
+        height: 1;
+        margin-bottom: 1;
+        align-vertical: middle;
+    }
+
+    .plan-manual-label {
+        width: 18;
+        height: 1;
+    }
+
+    .plan-new-file-path {
+        width: 1fr;
+        height: 1;
+    }
+
+    .plan-new-file-reason {
         height: 1;
         margin-bottom: 1;
     }
 
     .plan-file-matches {
         display: none;
+        width: 1fr;
         height: auto;
         max-height: 8;
-        margin-bottom: 1;
+        margin: 0 0 1 18;
         border: round $secondary 60%;
     }
 
@@ -1717,6 +1739,7 @@ class DevstillApp(App[None]):
             self.push_screen(
                 AgentSetupScreen(
                     self.config.llm,
+                    self.config.executor,
                     api_key_source(self.config.llm),
                 ),
                 self._agent_setup_complete,
@@ -2054,6 +2077,17 @@ class DevstillApp(App[None]):
             return
 
         self.config = updated
+        if result.executor is not None:
+            try:
+                self.config = update_executor_config(
+                    self.config_path,
+                    self.config,
+                    **result.executor.model_dump(mode="json"),
+                )
+            except (OSError, ValueError) as exc:
+                await self._append_entry("/agent configure", str(exc), error=True)
+                prompt.focus()
+                return
         if not self._workflow_injected:
             self.workflow.update_config(self.config)
         try:

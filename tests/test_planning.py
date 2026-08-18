@@ -287,6 +287,45 @@ def test_plan_rejects_model_synthesized_retrieval_exclusion(tmp_path: Path) -> N
         )
 
 
+def test_plan_repairs_directory_new_target_to_exact_file(tmp_path: Path) -> None:
+    make_files(tmp_path, "static/zombie.js")
+    invalid = json.dumps(
+        {
+            "items": [
+                plan_item("Modify", "static/zombie.js"),
+                plan_item(
+                    "New",
+                    "static/zombie_textures",
+                    "Create a directory for zombie textures.",
+                ),
+            ]
+        }
+    )
+    repaired = json.dumps(
+        {
+            "items": [
+                plan_item("Modify", "static/zombie.js"),
+                plan_item(
+                    "New",
+                    "static/zombie_textures/skin.svg",
+                    "Create the zombie skin texture file.",
+                ),
+            ]
+        }
+    )
+    client = FakeClient(invalid, repaired)
+    plan = generate_plan(
+        client,
+        query="make zombies cooler",
+        repository=str(tmp_path),
+        repo_root=tmp_path,
+        results=[make_result(path="static/zombie.js")],
+    )
+    assert len(client.calls) == 2
+    assert plan.items[-1].target == "static/zombie_textures/skin.svg"
+    assert "exact file, not a directory" in client.calls[1][0][-1]["content"]
+
+
 @pytest.mark.parametrize(
     ("items", "message"),
     [
@@ -307,6 +346,17 @@ def test_plan_rejects_model_synthesized_retrieval_exclusion(tmp_path: Path) -> N
         (
             [plan_item("Read", "core/views.py"), plan_item("New", "new/*.py")],
             "exact path",
+        ),
+        (
+            [
+                plan_item("Read", "core/views.py"),
+                plan_item(
+                    "New",
+                    "static/zombie_textures",
+                    "Create a directory for new zombie textures.",
+                ),
+            ],
+            "exact file, not a directory",
         ),
         (
             [plan_item("Read", "core/views.py"), plan_item("Search", "../secret")],

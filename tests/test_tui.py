@@ -1009,6 +1009,12 @@ def test_plan_review_edits_reason_and_adds_then_discards_new_file(
             assert form.display
             path_input = entry.query_one(".plan-new-file-path", Input)
             new_reason = entry.query_one(".plan-new-file-reason", Input)
+            target_row = form.query_one(".plan-new-file-target-row")
+            assert isinstance(target_row.children[0], Select)
+            assert target_row.children[0].has_class("plan-manual-label")
+            assert target_row.children[1] is path_input
+            assert target_row.children[0].region.y == path_input.region.y
+            assert target_row.children[0].region.x < path_input.region.x
             app.query_one("#command-input", PromptTextArea).focus()
             await pilot.press("ctrl+p")
             await pilot.pause()
@@ -1540,6 +1546,9 @@ def test_agent_setup_modal_saves_remembered_token_and_tests(
             app.screen.query_one("#agent-api-key", Input).value = "remember-me"
             app.screen.query_one("#agent-planning-max-tokens", Input).value = "7000"
             app.screen.query_one("#agent-planning-reasoning", Select).value = "auto"
+            app.screen.query_one("#agent-execution-context", Input).value = "12288"
+            app.screen.query_one("#agent-execution-max-tokens", Input).value = "5000"
+            app.screen.query_one("#agent-execution-reasoning", Select).value = "off"
             await pilot.click("#agent-save-test")
             await pilot.pause()
             await wait_until_idle(app, pilot)
@@ -1551,6 +1560,9 @@ def test_agent_setup_modal_saves_remembered_token_and_tests(
             assert saved.llm.max_output_tokens == 2048
             assert saved.llm.planning_max_output_tokens == 7000
             assert saved.llm.planning_reasoning == "auto"
+            assert saved.executor.context_window == 12288
+            assert saved.executor.max_output_tokens == 5000
+            assert saved.executor.reasoning == "off"
             assert "remember-me" not in (tmp_path / "devstill.json").read_text(
                 encoding="utf-8"
             )

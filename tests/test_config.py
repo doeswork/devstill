@@ -4,7 +4,12 @@ import json
 
 import pytest
 
-from devstill.config import find_config, load_config, write_default_config
+from devstill.config import (
+    find_config,
+    load_config,
+    update_llm_config,
+    write_default_config,
+)
 
 
 def test_config_upward_discovery_and_strict_validation(tmp_path) -> None:
@@ -30,8 +35,10 @@ def test_config_upward_discovery_and_strict_validation(tmp_path) -> None:
     assert config.executor.enabled is True
     assert config.executor.backend == "pi"
     assert config.executor.timeout_seconds == 300
-    assert config.executor.max_output_tokens == 49152
-    assert config.executor.max_tool_calls == 16
+    assert config.executor.context_window == "auto"
+    assert config.executor.reasoning == "off"
+    assert config.executor.max_output_tokens == 4096
+    assert config.executor.max_tool_calls == 12
     assert config.executor.validation_commands == []
 
     raw = json.loads(config_path.read_text(encoding="utf-8"))
@@ -58,6 +65,33 @@ def test_embedding_device_is_strictly_validated(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="embedding.device"):
         load_config(config_path)
+
+
+def test_executor_context_window_accepts_auto_or_at_least_4096(tmp_path) -> None:
+    config_path = write_default_config(tmp_path / "devstill.json")
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    raw["executor"]["context_window"] = 12288
+    config_path.write_text(json.dumps(raw), encoding="utf-8")
+    assert load_config(config_path).executor.context_window == 12288
+
+    raw["executor"]["context_window"] = 2048
+    config_path.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="context_window"):
+        load_config(config_path)
+
+
+def test_config_save_migrates_legacy_pi_limits(tmp_path) -> None:
+    config_path = write_default_config(tmp_path / "devstill.json")
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    raw["executor"]["max_output_tokens"] = 49152
+    raw["executor"]["max_tool_calls"] = 16
+    config_path.write_text(json.dumps(raw), encoding="utf-8")
+    legacy = load_config(config_path)
+
+    updated = update_llm_config(config_path, legacy, enabled=False)
+
+    assert updated.executor.max_output_tokens == 4096
+    assert updated.executor.max_tool_calls == 12
 
 
 def test_chunk_overlap_must_be_smaller_than_line_limit(tmp_path) -> None:

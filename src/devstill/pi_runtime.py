@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from devstill.config import ExecutorConfig, LlmConfig
 from devstill.credentials import CredentialError, resolve_api_key
 
@@ -35,13 +37,25 @@ class PiRunResult:
     events: list[dict[str, Any]]
     tool_calls: int
     elapsed_seconds: float
+    stop_reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PiResolvedLimits:
+    requested_context: str | int
+    context_window: int
+    max_output_tokens: int
+    source: str
+    warning: str | None = None
 
 
 PiProgress = Callable[[str], None]
 
 _TOOL_CONTEXT_LIMIT = 160
-_PATTERN_CONTEXT_LIMIT = 80
-_VISIBLE_TOOLS = frozenset({"read", "grep", "find", "ls", "edit", "write"})
+_VISIBLE_TOOLS = frozenset(
+    {"read", "edit", "write", "devstill_delete", "complete_plan"}
+)
+_CONTEXT_FALLBACK = 8192
 
 
 def _bounded_context(value: object, limit: int) -> str | None:
@@ -62,7 +76,6 @@ def _tool_activity(tool: str, args: object) -> str:
     if not isinstance(args, dict):
         return f"Pi · {tool}"
     path = _bounded_context(args.get("path"), _TOOL_CONTEXT_LIMIT)
-    pattern = _bounded_context(args.get("pattern"), _PATTERN_CONTEXT_LIMIT)
     if tool == "read" and path:
         offset = args.get("offset")
         limit = args.get("limit")
@@ -73,13 +86,118 @@ def _tool_activity(tool: str, args: object) -> str:
             window.append(f"limit {limit}")
         suffix = f" ({', '.join(window)})" if window else ""
         return f"Pi · read — {path}{suffix}"
-    if tool in {"grep", "find"}:
-        subject = f"“{pattern}”" if pattern else "pattern"
-        location = f" in {path}" if path else ""
-        return f"Pi · {tool} — {subject}{location}"
-    if tool in {"ls", "edit", "write"} and path:
+    if tool in {"edit", "write", "devstill_delete"} and path:
         return f"Pi · {tool} — {path}"
+    if tool == "complete_plan":
+        return "Pi · verify approved Plan"
     return f"Pi · {tool}"
+
+
+def _model_records(payload: object) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    records = payload.get("data") or payload.get("models") or []
+    return [record for record in records if isinstance(record, dict)]
+
+
+def _record_names(record: dict[str, Any]) -> set[str]:
+    names = {
+        str(record.get(key, "")).strip()
+        for key in ("id", "name", "model")
+        if record.get(key)
+    }
+    aliases = record.get("aliases")
+    if isinstance(aliases, list):
+        names.update(str(alias).strip() for alias in aliases if alias)
+    return names
+
+
+def _context_value(record: dict[str, Any]) -> int | None:
+    containers = [record]
+    for key in ("meta", "details"):
+        nested = record.get(key)
+        if isinstance(nested, dict):
+            containers.append(nested)
+    for container in containers:
+        for key in (
+            "n_ctx",
+            "context_window",
+            "contextWindow",
+            "context_length",
+            "max_context_length",
+        ):
+            value = container.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 4096:
+                return value
+    return None
+
+
+def resolve_pi_limits(
+    llm: LlmConfig,
+    executor: ExecutorConfig,
+    *,
+    client: httpx.Client | None = None,
+) -> PiResolvedLimits:
+    requested = executor.context_window
+    warning: str | None = None
+    if isinstance(requested, int):
+        context_window = requested
+        source = "configured"
+    else:
+        context_window = _CONTEXT_FALLBACK
+        source = "fallback"
+        if not llm.enabled or not llm.model:
+            return PiResolvedLimits(
+                requested_context=requested,
+                context_window=context_window,
+                max_output_tokens=min(
+                    executor.max_output_tokens,
+                    max(1024, context_window // 3),
+                ),
+                source=source,
+            )
+        owned = client is None
+        http = client or httpx.Client(timeout=min(llm.timeout_seconds, 5.0))
+        try:
+            headers: dict[str, str] = {}
+            api_key = resolve_api_key(llm)
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            response = http.get(f"{llm.base_url}/models", headers=headers)
+            response.raise_for_status()
+            records = _model_records(response.json())
+            matches = [record for record in records if llm.model in _record_names(record)]
+            selected = matches[0] if len(matches) == 1 else None
+            if selected is None and len(records) == 1:
+                selected = records[0]
+            detected = _context_value(selected) if selected is not None else None
+            if detected is not None:
+                context_window = detected
+                source = "model metadata"
+            else:
+                warning = (
+                    "The model endpoint did not advertise a usable context window; "
+                    f"using the conservative {context_window:,}-token fallback."
+                )
+        except (CredentialError, httpx.HTTPError, ValueError, TypeError) as exc:
+            warning = (
+                f"Could not detect the model context window ({exc}); using the "
+                f"conservative {context_window:,}-token fallback."
+            )
+        finally:
+            if owned:
+                http.close()
+    resolved_output = min(
+        executor.max_output_tokens,
+        max(1024, context_window // 3),
+    )
+    return PiResolvedLimits(
+        requested_context=requested,
+        context_window=context_window,
+        max_output_tokens=resolved_output,
+        source=source,
+        warning=warning,
+    )
 
 
 def _candidate(name: str, fallback: Path) -> str | None:
@@ -190,10 +308,32 @@ def write_provider_config(
     directory: Path,
     llm: LlmConfig,
     executor: ExecutorConfig | None = None,
+    limits: PiResolvedLimits | None = None,
 ) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     api_key = f"${llm.api_key_env}" if llm.api_key_env else "devstill-local"
-    pi_max_tokens = (executor or ExecutorConfig()).max_output_tokens
+    selected_executor = executor or ExecutorConfig()
+    resolved = limits or PiResolvedLimits(
+        requested_context=selected_executor.context_window,
+        context_window=(
+            selected_executor.context_window
+            if isinstance(selected_executor.context_window, int)
+            else _CONTEXT_FALLBACK
+        ),
+        max_output_tokens=min(
+            selected_executor.max_output_tokens,
+            max(
+                1024,
+                (
+                    selected_executor.context_window
+                    if isinstance(selected_executor.context_window, int)
+                    else _CONTEXT_FALLBACK
+                )
+                // 3,
+            ),
+        ),
+        source="configured" if isinstance(selected_executor.context_window, int) else "fallback",
+    )
     payload = {
         "providers": {
             "devstill": {
@@ -206,8 +346,8 @@ def write_provider_config(
                         "name": llm.model,
                         "reasoning": False,
                         "input": ["text"],
-                        "contextWindow": 131072,
-                        "maxTokens": pi_max_tokens,
+                        "contextWindow": resolved.context_window,
+                        "maxTokens": resolved.max_output_tokens,
                         "cost": {
                             "input": 0,
                             "output": 0,
@@ -227,6 +367,10 @@ def write_provider_config(
     }
     destination = directory / "models.json"
     destination.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    (directory / "settings.json").write_text(
+        json.dumps({"compaction": {"enabled": False}}, indent=2) + "\n",
+        encoding="utf-8",
+    )
     return destination
 
 
@@ -240,6 +384,32 @@ def _stream_reader(
             output.put((channel, line.rstrip("\n")))
     finally:
         output.put((channel, None))
+
+
+def _assistant_stop(events: list[dict[str, Any]]) -> tuple[str | None, str | None]:
+    for event in reversed(events):
+        if event.get("type") != "agent_end":
+            continue
+        messages_value = event.get("messages")
+        if not isinstance(messages_value, list):
+            continue
+        for message in reversed(messages_value):
+            if not isinstance(message, dict):
+                continue
+            reason = message.get("stopReason")
+            error = message.get("errorMessage")
+            if isinstance(reason, str):
+                return reason, error if isinstance(error, str) else None
+    return None, None
+
+
+def _provider_error_hint(message: str) -> str:
+    lowered = message.casefold()
+    if "chat_template_kwargs" in lowered or "enable_thinking" in lowered:
+        return " Set executor.reasoning to auto if this endpoint cannot disable thinking."
+    if "tool_choice" in lowered or "required" in lowered:
+        return " Pi execution requires OpenAI-compatible required tool selection."
+    return ""
 
 
 class PiRunner:
@@ -258,6 +428,7 @@ class PiRunner:
         environment: dict[str, str],
         log_path: Path,
         progress: PiProgress | None = None,
+        attempt: int = 1,
     ) -> PiRunResult:
         notify = progress or (lambda _message: None)
         status = inspect_pi() if self.pi_path is None else None
@@ -280,7 +451,7 @@ class PiRunner:
             "--extension",
             str(policy_extension),
             "--tools",
-            "read,grep,find,ls,edit,write",
+            "read,edit,write,devstill_delete,complete_plan",
             "--thinking",
             "off",
             "--provider",
@@ -301,7 +472,13 @@ class PiRunner:
             raise PiError(str(exc)) from exc
         child_environment[llm.api_key_env] = api_key or "devstill-local"
 
-        notify(f"Starting Pi with {llm.model}; reasoning is off")
+        context = child_environment.get("DEVSTILL_PI_CONTEXT_WINDOW", "unknown")
+        output = child_environment.get("DEVSTILL_PI_MAX_OUTPUT_TOKENS", "unknown")
+        reasoning = executor.reasoning
+        notify(
+            f"Starting Pi with {llm.model}; strict Plan tools; context {context}; "
+            f"output cap {output}; reasoning {reasoning}"
+        )
         started = time.monotonic()
         try:
             process = subprocess.Popen(
@@ -401,7 +578,11 @@ class PiRunner:
                 process.wait(timeout=5)
         elapsed = time.monotonic() - started
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        with log_path.open("w", encoding="utf-8") as handle:
+        mode = "w" if attempt == 1 else "a"
+        with log_path.open(mode, encoding="utf-8") as handle:
+            handle.write(
+                json.dumps({"type": "devstill_attempt", "attempt": attempt}) + "\n"
+            )
             for event in events:
                 handle.write(json.dumps(event, ensure_ascii=False) + "\n")
             for line in stderr:
@@ -416,11 +597,21 @@ class PiRunner:
             )
         if process.returncode and not forced_stop:
             detail = stderr[-1] if stderr else f"exit status {process.returncode}"
-            raise PiError(f"Pi execution failed: {detail}. Event log: {log_path}")
+            raise PiError(
+                f"Pi execution failed: {detail}.{_provider_error_hint(detail)} "
+                f"Event log: {log_path}"
+            )
         if not agent_ended:
             raise PiError(f"Pi ended without an agent_end event. Event log: {log_path}")
         tool_calls = sum(
             event.get("type") == "tool_execution_start" for event in events
         )
+        stop_reason, provider_error = _assistant_stop(events)
+        if stop_reason == "error":
+            detail = provider_error or "the provider returned an error"
+            raise PiError(
+                f"Pi provider request failed: {detail}.{_provider_error_hint(detail)} "
+                f"Event log: {log_path}"
+            )
         notify(f"Pi finished after {tool_calls} tool calls in {elapsed:.1f}s")
-        return PiRunResult(events, tool_calls, elapsed)
+        return PiRunResult(events, tool_calls, elapsed, stop_reason)

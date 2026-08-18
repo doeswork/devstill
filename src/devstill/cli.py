@@ -27,6 +27,7 @@ from devstill.config import (
     resolve_model_path,
     resolve_repo_root,
     update_embedding_config,
+    update_executor_config,
     update_llm_config,
     update_retrieval_config,
     write_default_config,
@@ -56,7 +57,7 @@ from devstill.installation import load_install_metadata
 from devstill.models import ChunkPolicy, IndexProgress
 from devstill.parsers import parse_source_file
 from devstill.paths import relative_repo_path
-from devstill.pi_runtime import inspect_pi
+from devstill.pi_runtime import inspect_pi, resolve_pi_limits
 from devstill.planning import (
     LABEL_STYLES,
     generate_plan,
@@ -80,6 +81,19 @@ from devstill.updater import (
 
 console = Console()
 diagnostic_console = Console(stderr=True)
+
+
+def _context_window(value: str) -> str | int:
+    normalized = value.strip().casefold()
+    if normalized == "auto":
+        return "auto"
+    try:
+        parsed = int(normalized)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be auto or an integer") from exc
+    if parsed < 4096:
+        raise argparse.ArgumentTypeError("must be auto or at least 4096")
+    return parsed
 
 
 def parser() -> argparse.ArgumentParser:
@@ -273,6 +287,23 @@ def parser() -> argparse.ArgumentParser:
         "--planning-reasoning",
         choices=("off", "auto"),
         help="Request model reasoning for planning when supported.",
+    )
+    configure.add_argument(
+        "--execution-context-window",
+        type=_context_window,
+        metavar="auto|TOKENS",
+        help="Pi context size; auto reads model metadata and falls back to 8192.",
+    )
+    configure.add_argument(
+        "--execution-max-output-tokens",
+        type=int,
+        metavar="TOKENS",
+        help="Requested Pi output ceiling; runtime clamps it to one-third of context.",
+    )
+    configure.add_argument(
+        "--execution-reasoning",
+        choices=("off", "auto"),
+        help="Disable model-native reasoning during Pi execution or leave it automatic.",
     )
     agent_actions.add_parser("test", help="Send a small structured agent request.")
     agent_actions.add_parser("enable", help="Enable the configured agent.")
@@ -471,6 +502,18 @@ def doctor(load_model: bool) -> int:
             f"Pi executor: [yellow]unavailable[/yellow] ({pi.reason}). "
             "Re-run setup.sh to enable code execution."
         )
+    if config.llm.enabled and config.llm.model:
+        limits = resolve_pi_limits(config.llm, config.executor)
+        console.print(
+            "Pi execution: requested context "
+            f"[bold]{config.executor.context_window}[/bold]; resolved "
+            f"[bold]{limits.context_window}[/bold] ({limits.source}); output cap "
+            f"[bold]{limits.max_output_tokens}[/bold]; reasoning "
+            f"[bold]{config.executor.reasoning}[/bold]; tools "
+            "[bold]strict Plan only[/bold]"
+        )
+        if limits.warning:
+            console.print(f"[yellow]{limits.warning}[/yellow]")
     if load_model and model_path.is_dir():
         try:
             from devstill.embeddings import EmbeddingBackend
@@ -906,6 +949,7 @@ def context_command(args: argparse.Namespace) -> int:
 def _print_agent(config: DevstillConfig) -> None:
     llm = config.llm
     key_state = api_key_source(llm)
+    limits = resolve_pi_limits(llm, config.executor)
     labels = (
         ("Enabled", llm.enabled),
         ("Base URL", llm.base_url),
@@ -913,12 +957,20 @@ def _print_agent(config: DevstillConfig) -> None:
         ("Timeout", f"{llm.timeout_seconds:g} seconds"),
         ("General max output tokens", llm.max_output_tokens),
         ("Planning max output tokens", llm.planning_max_output_tokens),
-        ("Pi max output tokens", config.executor.max_output_tokens),
+        ("Pi requested context", config.executor.context_window),
+        ("Pi resolved context", f"{limits.context_window} ({limits.source})"),
+        ("Pi requested max output tokens", config.executor.max_output_tokens),
+        ("Pi resolved max output tokens", limits.max_output_tokens),
+        ("Pi max tool calls", config.executor.max_tool_calls),
+        ("Pi reasoning", config.executor.reasoning),
+        ("Pi tool mode", "strict Plan tools"),
         ("Planning reasoning", llm.planning_reasoning),
         ("API key environment", f"{llm.api_key_env} ({key_state})"),
     )
     for label, value in labels:
         console.print(f"{label}: [bold]{value}[/bold]")
+    if limits.warning:
+        console.print(f"[yellow]{limits.warning}[/yellow]")
 
 
 def agent_command(args: argparse.Namespace) -> int:
@@ -932,6 +984,9 @@ def agent_command(args: argparse.Namespace) -> int:
             args.max_output_tokens,
             args.planning_max_output_tokens,
             args.planning_reasoning,
+            args.execution_context_window,
+            args.execution_max_output_tokens,
+            args.execution_reasoning,
         )
         if all(value is None for value in option_values):
             return show_help(["agent", "configure"])
@@ -969,6 +1024,20 @@ def agent_command(args: argparse.Namespace) -> int:
             {key: value for key, value in values.items() if value is not None}
         )
         config = update_llm_config(config_path, config, **updates)
+        executor_values = {
+            "context_window": args.execution_context_window,
+            "max_output_tokens": args.execution_max_output_tokens,
+            "reasoning": args.execution_reasoning,
+        }
+        executor_updates = {
+            key: value for key, value in executor_values.items() if value is not None
+        }
+        if executor_updates:
+            config = update_executor_config(
+                config_path,
+                config,
+                **executor_updates,
+            )
         console.print(f"[green]Updated agent configuration in {config_path}[/green]")
         _print_agent(config)
         return 0

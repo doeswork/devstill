@@ -383,6 +383,16 @@ Example `devstill.json`
     "max_output_tokens": 2048,
     "planning_max_output_tokens": 6144,
     "planning_reasoning": "off"
+  },
+  "executor": {
+    "enabled": true,
+    "backend": "pi",
+    "timeout_seconds": 300,
+    "context_window": "auto",
+    "reasoning": "off",
+    "max_output_tokens": 4096,
+    "max_tool_calls": 12,
+    "validation_commands": []
   }
 }
 ```
@@ -614,7 +624,10 @@ precedence over a remembered token. Embedded URL credentials are rejected.
 Plan and Deep Plan use a separate 6,144-token output ceiling; this is a maximum, so
 models can stop earlier. General agent calls retain the smaller LLM
 `max_output_tokens` limit, while Pi execution uses
-`executor.max_output_tokens` and defaults to 49,152 tokens. Planning requests
+`executor.max_output_tokens` and defaults to 4,096 tokens. Pi resolves its context
+from `/v1/models` when possible, including llama.cpp's `meta.n_ctx`, and otherwise
+uses a conservative 8,192-token fallback. Its output cap is never more than one-third
+of the resolved context. Planning requests
 default to `planning_reasoning: "off"` and use Qwen's
 `chat_template_kwargs.enable_thinking=false`. If a compatible server rejects that
 extension, Devstill retries without it. The client also requests strict JSON Schema
@@ -716,14 +729,22 @@ Plan execution
 the newest `.plan.json` or `.deep-plan.json` unless `--from` is provided, rejects
 plans with unresolved `Search` entries, and stages only the approved files in an
 isolated temporary Git repository. Pi runs with reasoning disabled, no session or
-repository context files, a bounded tool budget, and no shell tool.
+repository context files, a bounded tool budget, and strict Plan-only tools. It can
+read only approved existing files, edit or write only labels that allow it, delete
+only an exact `Delete` target, and finish only through a contract-checking tool.
+Discovery tools (`ls`, `grep`, and `find`) and the shell are unavailable.
 
 Blue `Read` targets are copied for reference but cannot be changed. Existing green
 `Add`, orange `Remove`, and purple `Modify` targets may change but must remain files.
 Black `Delete` targets must be removed completely, while pink `New` targets must
-create only their exact safe repository-relative paths. Devstill rejects symlinks,
+create one exact safe repository-relative file. `New` cannot name a directory;
+parent directories are created automatically. Devstill rejects symlinks,
 traversal, unlisted files, and any read-only change before writing
 `.devstill/.execute.patch`.
+
+If Pi completes part of a Plan but stops early, Devstill makes one fresh, focused
+repair attempt containing only the unmet targets. Zero-progress runs and provider
+errors are not retried. Both attempts remain visible in the Pi event log.
 
 The patch is displayed before application. Interactive CLI and TUI use explicit
 confirmation; `--dry-run` only generates the preview and `--yes` is required for
@@ -741,16 +762,17 @@ and save on Enter or focus loss.
 An **Add another file** form stays visible throughout Plan review. Type any part of
 a repository path to get substring and fuzzy matches, use Up/Down and Enter to pick
 one, or press `Ctrl+P` to focus the picker from anywhere in the review. Exact paths
-still work for files that are not indexed. Choose an existing-file label and add an
-optional reason; a safe default is supplied when the reason is blank. The form
-clears and remains focused after each addition so several files can be added in a
-row. Missing safe paths become fixed pink `New` rows. Manually adding a temporarily
-suppressed existing path restores and pins it; permanently excluded paths must be
-unbanned first. Enter in the bottom composer submits a follow-up refinement and
-keeps its compact history on the same card. Manual edits stay pinned while untouched
-retrieval rows may change. Pi starts only through **Preview with Pi**, which is
-disabled for an unsent draft, empty plan, unresolved `Search`, or active review
-work. Every accepted mutation is saved immediately.
+still work for files that are not indexed. The action dropdown sits to the left of
+the filename search, matching the existing Plan rows. Add an optional reason; a safe
+default is supplied when the reason is blank. The form clears and remains focused
+after each addition so several files can be added in a row. Missing safe paths become
+fixed pink `New` rows. Manually adding a temporarily suppressed existing path
+restores and pins it; permanently excluded paths must be unbanned first. Enter in the
+bottom composer submits a follow-up refinement and keeps its compact history on the
+same card. Manual edits stay pinned while untouched retrieval rows may change. Pi
+starts only through **Preview with Pi**, which is disabled for an unsent draft,
+empty plan, unresolved `Search`, or active review work. Every accepted mutation is
+saved immediately.
 
 The composer shows focused, right-aligned actions for **Not now**, **Preview with
 Pi**, **Use file**, **Cancel**, and **Apply patch** as appropriate. Normal commands
@@ -765,11 +787,19 @@ expansion:
   "enabled": true,
   "backend": "pi",
   "timeout_seconds": 300,
-  "max_output_tokens": 49152,
-  "max_tool_calls": 16,
+  "context_window": "auto",
+  "reasoning": "off",
+  "max_output_tokens": 4096,
+  "max_tool_calls": 12,
   "validation_commands": ["npm run typecheck", "python3 -m pytest -q"]
 }
 ```
+Override auto-detection for a server that does not advertise context metadata:
+```bash
+devstill agent configure --execution-context-window 12288 \
+  --execution-max-output-tokens 4096 --execution-reasoning off
+```
+`devstill agent` and `devstill doctor` show requested and resolved execution limits.
 Only these user-configured commands run after application. A validation failure
 leaves the reviewed changes in place and is recorded in `.execute.json`; Pi events
 are written to `.devstill/logs/pi-execute.jsonl` without API credentials.

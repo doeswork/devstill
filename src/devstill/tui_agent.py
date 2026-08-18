@@ -11,7 +11,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select, Static, Switch
 
-from devstill.config import LlmConfig
+from devstill.config import ExecutorConfig, LlmConfig
 
 
 class AgentSetupAction(str, Enum):
@@ -24,6 +24,7 @@ class AgentSetupAction(str, Enum):
 class AgentSetupResult:
     action: AgentSetupAction
     config: LlmConfig | None = None
+    executor: ExecutorConfig | None = None
     api_key: str = ""
     remember: bool = True
 
@@ -92,9 +93,15 @@ class AgentSetupScreen(ModalScreen[AgentSetupResult | None]):
     }
     """
 
-    def __init__(self, config: LlmConfig, key_source: str) -> None:
+    def __init__(
+        self,
+        config: LlmConfig,
+        executor: ExecutorConfig,
+        key_source: str,
+    ) -> None:
         super().__init__()
         self.config = config
+        self.executor = executor
         self.key_source = key_source
 
     def compose(self) -> ComposeResult:
@@ -153,6 +160,25 @@ class AgentSetupScreen(ModalScreen[AgentSetupResult | None]):
                     value=self.config.planning_reasoning,
                     id="agent-planning-reasoning",
                 )
+                yield Label("Pi execution context window", classes="agent-label")
+                yield Input(
+                    str(self.executor.context_window),
+                    placeholder="auto or token count",
+                    id="agent-execution-context",
+                )
+                yield Label("Pi execution maximum output tokens", classes="agent-label")
+                yield Input(
+                    str(self.executor.max_output_tokens),
+                    type="integer",
+                    id="agent-execution-max-tokens",
+                )
+                yield Label("Pi execution reasoning", classes="agent-label")
+                yield Select(
+                    (("Off", "off"), ("Automatic", "auto")),
+                    allow_blank=False,
+                    value=self.executor.reasoning,
+                    id="agent-execution-reasoning",
+                )
                 with Horizontal(id="agent-remember-row"):
                     yield Label(
                         f"Remember entered token for future sessions "
@@ -193,6 +219,22 @@ class AgentSetupScreen(ModalScreen[AgentSetupResult | None]):
                     "#agent-planning-reasoning", Select
                 ).value,
             )
+            context_value = self.query_one("#agent-execution-context", Input).value
+            context_window: str | int = (
+                "auto" if context_value.strip().casefold() == "auto" else int(context_value)
+            )
+            executor = self.executor.model_copy(
+                update={
+                    "context_window": context_window,
+                    "max_output_tokens": int(
+                        self.query_one("#agent-execution-max-tokens", Input).value
+                    ),
+                    "reasoning": self.query_one(
+                        "#agent-execution-reasoning", Select
+                    ).value,
+                }
+            )
+            executor = ExecutorConfig.model_validate(executor.model_dump(mode="json"))
         except (TypeError, ValueError) as exc:
             self.query_one("#agent-form-error", Static).update(escape(str(exc)))
             return
@@ -205,6 +247,7 @@ class AgentSetupScreen(ModalScreen[AgentSetupResult | None]):
             AgentSetupResult(
                 action,
                 config=config,
+                executor=executor,
                 api_key=self.query_one("#agent-api-key", Input).value.strip(),
                 remember=self.query_one("#agent-remember", Switch).value,
             )

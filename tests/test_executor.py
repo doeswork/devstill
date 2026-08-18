@@ -46,7 +46,8 @@ def configured() -> DevstillConfig:
             "enabled": True,
             "base_url": "http://localhost:1234/v1",
             "model": "local-model",
-        }
+        },
+        executor={"context_window": 12288},
     )
 
 
@@ -100,7 +101,7 @@ def test_prepare_and_apply_only_approved_targets(tmp_path: Path) -> None:
     try:
         assert prepared.result.status == "preview"
         assert prepared.result.changed_files == ["modify.py", "new.py"]
-        assert runner.provider_max_tokens == [49152]
+        assert runner.provider_max_tokens == [4096]
         assert "diff --git a/modify.py b/modify.py" in prepared.patch
         assert "diff --git a/new.py b/new.py" in prepared.patch
         assert (repo / "modify.py").read_text(encoding="utf-8") == "value = 1\n"
@@ -154,7 +155,8 @@ def test_execution_instruction_overrides_query_without_expanding_plan(
             'EXECUTION_REQUEST: "Use the existing helper and keep the change focused."'
             in runner.prompts[0]
         )
-        assert 'WRITABLE_PATHS: ["app.py"]' in runner.prompts[0]
+        assert "Use the scoped tools" in runner.prompts[0]
+        assert '"target": "app.py"' in runner.prompts[0]
         result_artifact = json.loads((artifacts / ".execute.json").read_text())
         assert result_artifact["instruction"] == prepared.result.instruction
     finally:
@@ -242,6 +244,75 @@ def test_search_entries_block_execution(tmp_path: Path) -> None:
     with pytest.raises(ExecutionError, match="Search entries"):
         executor.prepare()
     assert runner.calls == 0
+
+
+def test_directory_intent_new_target_blocks_execution_before_pi(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    artifacts = repo / ".devstill"
+    write_plan(
+        repo,
+        artifacts,
+        [
+            PlanItem(
+                label=PlanLabel.NEW,
+                target="static/zombie_textures",
+                reason="Create a directory for zombie texture assets.",
+            )
+        ],
+    )
+    runner = FakePiRunner(lambda _workspace: None)
+    with pytest.raises(ExecutionError, match="exact file, not a directory"):
+        RepositoryExecutor(repo, artifacts, configured(), runner=runner).prepare()
+    assert runner.calls == 0
+
+
+def test_partial_execution_gets_one_focused_repair(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("value = 1\n", encoding="utf-8")
+    artifacts = repo / ".devstill"
+    write_plan(
+        repo,
+        artifacts,
+        [
+            PlanItem(label=PlanLabel.MODIFY, target="app.py", reason="Update it."),
+            PlanItem(label=PlanLabel.NEW, target="new.py", reason="Create it."),
+        ],
+    )
+    runner: FakePiRunner
+
+    def mutate(workspace: Path) -> None:
+        if runner.calls == 1:
+            (workspace / "app.py").write_text("value = 2\n", encoding="utf-8")
+        else:
+            (workspace / "new.py").write_text("created = True\n", encoding="utf-8")
+
+    runner = FakePiRunner(mutate)
+    prepared = RepositoryExecutor(repo, artifacts, configured(), runner=runner).prepare()
+    try:
+        assert runner.calls == 2
+        assert "Repair only the unmet contracts" in runner.prompts[1]
+        assert 'UNMET_TARGETS: ["new.py"]' in runner.prompts[1]
+        assert prepared.result.tool_calls == 6
+    finally:
+        prepared.close()
+
+
+def test_zero_progress_does_not_retry(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("value = 1\n", encoding="utf-8")
+    artifacts = repo / ".devstill"
+    write_plan(
+        repo,
+        artifacts,
+        [PlanItem(label=PlanLabel.MODIFY, target="app.py", reason="Update it.")],
+    )
+    runner = FakePiRunner(lambda _workspace: None)
+    with pytest.raises(ExecutionError, match="did not change planned Modify"):
+        RepositoryExecutor(repo, artifacts, configured(), runner=runner).prepare()
+    assert runner.calls == 1
 
 
 def test_reviewed_plan_allows_search_but_validates_concrete_targets(

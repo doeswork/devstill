@@ -721,7 +721,8 @@ def test_files_and_agent_status_workflows_do_not_expose_secret(
             "enabled": True,
             "base_url": "http://localhost/v1",
             "model": "local-model",
-        }
+        },
+        executor={"context_window": 12288},
     )
     monkeypatch.setenv("DEVSTILL_AGENT_API_KEY", "top-secret-value")
     workflow = TuiWorkflow(config_path, config)
@@ -733,7 +734,9 @@ def test_files_and_agent_status_workflows_do_not_expose_secret(
     assert "(**environment**)" in agent.markdown
     assert "General max output tokens: **2048**" in agent.markdown
     assert "Planning max output tokens: **6144**" in agent.markdown
-    assert "Pi max output tokens: **49152**" in agent.markdown
+    assert "Pi resolved context: **12288** (configured)" in agent.markdown
+    assert "Pi output cap: **4096**" in agent.markdown
+    assert "Pi tools: **strict Plan only**" in agent.markdown
     assert "Planning reasoning: **off**" in agent.markdown
     assert "top-secret-value" not in agent.markdown
 

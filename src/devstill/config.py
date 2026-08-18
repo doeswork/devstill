@@ -183,8 +183,10 @@ class ExecutorConfig(StrictModel):
     enabled: bool = True
     backend: str = "pi"
     timeout_seconds: float = Field(default=300.0, ge=1, le=3600)
-    max_output_tokens: int = Field(default=49152, ge=64, le=65536)
-    max_tool_calls: int = Field(default=16, ge=1, le=256)
+    context_window: Literal["auto"] | int = "auto"
+    reasoning: Literal["off", "auto"] = "off"
+    max_output_tokens: int = Field(default=4096, ge=64, le=65536)
+    max_tool_calls: int = Field(default=12, ge=1, le=256)
     validation_commands: list[str] = Field(default_factory=list)
 
     @field_validator("backend")
@@ -194,6 +196,15 @@ class ExecutorConfig(StrictModel):
         if normalized != "pi":
             raise ValueError("executor backend must be pi")
         return normalized
+
+    @field_validator("context_window")
+    @classmethod
+    def validate_context_window(cls, value: Literal["auto"] | int) -> Literal["auto"] | int:
+        if value == "auto":
+            return value
+        if isinstance(value, bool) or value < 4096:
+            raise ValueError("context_window must be auto or at least 4096")
+        return value
 
     @field_validator("validation_commands")
     @classmethod
@@ -316,8 +327,10 @@ def default_config_dict() -> dict[str, Any]:
             "enabled": True,
             "backend": "pi",
             "timeout_seconds": 300,
-            "max_output_tokens": 49152,
-            "max_tool_calls": 16,
+            "context_window": "auto",
+            "reasoning": "off",
+            "max_output_tokens": 4096,
+            "max_tool_calls": 12,
             "validation_commands": [],
         },
     }
@@ -344,7 +357,12 @@ def write_config(config_path: Path, config: DevstillConfig) -> Path:
     raw["embedding"] = config.embedding.model_dump(mode="json")
     raw["retrieval"] = config.retrieval.model_dump(mode="json")
     raw["llm"] = config.llm.model_dump(mode="json")
-    raw["executor"] = config.executor.model_dump(mode="json")
+    executor = config.executor.model_dump(mode="json")
+    if executor["max_output_tokens"] == 49152:
+        executor["max_output_tokens"] = 4096
+    if executor["max_tool_calls"] == 16:
+        executor["max_tool_calls"] = 12
+    raw["executor"] = executor
     validated = DevstillConfig.model_validate(raw)
     rendered = (
         json.dumps(
@@ -391,7 +409,19 @@ def update_llm_config(
     raw["llm"] = {**raw["llm"], **updates}
     updated = DevstillConfig.model_validate(raw)
     write_config(config_path, updated)
-    return updated
+    return load_config(config_path)
+
+
+def update_executor_config(
+    config_path: Path,
+    config: DevstillConfig,
+    **updates: Any,
+) -> DevstillConfig:
+    raw = config.model_dump(mode="json")
+    raw["executor"] = {**raw["executor"], **updates}
+    updated = DevstillConfig.model_validate(raw)
+    write_config(config_path, updated)
+    return load_config(config_path)
 
 
 def update_embedding_config(

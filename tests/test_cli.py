@@ -243,6 +243,12 @@ def test_agent_configure_from_nested_directory_and_secret_redaction(
             "5000",
             "--planning-reasoning",
             "auto",
+            "--execution-context-window",
+            "12288",
+            "--execution-max-output-tokens",
+            "5000",
+            "--execution-reasoning",
+            "off",
         ]
     )
     assert cli.agent_command(args) == 0
@@ -253,11 +259,16 @@ def test_agent_configure_from_nested_directory_and_secret_redaction(
     assert configured.llm.max_output_tokens == 2048
     assert configured.llm.planning_max_output_tokens == 5000
     assert configured.llm.planning_reasoning == "auto"
+    assert configured.executor.context_window == 12288
+    assert configured.executor.max_output_tokens == 5000
+    assert configured.executor.reasoning == "off"
     output = capsys.readouterr().out
     assert "LOCAL_AGENT_KEY (environment)" in output
     assert "General max output tokens: 2048" in output
     assert "Planning max output tokens: 5000" in output
-    assert "Pi max output tokens: 49152" in output
+    assert "Pi resolved context: 12288 (configured)" in output
+    assert "Pi resolved max output tokens: 4096" in output
+    assert "Pi tool mode: strict Plan tools" in output
     assert "Planning reasoning: auto" in output
     assert "do-not-print-this-secret" not in output
 

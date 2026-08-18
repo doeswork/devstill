@@ -90,8 +90,10 @@
     "enabled": true,
     "backend": "pi",
     "timeout_seconds": 300,
-    "max_output_tokens": 49152,
-    "max_tool_calls": 16,
+    "context_window": "auto",
+    "reasoning": "off",
+    "max_output_tokens": 4096,
+    "max_tool_calls": 12,
     "validation_commands": []
   }
 }
