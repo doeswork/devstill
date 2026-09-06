@@ -11,6 +11,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.geometry import Size
 from textual.message import Message
 from textual.widgets import (
     Button,
@@ -27,6 +28,7 @@ from textual.widgets import (
     TextArea,
 )
 from textual.widgets.option_list import Option
+from textual.widgets.text_area import Edit, EditResult, WrappedDocument
 from textual.worker import Worker, WorkerState
 
 from devstill.config import (
@@ -231,6 +233,69 @@ def matching_repository_paths(
     return matches
 
 
+class PlanReasonEditor(TextArea):
+    """A visually wrapped reason with the existing single-line save contract."""
+
+    BINDINGS: ClassVar = [
+        Binding("enter", "submit", show=False, priority=True),
+    ]
+
+    class Submitted(Message):
+        def __init__(self, editor: PlanReasonEditor) -> None:
+            super().__init__()
+            self.editor = editor
+
+    def __init__(self, text: str) -> None:
+        super().__init__(
+            text,
+            soft_wrap=True,
+            tab_behavior="focus",
+            show_line_numbers=False,
+            highlight_cursor_line=False,
+            placeholder="Plan reason",
+            classes="plan-impact-reason",
+            compact=True,
+        )
+
+    def action_submit(self) -> None:
+        self.post_message(self.Submitted(self))
+
+    def on_blur(self) -> None:
+        self.action_submit()
+
+    def edit(self, edit: Edit) -> EditResult:
+        replaced = self.get_text_range(edit.top, edit.bottom)
+        if (
+            len(self.text) - len(replaced) + len(edit.text) > 240
+            or any(character in edit.text for character in "\n\r\0")
+        ):
+            self.app.bell()
+            return EditResult(self.cursor_location, "")
+        return super().edit(edit)
+
+    async def _on_paste(self, event: events.Paste) -> None:
+        # Match Input's existing first-line-only paste behavior.
+        event.stop()
+        event.prevent_default()
+        if event.text and not self.read_only:
+            self.replace(
+                event.text.splitlines()[0],
+                *self.selection,
+                maintain_selection_offset=False,
+            )
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        event.stop()
+        self.refresh(layout=True)
+
+    def get_content_height(self, container: Size, viewport: Size, width: int) -> int:
+        # Measure at the proposed width before layout, including the cursor cell.
+        # A separate wrapper avoids changing the active editor's cursor mapping.
+        return WrappedDocument(
+            self.document, width=max(1, width - 1), tab_width=self.indent_width
+        ).height
+
+
 class PlanImpactRow(Vertical):
     class LabelSelected(Message):
         def __init__(self, row: PlanImpactRow, label: PlanLabel) -> None:
@@ -279,26 +344,27 @@ class PlanImpactRow(Vertical):
         return f"— {escape(item.target)}"
 
     def compose(self) -> ComposeResult:
-        with Horizontal(classes="plan-impact-heading"):
-            if self.item.label is PlanLabel.NEW:
-                yield Static("🩷 New", classes="plan-impact-fixed-label")
-            else:
-                options = (
-                    SEARCH_LABEL_OPTIONS
-                    if self.item.label is PlanLabel.SEARCH
-                    else PLAN_LABEL_OPTIONS
-                )
-                yield Select(
-                    options,
-                    allow_blank=False,
-                    value=self.item.label.value,
-                    classes="plan-impact-label",
-                    compact=True,
-                )
-            yield Static(
-                self._target_text(self.item),
-                classes="plan-impact-target",
+        if self.item.label is PlanLabel.NEW:
+            yield Static("🩷 New", classes="plan-impact-fixed-label")
+        else:
+            options = (
+                SEARCH_LABEL_OPTIONS
+                if self.item.label is PlanLabel.SEARCH
+                else PLAN_LABEL_OPTIONS
             )
+            yield Select(
+                options,
+                allow_blank=False,
+                value=self.item.label.value,
+                classes="plan-impact-label",
+                compact=True,
+            )
+        yield Static(
+            self._target_text(self.item),
+            classes="plan-impact-target",
+        )
+        yield PlanReasonEditor(self.item.reason)
+        with Horizontal(classes="plan-impact-actions"):
             remove = Button("×", classes="plan-impact-remove", compact=True, flat=True)
             remove.tooltip = "Remove from this handoff without a replacement"
             yield remove
@@ -314,13 +380,18 @@ class PlanImpactRow(Vertical):
             yield Button(
                 "No", classes="plan-impact-ban-cancel", compact=True, flat=True
             )
-        yield Input(
-            value=self.item.reason,
-            placeholder="Plan reason",
-            max_length=240,
-            classes="plan-impact-reason",
-            compact=True,
-        )
+
+    def on_resize(self, event: events.Resize) -> None:
+        narrow = event.size.width < 100
+        if narrow == self.has_class("plan-impact-narrow"):
+            return
+        self.set_class(narrow, "plan-impact-narrow")
+        editor = self.query_one(PlanReasonEditor)
+        actions = self.query_one(".plan-impact-actions")
+        if narrow:
+            self.move_child(editor, after=actions)
+        else:
+            self.move_child(editor, before=actions)
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select not in self.query(Select) or not isinstance(event.value, str):
@@ -333,16 +404,9 @@ class PlanImpactRow(Vertical):
         if normalized != self.item.reason:
             self.post_message(self.ReasonEdited(self, normalized))
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input not in self.query(Input):
-            return
+    def on_plan_reason_editor_submitted(self, event: PlanReasonEditor.Submitted) -> None:
         event.stop()
-        self._post_reason(event.value)
-
-    def on_input_blurred(self, event: Input.Blurred) -> None:
-        if event.input not in self.query(Input):
-            return
-        self._post_reason(event.value)
+        self._post_reason(event.editor.text)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.has_class("plan-impact-remove"):
@@ -366,14 +430,14 @@ class PlanImpactRow(Vertical):
             event.button.display = False
 
     def update_item(self, item: PlanItem) -> None:
-        reason = self.query_one_optional(".plan-impact-reason", Input)
+        reason = self.query_one_optional(PlanReasonEditor)
         if reason is None:
             # A mounted row is queryable just before Textual has composed its
             # children. Keep the source item current and let compose use it.
             self.item = item
             return
-        if reason.value != item.reason:
-            reason.value = item.reason
+        if reason.text != item.reason:
+            reason.text = item.reason
         if item == self.item:
             select = self.query_one_optional(Select)
             if select is not None and select.value != item.label.value:
@@ -402,7 +466,7 @@ class PlanImpactRow(Vertical):
         select = self.query_one_optional(Select)
         if select is not None:
             select.disabled = not editable
-        self.query_one(".plan-impact-reason", Input).disabled = not editable
+        self.query_one(PlanReasonEditor).disabled = not editable
         for button in self.query(Button):
             button.disabled = not editable
 
@@ -850,13 +914,21 @@ class DevstillApp(App[None]):
     }
 
     .plan-impact-row {
+        layout: grid;
+        grid-size: 4;
+        grid-columns: 18 1fr 2fr 18;
+        grid-rows: auto;
         height: auto;
     }
 
-    .plan-impact-heading {
-        height: auto;
-        min-height: 1;
-        align-vertical: middle;
+    .plan-impact-row.plan-impact-narrow {
+        grid-size: 3;
+        grid-columns: 18 1fr 18;
+    }
+
+    .plan-impact-actions {
+        height: 1;
+        width: 18;
     }
 
     .plan-impact-label {
@@ -877,10 +949,17 @@ class DevstillApp(App[None]):
     }
 
     .plan-impact-reason {
-        height: 1;
-        padding: 0 1;
+        height: auto;
+        margin-left: 2;
+        padding: 0;
+        border: none;
+        overflow: hidden hidden;
         color: $text-muted;
         background: transparent;
+    }
+
+    .plan-impact-narrow .plan-impact-reason {
+        column-span: 3;
     }
 
     .plan-impact-reason:focus {
@@ -890,22 +969,32 @@ class DevstillApp(App[None]):
         text-style: none;
     }
 
-    .plan-impact-reason:focus > .input--cursor {
+    .plan-impact-reason:focus > .text-area--cursor {
         background: black;
         color: white;
     }
 
-    .plan-impact-reason:focus > .input--selection {
+    .plan-impact-reason:focus > .text-area--selection {
         background: $primary;
         color: white;
     }
 
     .plan-impact-remove, .plan-impact-refresh, .plan-impact-ban,
     .plan-impact-ban-confirm, .plan-impact-ban-cancel {
-        width: auto;
+        width: 3;
         min-width: 3;
+        height: 1;
         margin-left: 0;
-        padding: 0 1;
+        padding: 0;
+        border: none !important;
+    }
+
+    .plan-impact-ban-confirm {
+        width: 6;
+    }
+
+    .plan-impact-ban-cancel {
+        width: 4;
     }
 
     .plan-impact-remove, .plan-impact-ban, .plan-impact-ban-confirm {

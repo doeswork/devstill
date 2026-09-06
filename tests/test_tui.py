@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from itertools import pairwise
 from pathlib import Path
 
 from textual import events
@@ -27,6 +28,7 @@ from devstill.tui import (
     ExecutionSessionEntry,
     PlanImpactRow,
     PlanNewFileForm,
+    PlanReasonEditor,
     PlanSessionEntry,
     PromptTextArea,
     SessionEntry,
@@ -880,17 +882,16 @@ def test_inline_label_save_failure_reverts_the_dropdown(tmp_path: Path) -> None:
                 entry.query_one(".plan-impact-status", Static).content
             )
             assert (
-                entry.query_one(".plan-impact-reason", Input).value
+                entry.query_one(PlanReasonEditor).text
                 == plan.items[0].reason
             )
 
-            reason = entry.query_one(".plan-impact-reason", Input)
-            reason.value = "Use a different explanation."
-            reason_event = Input.Blurred(reason, reason.value)
-            row = entry.query_one(PlanImpactRow)
-            row.on_input_blurred(reason_event)
+            reason = entry.query_one(PlanReasonEditor)
+            reason.focus()
+            reason.text = "Use a different explanation."
+            await pilot.press("tab")
             await pilot.pause()
-            assert reason.value == plan.items[0].reason
+            assert reason.text == plan.items[0].reason
             assert "artifact storage is unavailable" in str(
                 entry.query_one(".plan-impact-status", Static).content
             )
@@ -983,12 +984,13 @@ def test_plan_review_edits_reason_and_adds_then_discards_new_file(
             assert workflow.saved_plan.items[0].label is PlanLabel.REMOVE
             await pilot.pause()
 
-            reason = row.query_one(".plan-impact-reason", Input)
+            reason = row.query_one(PlanReasonEditor)
             edited_reason = (
                 "Remove the obsolete fallback while keeping this module."
             )
-            reason.value = edited_reason
-            row.on_input_blurred(Input.Blurred(reason, reason.value))
+            reason.focus()
+            reason.text = edited_reason
+            await pilot.press("enter")
             for _ in range(20):
                 if workflow.saved_plan.items[0].reason == edited_reason:
                     break
@@ -996,11 +998,11 @@ def test_plan_review_edits_reason_and_adds_then_discards_new_file(
             assert workflow.saved_plan.items[0].reason == edited_reason
             await pilot.pause()
 
-            reason.value = "   "
+            reason.text = "   "
             await app.on_plan_impact_row_reason_edited(
-                PlanImpactRow.ReasonEdited(row, reason.value.strip())
+                PlanImpactRow.ReasonEdited(row, reason.text.strip())
             )
-            assert reason.value == workflow.saved_plan.items[0].reason
+            assert reason.text == workflow.saved_plan.items[0].reason
             assert "at least 1 character" in str(
                 entry.query_one(".plan-impact-status", Static).content
             )
@@ -1152,6 +1154,141 @@ def test_search_plan_target_is_identified_as_unresolved(tmp_path: Path) -> None:
             assert "unresolved search target" in str(
                 row.query_one(".plan-impact-target", Static).content
             )
+
+    asyncio.run(scenario())
+
+
+def test_plan_reason_columns_wrap_and_reflow_without_losing_edits(tmp_path: Path) -> None:
+    explanation = (
+        "Expose the camera state for perspective toggling. Keep the first-person "
+        "camera synchronized with player movement. Position the third-person camera "
+        "behind the player. Preserve the current controls and collision behavior."
+    )
+    items = [
+        PlanItem(label=label, target=target, reason=explanation)
+        for label, target in (
+            (PlanLabel.MODIFY, "static/player.js"),
+            (PlanLabel.NEW, "static/cameras/" + "PerspectiveController" * 4 + ".js"),
+            (PlanLabel.SEARCH, "Find the game keyboard controls"),
+        )
+    ]
+    plan = PlanOutput(query="Toggle camera", repository=str(tmp_path), model="local", items=items)
+
+    async def scenario() -> None:
+        app = build_app(tmp_path)
+        async with app.run_test(size=(180, 45)) as pilot:
+            entry = PlanSessionEntry("/plan Toggle camera", plan, "plan")
+            await app.query_one("#session-feed").mount(entry)
+            await pilot.pause()
+            rows = list(entry.query(PlanImpactRow))
+            editors = list(entry.query(PlanReasonEditor))
+
+            def check_layout(narrow: bool) -> None:
+                assert len({editor.region.x for editor in editors}) == 1
+                for row, editor in zip(rows, editors, strict=True):
+                    target = row.query_one(".plan-impact-target")
+                    actions = row.query_one(".plan-impact-actions")
+                    assert row.has_class("plan-impact-narrow") is narrow
+                    assert editor.region.height == editor.wrapped_document.height
+                    assert editor.region.height > 1
+                    assert editor.max_scroll_y == 0
+                    assert actions.region.right <= row.region.right
+                    if narrow:
+                        assert editor.region.y >= target.region.bottom
+                        assert editor.region.x == row.region.x + 2
+                    else:
+                        assert editor.region.y == target.region.y == actions.region.y
+                        assert editor.region.x == target.region.right + 2
+                        assert editor.region.right <= actions.region.x
+                for previous, following in pairwise(rows):
+                    assert previous.region.bottom <= following.region.y
+
+            check_layout(False)
+            assert rows[1].query_one(".plan-impact-target").region.height > 1
+            first = editors[0]
+            first.focus()
+            first.move_cursor((0, 12))
+            await pilot.press("X")
+            draft, selection = first.text, first.selection
+
+            await pilot.resize_terminal(64, 30)
+            await pilot.pause()
+            check_layout(True)
+            assert first.has_focus
+            assert first.text == draft
+            assert first.selection == selection
+
+            await pilot.resize_terminal(180, 45)
+            await pilot.pause()
+            check_layout(False)
+            assert first.has_focus
+            assert first.text == draft
+            assert first.selection == selection
+
+            # Sidebar visibility can cross the breakpoint without a terminal resize.
+            await pilot.resize_terminal(130, 45)
+            await pilot.pause()
+            check_layout(True)
+            await pilot.press("ctrl+b")
+            await pilot.pause()
+            check_layout(False)
+
+            columns = [editor.region.x for editor in editors]
+            rows[0].query_one(".plan-impact-ban", Button).press()
+            await pilot.pause()
+            assert rows[0].query_one(".plan-impact-ban-confirm").display
+            assert [editor.region.x for editor in editors] == columns
+            actions = rows[0].query_one(".plan-impact-actions")
+            for button in actions.query(Button):
+                if button.display:
+                    assert button.region.right <= actions.region.right
+            rows[0].query_one(".plan-impact-ban-cancel", Button).press()
+            await pilot.pause()
+            assert rows[0].query_one(".plan-impact-ban").display
+
+    asyncio.run(scenario())
+
+
+def test_plan_reason_editor_preserves_single_line_limits_and_navigation(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        app = build_app(tmp_path)
+        async with app.run_test(size=(120, 35)) as pilot:
+            row = PlanImpactRow(
+                0, PlanItem(label=PlanLabel.READ, target="game.js", reason="x" * 239)
+            )
+            await app.query_one("#session-feed").mount(row)
+            await pilot.pause()
+            editor = row.query_one(PlanReasonEditor)
+            editor.focus()
+            editor.move_cursor(editor.document.end)
+            await pilot.press("a", "b")
+            assert editor.text == "x" * 239 + "a"
+            await pilot.press("enter")
+            assert "\n" not in editor.text
+            assert editor.has_focus
+            await pilot.press("tab")
+            assert not editor.has_focus
+            await pilot.press("shift+tab")
+            assert editor.has_focus
+
+            editor.select_all()
+            editor.post_message(events.Paste("Camera explanation.\nAnother line."))
+            await pilot.pause()
+            assert editor.text == "Camera explanation."
+            assert editor.region.height == editor.wrapped_document.height
+            editor.post_message(events.Paste("z" * 241))
+            await pilot.pause()
+            assert editor.text == "Camera explanation."
+
+            editor.select_all()
+            await pilot.press("界")
+            assert editor.text == "界"
+            await pilot.press("ctrl+z")
+            assert editor.text == "Camera explanation."
+            await pilot.press("ctrl+y")
+            assert editor.text == "界"
+            await pilot.pause()
+            assert editor.region.height == 1
 
     asyncio.run(scenario())
 

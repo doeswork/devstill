@@ -148,6 +148,33 @@ the installed PyTorch build and runs package and Devstill health checks afterwar
 The update channel becomes usable when the project publishes its first versioned
 GitHub Release.
 
+To install local code changes into an existing private installation, close Devstill
+and run this from the source checkout:
+
+```bash
+./update-local.sh
+```
+
+The script includes your current uncommitted edits. You can also invoke it by its
+full path from another project. It builds a clean temporary wheel, verifies its
+source and Pi policy asset, checks dependency compatibility and startup, then
+reinstalls the package even if its version has not changed. Installed startup and
+package-integrity checks must pass before it reports success. Reopen Devstill in
+your project afterward; no reindexing or configuration changes are required.
+
+This local workflow reuses your existing dependencies, CUDA, models, and Pi. If
+the checkout needs incompatible or missing dependencies, the script stops before
+installation and directs you to `./setup.sh`. It locates the environment through
+`DEVSTILL_VENV`, then the `venv` field in installation metadata, then
+`$DEVSTILL_DATA_HOME/venv` (by default `~/.local/share/devstill/venv`, respecting
+`XDG_DATA_HOME`). `DEVSTILL_INSTALL_METADATA` can override the metadata path.
+Use `./update-local.sh --help` for usage. `devstill update` continues to install
+published releases; it does not install local edits.
+
+Generated `build/` and `dist/` directories are ignored and must not be committed.
+The local update script builds outside the checkout so stale build files cannot
+be mixed with current source.
+
 To uninstall the self-contained client and shared model, remove
 `~/.local/bin/devstill` and `~/.local/share/devstill`. This does not remove Pi or any
 per-repository `devstill.json`/`.devstill` data. Use `devstill remove` inside each
@@ -757,7 +784,11 @@ The colored status on each existing file is an inline dropdown for `Read`, `Add`
 replaces an existing file with the next eligible hybrid result, and a confirmed red
 `!` permanently adds that exact path to `retrieval.exclude`. `New` and unresolved
 `Search` rows only offer `×`. Reasons use a white, high-contrast editor while focused
-and save on Enter or focus loss.
+and save on Enter or focus loss. Filenames and reasons occupy aligned columns, with
+reasons wrapping and growing to show their full text, including while editing.
+In cards narrower than 100 terminal cells, reasons appear beneath the filename
+heading with a two-cell indent. Reasons retain their 240-character limit; wrapping
+is visual and does not insert line breaks into the saved plan.
 
 An **Add another file** form stays visible throughout Plan review. Type any part of
 a repository path to get substring and fuzzy matches, use Up/Down and Enter to pick
@@ -921,8 +952,10 @@ statuses are clickable dropdowns in the feed and action buttons appear at the
 bottom-right of the composer. `/agent configure` remains a separate setup form.
 
 Human-readable Search, Context, Plan, Deep Plan, index, and execution results use a
-compact layout. Each Plan item keeps its label and path on one line with its reason
-immediately below it, without a blank spacer row. Decorative blank rows are omitted,
+compact layout. Interactive Plan and Deep Plan review cards align labels, filenames,
+and wrapping reasons in columns, stacking reasons below filenames in narrow cards.
+CLI and Markdown Plan items keep their reason immediately below the label and path,
+without a blank spacer row. Decorative blank rows are omitted,
 and exact source retains only its real line breaks inside code fences. JSON output is
 unchanged.
 
