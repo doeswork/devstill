@@ -17,8 +17,9 @@ from devstill.planning import PlanItem, PlanLabel, PlanOutput, render_plan_json
 
 
 class FakePiRunner:
-    def __init__(self, mutate):
+    def __init__(self, mutate, *, stop_reason=None):
         self.mutate = mutate
+        self.stop_reason = stop_reason
         self.calls = 0
         self.prompts: list[str] = []
         self.provider_max_tokens: list[int] = []
@@ -36,7 +37,8 @@ class FakePiRunner:
         kwargs["log_path"].parent.mkdir(parents=True, exist_ok=True)
         kwargs["log_path"].write_text('{"type":"agent_end"}\n', encoding="utf-8")
         return PiRunResult(
-            events=[{"type": "agent_end"}], tool_calls=3, elapsed_seconds=0.2
+            events=[{"type": "agent_end"}], tool_calls=3, elapsed_seconds=0.2,
+            stop_reason=self.stop_reason,
         )
 
 
@@ -267,7 +269,8 @@ def test_directory_intent_new_target_blocks_execution_before_pi(tmp_path: Path) 
     assert runner.calls == 0
 
 
-def test_partial_execution_gets_one_focused_repair(tmp_path: Path) -> None:
+@pytest.mark.parametrize("stop_reason", [None, "tool_limit", "verification_stalled"])
+def test_partial_execution_gets_one_focused_repair(tmp_path: Path, stop_reason) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "app.py").write_text("value = 1\n", encoding="utf-8")
@@ -288,7 +291,7 @@ def test_partial_execution_gets_one_focused_repair(tmp_path: Path) -> None:
         else:
             (workspace / "new.py").write_text("created = True\n", encoding="utf-8")
 
-    runner = FakePiRunner(mutate)
+    runner = FakePiRunner(mutate, stop_reason=stop_reason)
     prepared = RepositoryExecutor(repo, artifacts, configured(), runner=runner).prepare()
     try:
         assert runner.calls == 2
@@ -299,7 +302,8 @@ def test_partial_execution_gets_one_focused_repair(tmp_path: Path) -> None:
         prepared.close()
 
 
-def test_zero_progress_does_not_retry(tmp_path: Path) -> None:
+@pytest.mark.parametrize("stop_reason", [None, "tool_limit", "verification_stalled"])
+def test_zero_progress_does_not_retry(tmp_path: Path, stop_reason) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "app.py").write_text("value = 1\n", encoding="utf-8")
@@ -309,7 +313,7 @@ def test_zero_progress_does_not_retry(tmp_path: Path) -> None:
         artifacts,
         [PlanItem(label=PlanLabel.MODIFY, target="app.py", reason="Update it.")],
     )
-    runner = FakePiRunner(lambda _workspace: None)
+    runner = FakePiRunner(lambda _workspace: None, stop_reason=stop_reason)
     with pytest.raises(ExecutionError, match="did not change planned Modify"):
         RepositoryExecutor(repo, artifacts, configured(), runner=runner).prepare()
     assert runner.calls == 1
@@ -349,7 +353,8 @@ def test_reviewed_plan_allows_search_but_validates_concrete_targets(
         validate_reviewed_plan(invalid, repo)
 
 
-def test_read_file_mutation_and_unapproved_file_are_rejected(tmp_path: Path) -> None:
+@pytest.mark.parametrize("stop_reason", [None, "tool_limit", "plan_complete"])
+def test_read_file_mutation_and_unapproved_file_are_rejected(tmp_path: Path, stop_reason) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "read.py").write_text("value = 1\n", encoding="utf-8")
@@ -368,7 +373,7 @@ def test_read_file_mutation_and_unapproved_file_are_rejected(tmp_path: Path) -> 
             repo,
             artifacts,
             configured(),
-            runner=FakePiRunner(mutate_read),
+            runner=FakePiRunner(mutate_read, stop_reason=stop_reason),
         ).prepare()
 
     write_plan(
@@ -385,8 +390,31 @@ def test_read_file_mutation_and_unapproved_file_are_rejected(tmp_path: Path) -> 
             repo,
             artifacts,
             configured(),
-            runner=FakePiRunner(add_unapproved),
+            runner=FakePiRunner(add_unapproved, stop_reason=stop_reason),
         ).prepare()
+
+
+def test_completed_budget_limited_run_produces_preview_without_auto_applying(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = repo / "app.py"
+    target.write_text("value = 1\n")
+    artifacts = repo / ".devstill"
+    write_plan(repo, artifacts, [
+        PlanItem(label=PlanLabel.MODIFY, target="app.py", reason="Update it."),
+    ])
+    runner = FakePiRunner(
+        lambda workspace: (workspace / "app.py").write_text("value = 2\n"),
+        stop_reason="tool_limit",
+    )
+    prepared = RepositoryExecutor(repo, artifacts, configured(), runner=runner).prepare()
+    try:
+        assert prepared.result.status == "preview"
+        assert "+value = 2" in prepared.patch
+        assert target.read_text() == "value = 1\n"
+        assert runner.calls == 1
+    finally:
+        prepared.close()
 
 
 def test_apply_rejects_source_changed_after_preview(tmp_path: Path) -> None:

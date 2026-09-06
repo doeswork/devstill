@@ -758,7 +758,8 @@ plans with unresolved `Search` entries, and stages only the approved files in an
 isolated temporary Git repository. Pi runs with reasoning disabled, no session or
 repository context files, a bounded tool budget, and strict Plan-only tools. It can
 read only approved existing files, edit or write only labels that allow it, delete
-only an exact `Delete` target, and finish only through a contract-checking tool.
+only an exact `Delete` target. Devstill checks the staged file contracts before
+producing a patch preview.
 Discovery tools (`ls`, `grep`, and `find`) and the shell are unavailable.
 
 Blue `Read` targets are copied for reference but cannot be changed. Existing green
@@ -772,6 +773,14 @@ traversal, unlisted files, and any read-only change before writing
 If Pi completes part of a Plan but stops early, Devstill makes one fresh, focused
 repair attempt containing only the unmet targets. Zero-progress runs and provider
 errors are not retried. Both attempts remain visible in the Pi event log.
+
+`Check staged changes against Plan` is an automatic file-contract check, not a
+request for user approval. Verification does not consume the read/edit tool-call
+budget. A successful check ends the run immediately; reaching the tool budget or
+repeating a failed check without edits also stops Pi so Devstill can inspect the
+staged changes and use the bounded repair flow if needed. These stops do not bypass
+file-contract validation or automatically apply a patch. The CLI's `--yes` option
+opts into applying a valid finished patch; the TUI uses its **Apply patch** button.
 
 The patch is displayed before application. Interactive CLI and TUI use explicit
 confirmation; `--dry-run` only generates the preview and `--yes` is required for
@@ -789,6 +798,27 @@ reasons wrapping and growing to show their full text, including while editing.
 In cards narrower than 100 terminal cells, reasons appear beneath the filename
 heading with a two-cell indent. Reasons retain their 240-character limit; wrapping
 is visual and does not insert line breaks into the saved plan.
+
+The `?` control on an existing file opens a question dialog and immediately asks
+the configured agent to review the complete file against the current Plan or Deep
+Plan. Its initial review explains the file's role and checks whether the impact
+label and reason match the original request and accepted refinements, highlighting
+mismatches when needed. The request includes every plan item's path, label, and
+reason, plus the full source of the selected file. Other files' source is not read.
+
+Type a question while that review runs. `Enter` sends it, or queues one question
+behind the current response; `Shift+Enter` adds a line. Follow-up answers retain
+the complete file, plan snapshot, and successful conversation turns. Errors stay
+inside the dialog with a **Retry** button. **Close** or `Escape` returns to the plan;
+late replies are ignored. Reopening starts a fresh review of the latest file and
+plan. The discussion does not change labels, reasons, files, or trigger Pi.
+
+`New` and unresolved `Search` entries have a disabled `?` because there is no
+existing file to read. Missing, excluded, binary, or unreadable files produce an
+error before contacting the agent. Source is never silently truncated; if the
+full file and conversation exceed the endpoint's context window, the request error
+is shown. File questions use the configured general output-token limit and planning
+reasoning setting, with the existing agent diagnostics in `.devstill/logs/agent.jsonl`.
 
 An **Add another file** form stays visible throughout Plan review. Type any part of
 a repository path to get substring and fuzzy matches, use Up/Down and Enter to pick

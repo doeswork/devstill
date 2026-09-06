@@ -161,7 +161,7 @@ def test_pi_runner_streams_tools_and_writes_event_log(
     )
     assert result.tool_calls == 4
     assert "Pi · read — src/app.py (offset 10, limit 20)" in progress
-    assert "Pi · verify approved Plan" in progress
+    assert "Pi · check staged changes against Plan" in progress
     assert "Pi · write — src/new.py" in progress
     assert "Pi · tool" in progress
     assert not any("private write payload" in message for message in progress)
@@ -196,6 +196,96 @@ def test_pi_runner_rejects_missing_terminal_event(tmp_path: Path) -> None:
             environment={"DEVSTILL_PI_LABELS": "{}"},
             log_path=tmp_path / "events.jsonl",
         )
+
+
+def tool_event(kind: str, tool: str, **extra) -> dict:
+    return {"type": f"tool_execution_{kind}", "toolName": tool, **extra}
+
+
+def run_lingering_pi(tmp_path: Path, events: list[dict], *, budget=12):
+    script = executable_script(
+        tmp_path,
+        "import json, time\n"
+        f"events = {events!r}\n"
+        "for event in events: print(json.dumps(event), flush=True)\n"
+        "time.sleep(60)\n",
+    )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    progress = []
+    result = PiRunner(str(script)).run(
+        workspace=workspace,
+        config_dir=tmp_path / "config",
+        policy_extension=tmp_path / "policy.ts",
+        prompt="implement",
+        llm=LlmConfig(enabled=True, model="local-model"),
+        executor=ExecutorConfig(timeout_seconds=2, max_tool_calls=budget),
+        environment={},
+        log_path=tmp_path / "events.jsonl",
+        progress=progress.append,
+    )
+    return result, progress
+
+
+def test_successful_plan_check_stops_without_waiting_for_another_model_turn(tmp_path):
+    result, progress = run_lingering_pi(tmp_path, [
+        tool_event("start", "complete_plan", args={}),
+        tool_event("end", "complete_plan", isError=False, result={"details": {"unmet": []}}),
+    ])
+    assert result.stop_reason == "plan_complete"
+    assert result.tool_calls == 1
+    assert "Pi · staged Plan checks passed" in progress
+    assert result.events[-1] == {"type": "devstill_stop", "reason": "plan_complete"}
+
+
+def test_budget_stop_waits_for_every_tool_in_the_batch(tmp_path):
+    result, progress = run_lingering_pi(tmp_path, [
+        tool_event("start", "read", toolCallId="read", args={"path": "app.py"}),
+        tool_event("start", "edit", toolCallId="edit", args={"path": "app.py"}),
+        tool_event("end", "read", toolCallId="read", isError=False),
+        tool_event("end", "edit", toolCallId="edit", isError=False),
+    ], budget=2)
+    assert result.stop_reason == "tool_limit"
+    assert result.tool_calls == 2
+    assert result.events[-2]["toolCallId"] == "edit"
+    assert any("2-tool-call limit reached; checking staged changes" in text for text in progress)
+
+
+def test_repeated_failed_checks_without_edits_stop_and_explain_unmet_contract(tmp_path):
+    failed = tool_event("end", "complete_plan", isError=False,
+                        result={"details": {"unmet": ["app.py: Modify target is unchanged"]}})
+    result, progress = run_lingering_pi(tmp_path, [
+        tool_event("start", "complete_plan", args={}), failed,
+        tool_event("start", "read", args={"path": "app.py"}),
+        tool_event("end", "read", isError=False),
+        tool_event("start", "complete_plan", args={}), failed,
+    ])
+    assert result.stop_reason == "verification_stalled"
+    assert any("app.py: Modify target is unchanged" in text for text in progress)
+    assert any("repeated without edits" in text for text in progress)
+
+
+def test_failed_check_can_be_fixed_before_the_next_check(tmp_path):
+    failed = tool_event("end", "complete_plan", isError=False,
+                        result={"details": {"unmet": ["app.py: Modify target is unchanged"]}})
+    result, _ = run_lingering_pi(tmp_path, [
+        tool_event("start", "complete_plan", args={}), failed,
+        tool_event("start", "edit", args={"path": "app.py"}),
+        tool_event("end", "edit", isError=False),
+        tool_event("start", "complete_plan", args={}),
+        tool_event("end", "complete_plan", isError=False, result={"details": {"unmet": []}}),
+    ])
+    assert result.stop_reason == "plan_complete"
+    assert result.tool_calls == 3
+
+
+def test_errored_completion_is_never_treated_as_verification_success(tmp_path):
+    failed = tool_event("end", "complete_plan", isError=True, result={"details": {"unmet": []}})
+    result, _ = run_lingering_pi(tmp_path, [
+        tool_event("start", "complete_plan", args={}), failed,
+        tool_event("start", "complete_plan", args={}), failed,
+    ])
+    assert result.stop_reason == "verification_stalled"
 
 
 def test_pi_runner_reports_required_tool_provider_errors(tmp_path: Path) -> None:

@@ -25,6 +25,7 @@ const maximumReadChars = Number.parseInt(
 const reasoning = process.env.DEVSTILL_PI_REASONING ?? "off";
 let calls = 0;
 let readChars = 0;
+let completed = false;
 
 function candidatePath(input: string): string {
   return path.resolve(workspace, input);
@@ -92,6 +93,8 @@ export default function (pi: ExtensionAPI) {
       "The Plan is approved. Do not investigate, redesign, explain, or propose alternatives.",
       "Use only active scoped tools and only exact paths named in the Plan.",
       "Read only when required, make the smallest complete edits, and call complete_plan last.",
+      `You have ${maximum} read/edit tool calls; complete_plan does not consume this budget.`,
+      "If complete_plan reports unmet contracts, fix those files before checking again. Repeating the check does not approve them.",
       "Every response must call exactly one tool. Never return prose as the final action.",
     ].join("\n"),
   }));
@@ -184,7 +187,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "complete_plan",
-    label: "Verify approved Plan",
+    label: "Check staged changes",
     description: "Verify every approved Plan file contract and finish only when all pass.",
     promptSnippet: "Verify all Plan contracts and terminate a successful execution",
     parameters: Type.Object({}),
@@ -196,6 +199,7 @@ export default function (pi: ExtensionAPI) {
           details: { unmet },
         };
       }
+      completed = true;
       return {
         content: [{ type: "text", text: "Every approved Plan contract is satisfied." }],
         details: { unmet: [] },
@@ -205,9 +209,16 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("tool_call", async (event) => {
-    calls += 1;
-    if (calls > maximum) {
-      return { block: true, reason: `Devstill tool-call limit (${maximum}) reached.` };
+    if (completed) {
+      return { block: true, reason: "The Plan is already complete; no further tools may run." };
+    }
+    // Verification does not consume a read/edit slot. The Python runner also
+    // ends the run at the budget boundary and independently checks the patch.
+    if (event.toolName !== "complete_plan") {
+      calls += 1;
+      if (calls > maximum) {
+        return { block: true, reason: `Devstill tool-call limit (${maximum}) reached.` };
+      }
     }
     const candidate = resolvedInputPath(event.input);
     if (candidate && (!insideWorkspace(candidate) || !labels.has(candidate))) {

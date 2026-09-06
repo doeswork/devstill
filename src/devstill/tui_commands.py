@@ -40,6 +40,7 @@ from devstill.executor import (
     validate_execution_plan,
     validate_reviewed_plan,
 )
+from devstill.file_questions import FileQuestionSession, prepare_file_questions
 from devstill.git_files import discover_repository_inventory
 from devstill.indexer import RepositoryIndexer
 from devstill.models import FileQuality, IndexProgress, IndexSummary, SearchResult
@@ -523,6 +524,11 @@ class TuiWorkflow:
         self.config = config
         self.repo_root = resolve_repo_root(self.config_path, config)
         self.artifact_root = resolve_index_path(self.config_path, config).parent
+
+    def file_question_session(self, plan: PlanOutput, index: int) -> FileQuestionSession:
+        return prepare_file_questions(
+            self.repo_root, self.config, self.artifact_root, plan, index,
+        )
 
     def save_manual_plan(
         self,

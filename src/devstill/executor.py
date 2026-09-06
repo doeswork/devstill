@@ -574,6 +574,16 @@ class RepositoryExecutor:
             try:
                 _verify_staged_changes(workspace, changed, labels)
             except ExecutionError as exc:
+                if run.stop_reason == "tool_limit":
+                    raise ExecutionError(
+                        f"Pi reached its {self.config.executor.max_tool_calls}-tool-call "
+                        f"limit before completing the Plan: {exc}"
+                    ) from exc
+                if run.stop_reason == "verification_stalled":
+                    raise ExecutionError(
+                        "Pi repeated the Plan check without making the required edits: "
+                        f"{exc}"
+                    ) from exc
                 if run.stop_reason == "length":
                     raise ExecutionError(
                         "Pi reached the resolved context/output limit before the "

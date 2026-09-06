@@ -89,7 +89,7 @@ def _tool_activity(tool: str, args: object) -> str:
     if tool in {"edit", "write", "devstill_delete"} and path:
         return f"Pi · {tool} — {path}"
     if tool == "complete_plan":
-        return "Pi · verify approved Plan"
+        return "Pi · check staged changes against Plan"
     return f"Pi · {tool}"
 
 
@@ -527,6 +527,13 @@ class PiRunner:
         deadline = started + executor.timeout_seconds
         timed_out = False
         agent_ended = False
+        controlled_stop: str | None = None
+        active_tools = 0
+        action_calls = 0
+        mutation_attempts = 0
+        last_failed_check: int | None = None
+        plan_complete = False
+        verification_stalled = False
         while not agent_ended and len(completed_streams) < 2:
             if time.monotonic() >= deadline:
                 timed_out = True
@@ -555,14 +562,57 @@ class PiRunner:
                 events.append(event)
                 if event.get("type") == "tool_execution_start":
                     tool = str(event.get("toolName", "tool"))
+                    active_tools += 1
+                    if tool != "complete_plan":
+                        action_calls += 1
+                    if tool in {"edit", "write", "devstill_delete"}:
+                        mutation_attempts += 1
+                        verification_stalled = False
                     notify(_tool_activity(tool, event.get("args")))
+                if event.get("type") == "tool_execution_end":
+                    active_tools = max(0, active_tools - 1)
+                    if event.get("toolName") == "complete_plan":
+                        result = event.get("result")
+                        details = result.get("details") if isinstance(result, dict) else None
+                        unmet = details.get("unmet") if isinstance(details, dict) else None
+                        if event.get("isError") is False and unmet == []:
+                            plan_complete = True
+                        else:
+                            if isinstance(unmet, list):
+                                reasons = [
+                                    context for value in unmet[:3]
+                                    if (context := _bounded_context(value, _TOOL_CONTEXT_LIMIT))
+                                ]
+                                if reasons:
+                                    notify("Pi · Plan check needs changes — " + "; ".join(reasons))
+                            verification_stalled = last_failed_check == mutation_attempts
+                            last_failed_check = mutation_attempts
+                    # Wait for the current tool batch to finish before stopping:
+                    # killing a running write could leave an incomplete file.
+                    if active_tools == 0:
+                        if plan_complete:
+                            controlled_stop = "plan_complete"
+                            notify("Pi · staged Plan checks passed")
+                        elif action_calls >= executor.max_tool_calls:
+                            controlled_stop = "tool_limit"
+                            notify(
+                                f"Pi · {executor.max_tool_calls}-tool-call limit reached; "
+                                "checking staged changes"
+                            )
+                        elif verification_stalled:
+                            controlled_stop = "verification_stalled"
+                            notify("Pi · Plan check repeated without edits; checking staged changes")
+                        if controlled_stop is not None:
+                            break
                 if event.get("type") == "agent_end":
                     agent_ended = True
         try:
             process.stdin.close()
         except OSError:
             pass
-        forced_stop = False
+        forced_stop = controlled_stop is not None
+        if controlled_stop is not None and process.poll() is None:
+            process.terminate()
         if timed_out:
             try:
                 process.wait(timeout=5)
@@ -575,8 +625,14 @@ class PiRunner:
             except subprocess.TimeoutExpired:
                 forced_stop = True
                 process.terminate()
-                process.wait(timeout=5)
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
         elapsed = time.monotonic() - started
+        if controlled_stop is not None:
+            events.append({"type": "devstill_stop", "reason": controlled_stop})
         log_path.parent.mkdir(parents=True, exist_ok=True)
         mode = "w" if attempt == 1 else "a"
         with log_path.open(mode, encoding="utf-8") as handle:
@@ -601,17 +657,17 @@ class PiRunner:
                 f"Pi execution failed: {detail}.{_provider_error_hint(detail)} "
                 f"Event log: {log_path}"
             )
-        if not agent_ended:
+        if not agent_ended and controlled_stop is None:
             raise PiError(f"Pi ended without an agent_end event. Event log: {log_path}")
         tool_calls = sum(
             event.get("type") == "tool_execution_start" for event in events
         )
         stop_reason, provider_error = _assistant_stop(events)
-        if stop_reason == "error":
+        if stop_reason == "error" and controlled_stop is None:
             detail = provider_error or "the provider returned an error"
             raise PiError(
                 f"Pi provider request failed: {detail}.{_provider_error_hint(detail)} "
                 f"Event log: {log_path}"
             )
         notify(f"Pi finished after {tool_calls} tool calls in {elapsed:.1f}s")
-        return PiRunResult(events, tool_calls, elapsed, stop_reason)
+        return PiRunResult(events, tool_calls, elapsed, controlled_stop or stop_reason)

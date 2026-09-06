@@ -62,6 +62,7 @@ from devstill.tui_commands import (
     parse_tui_command,
     safe_status,
 )
+from devstill.tui_file_questions import FileQuestionScreen
 
 MAX_SESSION_ENTRIES = 50
 SIDEBAR_BREAKPOINT = 100
@@ -297,6 +298,12 @@ class PlanReasonEditor(TextArea):
 
 
 class PlanImpactRow(Vertical):
+    class QuestionRequested(Message):
+        def __init__(self, row: PlanImpactRow) -> None:
+            super().__init__()
+            self.row = row
+            self.index = row.index
+
     class LabelSelected(Message):
         def __init__(self, row: PlanImpactRow, label: PlanLabel) -> None:
             super().__init__()
@@ -380,6 +387,9 @@ class PlanImpactRow(Vertical):
             yield Button(
                 "No", classes="plan-impact-ban-cancel", compact=True, flat=True
             )
+            question = Button("?", classes="plan-impact-question", compact=True, flat=True)
+            question.tooltip = "Ask the AI about the full file and its role in this plan"
+            yield question
 
     def on_resize(self, event: events.Resize) -> None:
         narrow = event.size.width < 100
@@ -409,7 +419,10 @@ class PlanImpactRow(Vertical):
         self._post_reason(event.editor.text)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.has_class("plan-impact-remove"):
+        if event.button.has_class("plan-impact-question"):
+            event.stop()
+            self.post_message(self.QuestionRequested(self))
+        elif event.button.has_class("plan-impact-remove"):
             event.stop()
             self.post_message(self.RemoveRequested(self))
         elif event.button.has_class("plan-impact-refresh"):
@@ -469,6 +482,7 @@ class PlanImpactRow(Vertical):
         self.query_one(PlanReasonEditor).disabled = not editable
         for button in self.query(Button):
             button.disabled = not editable
+        self._sync_actions()
 
     def on_mount(self) -> None:
         for selector in (".plan-impact-ban-confirm", ".plan-impact-ban-cancel"):
@@ -485,6 +499,14 @@ class PlanImpactRow(Vertical):
             refresh.display = concrete
         if ban is not None:
             ban.display = concrete
+        question = self.query_one_optional(".plan-impact-question", Button)
+        reason = self.query_one_optional(PlanReasonEditor)
+        if question is not None:
+            question.disabled = not concrete or (reason is not None and reason.disabled)
+            question.tooltip = (
+                "Ask the AI about the full file and its role in this plan"
+                if concrete else "Questions require an existing file; resolve Search or create the New file first"
+            )
 
 
 class PlanNewFileForm(Vertical):
@@ -727,7 +749,7 @@ class PlanSessionEntry(Vertical):
             )
             yield Static(
                 "[red]×[/red] remove  [blue]↻[/blue] replace  "
-                "[red]![/red] permanently exclude",
+                "[red]![/red] permanently exclude  [cyan]?[/cyan] ask about file",
                 classes="plan-impact-legend",
             )
             yield Static("", classes="plan-impact-status")
@@ -916,19 +938,19 @@ class DevstillApp(App[None]):
     .plan-impact-row {
         layout: grid;
         grid-size: 4;
-        grid-columns: 18 1fr 2fr 18;
+        grid-columns: 18 1fr 2fr 21;
         grid-rows: auto;
         height: auto;
     }
 
     .plan-impact-row.plan-impact-narrow {
         grid-size: 3;
-        grid-columns: 18 1fr 18;
+        grid-columns: 18 1fr 21;
     }
 
     .plan-impact-actions {
         height: 1;
-        width: 18;
+        width: 21;
     }
 
     .plan-impact-label {
@@ -980,7 +1002,7 @@ class DevstillApp(App[None]):
     }
 
     .plan-impact-remove, .plan-impact-refresh, .plan-impact-ban,
-    .plan-impact-ban-confirm, .plan-impact-ban-cancel {
+    .plan-impact-ban-confirm, .plan-impact-ban-cancel, .plan-impact-question {
         width: 3;
         min-width: 3;
         height: 1;
@@ -1005,8 +1027,12 @@ class DevstillApp(App[None]):
         color: $primary;
     }
 
+    .plan-impact-question {
+        color: $accent;
+    }
+
     .plan-impact-legend {
-        height: 1;
+        height: auto;
         color: $text-muted;
         padding: 0 1;
     }
@@ -1953,6 +1979,56 @@ class DevstillApp(App[None]):
         self._refresh_handoff()
         self._handoff_entry.close_new_file_form()
         self._scroll_feed_after_layout()
+
+    async def on_plan_impact_row_question_requested(
+        self,
+        event: PlanImpactRow.QuestionRequested,
+    ) -> None:
+        event.stop()
+        entry = self._handoff_entry
+        if (
+            self._composer_mode is not ComposerMode.PI_HANDOFF
+            or self._busy
+            or self._review_worker is not None
+            or not isinstance(entry, PlanSessionEntry)
+            or event.row not in entry.query(PlanImpactRow)
+            or not event.row.display
+            or event.row.item.label in {PlanLabel.NEW, PlanLabel.SEARCH}
+        ):
+            return
+        create_session = getattr(self.workflow, "file_question_session", None)
+        if not callable(create_session):
+            entry.set_status("This workflow does not support file questions.", error=True)
+            return
+        # Flush pending reason edits before taking the plan snapshot, including
+        # an editor whose blur event is still queued when the button is clicked.
+        drafts = [
+            (row, row.query_one(PlanReasonEditor).text.strip())
+            for row in entry.query(PlanImpactRow)
+            if row.display
+        ]
+        for row, reason in drafts:
+            if reason != row.item.reason:
+                await self.on_plan_impact_row_reason_edited(
+                    PlanImpactRow.ReasonEdited(row, reason)
+                )
+                if row.item.reason != reason:
+                    return
+        offer = self._handoff_offer
+        if (
+            offer is None
+            or offer.plan is None
+            or not 0 <= event.index < len(offer.plan.items)
+        ):
+            return
+        plan = offer.plan.model_copy(deep=True)
+        index = event.index
+        await self.push_screen(
+            FileQuestionScreen(
+                plan.items[index].target,
+                lambda: create_session(plan, index),
+            )
+        )
 
     async def on_plan_impact_row_remove_requested(
         self,
