@@ -95,7 +95,7 @@ def quick_plan(draft: TaskDraft) -> PlanOutput:
 
 
 def run_quick_task(
-    draft, *, repo, artifact_root, config, progress=None, cancelled=None
+    draft, *, repo, artifact_root, config, progress=None, cancelled=None, runner=None
 ):
     report = progress or (lambda message: None)
     is_cancelled = cancelled or (lambda: False)
@@ -142,7 +142,7 @@ def run_quick_task(
             write_plan_artifacts(
                 root, render_plan_markdown(plan), render_plan_json(plan)
             )
-            executor = RepositoryExecutor(repo, root, config)
+            executor = RepositoryExecutor(repo, root, config, runner=runner)
             report("Running Quick with the existing Pi executor")
             prepared = executor.prepare(source="plan", progress=report)
             if is_cancelled():

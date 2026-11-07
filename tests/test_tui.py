@@ -79,7 +79,11 @@ def build_app(tmp_path: Path, workflow=None) -> DevstillApp:
 async def wait_until_idle(app: DevstillApp, pilot) -> None:
     for _ in range(100):
         if not app._busy:
-            return
+            # Worker completion schedules layout of the new review controls.
+            # Let that frame render before a pilot click uses widget coordinates.
+            await pilot.pause()
+            if not app._busy:
+                return
         await pilot.pause(0.02)
     raise AssertionError("TUI command did not finish")
 

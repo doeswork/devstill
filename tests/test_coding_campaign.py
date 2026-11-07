@@ -90,3 +90,17 @@ def test_live_prompt_audit_normalizes_only_checkout_location(tmp_path):
     request["messages"][0]["content"] += " extra instructions"
     (directory / "artifacts/definition.jsonl").write_text(json.dumps(request) + "\n")
     assert not audit_quick(tmp_path)["request_pairs"][0]["same_initial_request"]
+    for variant in ("old", "quick"):
+        path = tmp_path / f"a-0-{variant}/artifacts/definition.jsonl"
+        path.write_text(
+            json.dumps(
+                {
+                    "messages": [{"role": "user", "characters": 100}],
+                    "schema_name": "devstill_plan",
+                }
+            )
+            + "\n"
+        )
+    pair = audit_quick(tmp_path)["request_pairs"][0]
+    assert pair["same_request_summary"]
+    assert pair["same_initial_request"] is None

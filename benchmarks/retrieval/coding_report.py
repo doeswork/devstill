@@ -11,12 +11,140 @@ from pathlib import Path
 
 
 def completed(row):
+    execution = row.get("execution", {})
+    if execution.get("engine") == "composed_quick" and (
+        not execution.get("tasks")
+        or any(
+            t.get("status") not in {"validated", "applied_unvalidated"}
+            for t in execution["tasks"].values()
+        )
+    ):
+        return False
     return (
         row["acceptance_pass"]
         and not row.get("error")
         and row.get("execution", {}).get("status")
         in {"applied", "validated", "applied_unvalidated", "no_changes"}
     )
+
+
+def summarize_features(rows, cases, repeats):
+    expected = {
+        (c["id"], repeat, v)
+        for c in cases
+        for repeat in range(repeats)
+        for v in ("old", "feature")
+    }
+    observed = [(r["id"], r["repeat"], r["variant"]) for r in rows]
+    report = {
+        "complete": len(observed) == len(expected) and set(observed) == expected,
+        "expected_attempts": len(expected),
+        "workloads": {},
+        "promotion": "development diagnostic only; fresh acceptance and aggregate-budget comparison still required",
+    }
+    for workload in sorted({c["workload"] for c in cases}):
+        selected = [r for r in rows if r["workload"] == workload]
+        group = {}
+        for variant in ("old", "feature"):
+            values = [r for r in selected if r["variant"] == variant]
+            ids = {c["id"] for c in cases if c["workload"] == workload}
+            group[variant] = {
+                "attempts": len(values),
+                "behavior_passes": sum(r["acceptance_pass"] for r in values),
+                "workflow_passes": sum(completed(r) for r in values),
+                "consistent_cases": sorted(
+                    id
+                    for id in ids
+                    if len([r for r in values if r["id"] == id]) == repeats
+                    and all(completed(r) for r in values if r["id"] == id)
+                ),
+                "composed_success_cases": sorted(
+                    {
+                        r["id"]
+                        for r in values
+                        if completed(r) and r.get("task_count", 0) >= 2
+                    }
+                ),
+                "dependent_success_cases": sorted(
+                    {
+                        r["id"]
+                        for r in values
+                        if completed(r)
+                        and r.get("task_count", 0) >= 2
+                        and r.get("dependency_edges", 0) > 0
+                    }
+                ),
+            }
+        pairs = [
+            (o, n)
+            for o in selected
+            if o["variant"] == "old"
+            for n in selected
+            if n["variant"] == "feature"
+            and (o["id"], o["repeat"]) == (n["id"], n["repeat"])
+            and completed(o)
+            and completed(n)
+        ]
+        group["paired_successes"] = len(pairs)
+        group["paired_medians"] = {
+            metric: {
+                v: statistics.median(p[i][metric] for p in pairs) if pairs else None
+                for i, v in enumerate(("old", "feature"))
+            }
+            for metric in ("review_seconds", "coding_seconds", "total_seconds")
+        }
+        group["consistent_case_regressions"] = sorted(
+            set(group["old"]["consistent_cases"])
+            - set(group["feature"]["consistent_cases"])
+        )
+        report["workloads"][workload] = group
+    return report
+
+
+def audit_features(root):
+    protocol = json.loads((root / "protocol.json").read_text())
+    rows = json.loads((root / "results.json").read_text())
+    cases = [
+        c
+        for c in json.loads((root / "cases.json").read_text())
+        if c["id"] in protocol["case_ids"]
+    ]
+    report = summarize_features(rows, cases, protocol["repeats"])
+    report["source_audit"] = json.loads((root / "final-audit.json").read_text())
+    for row in rows:
+        artifact = root / f"{row['id']}-{row['repeat']}-{row['variant']}" / "artifacts"
+        direct, assistant, malformed = [], [], 0
+        for path in artifact.rglob("*.jsonl"):
+            if path.name not in {
+                "definition.jsonl",
+                "pi-execute.jsonl",
+            } and not path.name.endswith("-definition.jsonl"):
+                continue
+            for line in path.read_text().splitlines():
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    malformed += 1
+                    continue
+                if path.name == "pi-execute.jsonl":
+                    if (
+                        event.get("type") == "message_end"
+                        and event.get("message", {}).get("role") == "assistant"
+                    ):
+                        assistant.append(event["message"])
+                else:
+                    direct.append(event)
+        row["workflow_pass"] = completed(row)
+        row["logged_direct_http_attempts"] = len(direct)
+        row["logged_pi_generations"] = len(assistant)
+        row["logged_model_calls"] = len(direct) + len(assistant)
+        row["known_direct_tokens"] = sum(
+            (r.get("usage") or {}).get("total_tokens", 0) for r in direct
+        )
+        row["total_tokens"] = None  # Pi usage is not consistently available.
+        row["incomplete_log_lines"] = malformed
+    report["rows"] = rows
+    return report
 
 
 def summarize_quick(rows, case_ids, repeats):
@@ -102,18 +230,30 @@ def audit_quick(root: Path):
                 "model",
                 "endpoint",
             )
+            summaries_match = bool(logs["old"] and logs["quick"]) and all(
+                normalize(logs["old"][0].get(k)) == normalize(logs["quick"][0].get(k))
+                for k in keys
+            )
+            full_messages = (
+                bool(logs["old"] and logs["quick"])
+                and all(
+                    isinstance(m.get("content"), str)
+                    for v in ("old", "quick")
+                    for m in logs[v][0].get("messages", [])
+                )
+                and all(logs[v][0].get("messages") for v in ("old", "quick"))
+            )
             report["request_pairs"].append(
                 {
                     "id": case,
                     "repeat": repeat,
                     "same_retrieval_pool": pools["old"] is not None
                     and pools["old"] == pools["quick"],
-                    "same_initial_request": bool(logs["old"] and logs["quick"])
-                    and all(
-                        normalize(logs["old"][0].get(k))
-                        == normalize(logs["quick"][0].get(k))
-                        for k in keys
-                    ),
+                    "same_request_summary": summaries_match,
+                    "same_initial_request": summaries_match if full_messages else None,
+                    "request_comparison_limit": "Character-count summaries cannot establish prompt-content identity"
+                    if not full_messages
+                    else None,
                     "definition_calls": {v: len(log) for v, log in logs.items()},
                     "definition_schemas": {
                         v: [r["schema_name"] for r in log] for v, log in logs.items()
@@ -269,9 +409,7 @@ if __name__ == "__main__":
     if a.output.exists():
         raise ValueError("Output must be new")
     protocol = json.loads((a.directory / "protocol.json").read_text())
-    report = (
-        audit_quick(a.directory)
-        if protocol.get("candidate") == "quick"
-        else audit(a.directory)
-    )
+    report = {"quick": audit_quick, "feature": audit_features}.get(
+        protocol.get("candidate"), audit
+    )(a.directory)
     a.output.write_text(json.dumps(report, indent=2) + "\n")

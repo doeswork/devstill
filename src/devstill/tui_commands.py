@@ -41,6 +41,17 @@ from devstill.executor import (
     validate_execution_plan,
     validate_reviewed_plan,
 )
+from devstill.feature_planning import (
+    FeatureBudget,
+    FeatureClient,
+    FeatureDraft,
+    create_feature_draft,
+    load_feature,
+    render_feature_review,
+    retrieve_feature_candidates,
+    save_feature,
+)
+from devstill.feature_runs import render_feature_run, run_feature
 from devstill.file_questions import FileQuestionSession, prepare_file_questions
 from devstill.git_files import discover_repository_inventory
 from devstill.indexer import RepositoryIndexer
@@ -75,6 +86,9 @@ class TuiCommandKind(str, Enum):
     TASK = "task"
     YOLO = "yolo"
     TASK_RUN = "task_run"
+    FEATURE = "feature"
+    FEATURE_YOLO = "feature_yolo"
+    FEATURE_RUN = "feature_run"
     SEARCH = "search"
     CONTEXT = "context"
     PLAN = "plan"
@@ -101,6 +115,8 @@ class CommandSpec:
 COMMAND_SPECS = (
     CommandSpec("/task ", "Task Review", "Review file impacts before running Quick", TuiCommandKind.TASK),
     CommandSpec("/yolo ", "YOLO", "Retrieve, edit and check without review", TuiCommandKind.YOLO),
+    CommandSpec("/feature ", "Feature Review", "Coordinate several Quick tasks", TuiCommandKind.FEATURE),
+    CommandSpec("/feature-yolo ", "Feature YOLO", "Coordinate and run without review", TuiCommandKind.FEATURE_YOLO),
     CommandSpec(
         "/search ", "Search", "Find relevant code locally", TuiCommandKind.SEARCH
     ),
@@ -163,7 +179,7 @@ class TuiResult:
     markdown: str
     prepared_execution: PreparedExecution | None = None
     execution_offer: TuiExecutionOffer | None = None
-    task_review: TaskDraft | None = None
+    task_review: TaskDraft | FeatureDraft | None = None
     task_state: dict | None = None
 
 
@@ -261,12 +277,14 @@ def parse_tui_command(value: str) -> TuiCommand:
         "/?": "/help",
     }
     name = aliases.get(name, name)
-    if name in {"/task", "/yolo", "/search", "/context", "/plan", "/deep-plan"}:
+    if name in {"/task", "/yolo", "/feature", "/feature-yolo", "/search", "/context", "/plan", "/deep-plan"}:
         if not query:
             raise ValueError(f"{name} requires a query.")
         kind = {
             "/task": TuiCommandKind.TASK,
             "/yolo": TuiCommandKind.YOLO,
+            "/feature": TuiCommandKind.FEATURE,
+            "/feature-yolo": TuiCommandKind.FEATURE_YOLO,
             "/search": TuiCommandKind.SEARCH,
             "/context": TuiCommandKind.CONTEXT,
             "/plan": TuiCommandKind.PLAN,
@@ -323,6 +341,7 @@ def help_markdown() -> str:
             "Plain text uses the selected Task Review, YOLO or Search mode. Task Review is the startup default.",
             "`/task` reviews file impacts before one Run action; `/yolo` edits without review. Both use the configured model and the same scope checks.",
             "Both modes use compact file-impact review followed by the existing bounded Quick executor. No task decomposition is generated.",
+            "Choose Feature explicitly for one coordinating plan followed by serial Quick tasks. Review/YOLO is a separate choice. `/feature` reviews; `/feature-yolo` runs immediately.",
             "`/search` stays local. Legacy `/plan`, `/deep-plan`, `/execute`, and `/agent test` use the configured model.",
             "Advanced flags, rebuilds, configuration, and removal remain available in the CLI.",
             "",
@@ -482,6 +501,7 @@ class TuiWorkflow:
         self.repo_root = resolve_repo_root(config_path, config)
         self.artifact_root = resolve_index_path(config_path, config).parent
         self._tasks_cancelled = Event()
+        self._tasks_closed = Event()
         self._runtime = TuiRetrievalRuntime(
             config_path,
             config,
@@ -840,11 +860,19 @@ class TuiWorkflow:
         return offer.plan
 
     def close(self) -> None:
+        self._tasks_closed.set()
         self.cancel_tasks()
         self._runtime.close()
 
     def cancel_tasks(self) -> None:
         self._tasks_cancelled.set()
+
+    def tasks_cancelled(self) -> bool:
+        return self._tasks_cancelled.is_set() or self._tasks_closed.is_set()
+
+    def reset_task_cancellation(self) -> None:
+        if not self._tasks_closed.is_set():
+            self._tasks_cancelled.clear()
 
     def warm(self, report: ProgressCallback | None = None) -> None:
         """Open the persistent vector store and load the encoder for this session."""
@@ -912,6 +940,36 @@ class TuiWorkflow:
         progress: ProgressCallback | None = None,
     ) -> TuiResult:
         report = progress or (lambda _message: None)
+        if command.kind in {TuiCommandKind.TASK, TuiCommandKind.YOLO, TuiCommandKind.TASK_RUN,
+                            TuiCommandKind.FEATURE, TuiCommandKind.FEATURE_YOLO, TuiCommandKind.FEATURE_RUN} and self._tasks_closed.is_set():
+            raise ValueError("Workflow is closed")
+        if command.kind in {TuiCommandKind.FEATURE, TuiCommandKind.FEATURE_YOLO}:
+            if not self.config.llm.enabled:
+                raise ValueError("Agent is disabled. Configure its endpoint and model first.")
+            from uuid import uuid4
+            budget = FeatureBudget(self.config.feature.timeout_seconds, cancelled=self.tasks_cancelled)
+            report("Discovering feature context")
+            engine = self._open_search(report)
+            try:
+                candidates = retrieve_feature_candidates(engine, command.query)
+            finally:
+                engine.close()
+            budget.remaining()
+            log_path = self.artifact_root / "logs" / f"feature-discovery-{uuid4().hex}.jsonl"
+            with FeatureClient(self.config.llm, budget=budget, log_path=log_path) as client:
+                draft = create_feature_draft(client, query=command.query, repo=self.repo_root,
+                    candidates=candidates, mode="yolo" if command.kind == TuiCommandKind.FEATURE_YOLO else "review", config=self.config)
+            budget.remaining()
+            draft.discovery_seconds = budget.spent
+            directory = save_feature(self.artifact_root, draft)
+            (directory / "discovery-log.txt").write_text(str(log_path) + "\n")
+            if command.kind == TuiCommandKind.FEATURE_YOLO:
+                return self.run_feature(draft, report)
+            return TuiResult("Feature Review", render_feature_review(draft), task_review=draft)
+
+        if command.kind == TuiCommandKind.FEATURE_RUN:
+            return self.run_feature(load_feature(self.artifact_root, command.query), report)
+
         if command.kind in {TuiCommandKind.TASK, TuiCommandKind.YOLO}:
             if not self.config.llm.enabled:
                 raise ValueError("Agent is disabled. Configure its endpoint and model first.")
@@ -1284,10 +1342,22 @@ class TuiWorkflow:
 
         raise ValueError(f"{command.kind.value} is handled by the interface")
 
+    def run_feature(self, draft: FeatureDraft, progress: ProgressCallback | None = None) -> TuiResult:
+        report = progress or (lambda message: None)
+        def retrieve(query):
+            engine = self._open_search(report)
+            try:
+                return engine.query(query, limit=planning_retrieval_limit(PLAN_MAX_CHUNKS))
+            finally:
+                engine.close()
+        state = run_feature(draft, repo=self.repo_root, artifact_root=self.artifact_root,
+            config=self.config, retrieve=retrieve, progress=report, cancelled=self.tasks_cancelled)
+        return TuiResult("Feature result", render_feature_run(state), task_state=state)
+
     def run_task(self, draft: TaskDraft, progress: ProgressCallback | None = None) -> TuiResult:
         state = run_tasks(
             draft, repo=self.repo_root, artifact_root=self.artifact_root,
-            config=self.config, progress=progress, cancelled=self._tasks_cancelled.is_set,
+            config=self.config, progress=progress, cancelled=self.tasks_cancelled,
         )
         return TuiResult("Task result", render_task_run(state), task_state=state)
 

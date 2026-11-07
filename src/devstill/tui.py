@@ -44,6 +44,7 @@ from devstill.credentials import (
     store_api_key,
 )
 from devstill.executor import PreparedExecution
+from devstill.feature_planning import FeatureDraft
 from devstill.models import IndexProgress
 from devstill.pi_runtime import inspect_pi
 from devstill.planning import PlanItem, PlanLabel, PlanOutput
@@ -1217,6 +1218,7 @@ class DevstillApp(App[None]):
     CSS += """
     #task-mode-row { height: 3; }
     #task-mode { width: 22; }
+    #request-type { width: 20; }
     #task-mode-help { width: 1fr; padding: 1 1 0 1; color: $text-muted; }
     """
     BINDINGS: ClassVar = [
@@ -1259,7 +1261,7 @@ class DevstillApp(App[None]):
         self._resolving_search_index: int | None = None
         self._resolving_search_label: PlanLabel | None = None
         self._pi_status = inspect_pi()
-        self._task_review: TaskDraft | None = None
+        self._task_review: TaskDraft | FeatureDraft | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -1278,6 +1280,10 @@ class DevstillApp(App[None]):
                     yield OptionList(id="command-palette", compact=True)
                     with Horizontal(id="task-mode-row"):
                         yield Select(
+                            (("Quick task", "quick"), ("Feature", "feature")),
+                            value="quick", allow_blank=False, id="request-type",
+                        )
+                        yield Select(
                             (("Task Review", "review"), ("YOLO", "yolo"), ("Search", "search")),
                             value="review", allow_blank=False, id="task-mode",
                         )
@@ -1295,6 +1301,7 @@ class DevstillApp(App[None]):
                         yield Button("Cancel", id="cancel-task")
                         yield Button("Edit request", id="edit-task")
                         yield Button("Run task", id="run-task", variant="success")
+                        yield Button("Stop feature", id="stop-feature", variant="warning")
                         yield Button("Not now", id="cancel-pi-handoff")
                         yield Button(
                             "Preview with Pi",
@@ -1371,6 +1378,7 @@ class DevstillApp(App[None]):
         sidebar = self.query_one("#sidebar-commands", OptionList)
         sidebar.disabled = mode is not ComposerMode.NORMAL
         self.query_one("#task-mode", Select).disabled = self._busy or mode is not ComposerMode.NORMAL
+        self.query_one("#request-type", Select).disabled = self._busy or mode is not ComposerMode.NORMAL or self.query_one("#task-mode", Select).value == "search"
         self._hide_palette()
         if mode is ComposerMode.NORMAL:
             selected = self.query_one("#task-mode", Select).value
@@ -1385,6 +1393,9 @@ class DevstillApp(App[None]):
             count = len(draft.plan.tasks) if draft else 0
             button = self.query_one("#run-task", Button)
             button.label = "Run task" if count == 1 else f"Run {count} tasks"
+            if isinstance(draft, FeatureDraft):
+                button.label = "Run feature"
+                prompt.placeholder = "Review the feature, then Run feature or Edit request"
             button.disabled = self._busy or draft is None or bool(draft.plan.unresolved)
         elif mode is ComposerMode.PI_HANDOFF:
             prompt.placeholder = "Refine this plan, then press Enter"
@@ -1872,7 +1883,9 @@ class DevstillApp(App[None]):
         try:
             if not value.lstrip().startswith("/"):
                 selected = self.query_one("#task-mode", Select).value
-                value = {"review": "/task ", "yolo": "/yolo ", "search": "/search "}[selected] + value
+                feature = self.query_one("#request-type", Select).value == "feature"
+                prefixes = {"review": "/feature " if feature else "/task ", "yolo": "/feature-yolo " if feature else "/yolo ", "search": "/search "}
+                value = prefixes[selected] + value
             command = parse_tui_command(value)
         except ValueError as exc:
             await self._append_entry(value, str(exc), error=True)
@@ -2140,6 +2153,11 @@ class DevstillApp(App[None]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id
+        if button_id == "stop-feature":
+            self.workflow.cancel_tasks()
+            event.button.disabled = True
+            self.query_one("#activity", Static).update("Stopping feature before further application; applied changes remain")
+            return
         if button_id in {"cancel-task", "edit-task", "run-task"}:
             if self._busy or self._task_review is None:
                 return
@@ -2149,9 +2167,10 @@ class DevstillApp(App[None]):
             self._task_review = None
             self._set_composer_mode(ComposerMode.NORMAL)
             if button_id == "run-task":
-                self._start_worker(TuiCommand(TuiCommandKind.TASK_RUN, f"Run task {draft.id}", draft.id))
+                self._start_worker(TuiCommand(TuiCommandKind.FEATURE_RUN if isinstance(draft, FeatureDraft) else TuiCommandKind.TASK_RUN, f"Run {'feature' if isinstance(draft, FeatureDraft) else 'task'} {draft.id}", draft.id))
             elif button_id == "edit-task":
                 self.query_one("#task-mode", Select).value = "review"
+                self.query_one("#request-type", Select).value = "feature" if isinstance(draft, FeatureDraft) else "quick"
                 self.query_one("#command-input", PromptTextArea).text = draft.query
                 self.query_one("#command-input", PromptTextArea).focus()
             else:
@@ -2347,12 +2366,18 @@ class DevstillApp(App[None]):
             await self.submit_text("/agent test")
 
     def _start_worker(self, command: TuiCommand) -> None:
+        if command.kind in {TuiCommandKind.TASK, TuiCommandKind.YOLO, TuiCommandKind.TASK_RUN,
+                            TuiCommandKind.FEATURE, TuiCommandKind.FEATURE_YOLO, TuiCommandKind.FEATURE_RUN}:
+            reset = getattr(self.workflow, "reset_task_cancellation", None)
+            if callable(reset):
+                reset()
         self._busy = True
         self._active_command = command
         self._live_entry = None
         prompt = self.query_one("#command-input", PromptTextArea)
         prompt.disabled = True
         self.query_one("#task-mode", Select).disabled = True
+        self.query_one("#request-type", Select).disabled = True
         self.query_one("#busy", LoadingIndicator).display = True
         file_progress = self.query_one("#file-progress", Static)
         file_progress.display = command.kind is TuiCommandKind.INDEX
@@ -2361,6 +2386,9 @@ class DevstillApp(App[None]):
         progress_bar.display = command.kind is TuiCommandKind.INDEX
         progress_bar.update(total=100, progress=0)
         self.query_one("#activity", Static).update(f"Running {escape(command.raw)}")
+        if command.kind in {TuiCommandKind.FEATURE, TuiCommandKind.FEATURE_YOLO, TuiCommandKind.FEATURE_RUN}:
+            self._show_composer_actions("stop-feature")
+            self.query_one("#stop-feature", Button).disabled = False
         self._active_worker = self.run_worker(
             lambda: self.workflow.execute(command, self._thread_progress),
             name=command.kind.value,
@@ -2563,7 +2591,7 @@ class DevstillApp(App[None]):
                 else "Ready"
             )
             if result is not None and result.task_state is not None:
-                activity = f"Task run: {result.task_state['status']}"
+                activity = f"{'Feature' if result.task_state.get('engine') == 'composed_quick' else 'Task'} run: {result.task_state['status']}"
             self._finish_worker(activity)
             if task_review is not None:
                 self._task_review = task_review
@@ -2844,13 +2872,15 @@ class DevstillApp(App[None]):
         sidebar.display = self._sidebar_manual
 
     def on_select_changed(self, event: Select.Changed) -> None:
-        if event.select.id != "task-mode" or event.value is Select.BLANK:
+        if event.select.id not in {"task-mode", "request-type"} or event.value is Select.BLANK:
             return
+        selected = self.query_one("#task-mode", Select).value
+        feature = self.query_one("#request-type", Select).value == "feature"
         self.query_one("#task-mode-help", Static).update({
-            "review": "Review file impacts before running",
-            "yolo": "Runs immediately · no review · same scope and checks",
+            "review": "Review feature tasks and scope" if feature else "Review file impacts before running",
+            "yolo": "Feature runs serially without review" if feature else "Runs immediately · no review · same scope and checks",
             "search": "Local lookup · no edits",
-        }[event.value])
+        }[selected])
         if self._composer_mode is ComposerMode.NORMAL:
             self._set_composer_mode(ComposerMode.NORMAL)
 

@@ -85,10 +85,12 @@ benchmark tests. Failed attempts are excluded from paired speed comparisons.
 The unsuccessful age edit took 50.47 s old / 45.80 s Task through acceptance;
 this restoration has not eliminated slow failures.
 
-The post-run audit found **12/12 identical retrieval pools and 12/12 identical
-initial model requests**, normalizing only disposable repository paths. Prompts,
-source contents/order, model, endpoint, response mode, output cap and reasoning
-mode matched. Both used one `devstill_plan` generation per case; both needed the
+The corrected post-run audit found **12/12 identical retrieval pools and 12/12
+matching request summaries**. The logs store message character counts, not full
+message contents, so the live audit cannot establish exact prompt identity. The
+earlier report overstated that conclusion. Exact prompt/schema/executor parity is
+covered by the controlled tests described below. Model, endpoint, response mode,
+output cap and reasoning mode matched in the live logs. Both used one `devstill_plan` generation per case; both needed the
 existing `devstill_plan_repair` for `c_ci_empty`. No generated Task schema was used.
 
 | Case | Requested change | Old Quick | Task using Quick |

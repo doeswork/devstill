@@ -51,6 +51,7 @@ from devstill.executor import (
     RepositoryExecutor,
     render_execution_markdown,
 )
+from devstill.feature_planning import load_feature, render_feature_review
 from devstill.git_files import discover_repository_inventory
 from devstill.indexer import RepositoryIndexer
 from devstill.installation import load_install_metadata
@@ -317,6 +318,12 @@ def parser() -> argparse.ArgumentParser:
     task.add_argument("--run", dest="run_id", help="Run a previously reviewed task ID.")
     task.add_argument("--yolo", action="store_true", help="Execute without review; scope and validation checks still apply.")
     task.add_argument("--json", action="store_true", help="Print JSON; review-only unless --yolo is supplied.")
+
+    feature = sub.add_parser("feature", help="Review a feature and run its Quick tasks serially.")
+    feature.add_argument("query", nargs="?", help="The complete feature outcome.")
+    feature.add_argument("--run", dest="run_id", help="Run a saved feature review.")
+    feature.add_argument("--yolo", action="store_true", help="Run without a review stop.")
+    feature.add_argument("--json", action="store_true", help="Print JSON; review-only unless --yolo is supplied.")
 
     plan = sub.add_parser(
         "plan",
@@ -1255,21 +1262,27 @@ def deep_plan_command(args: argparse.Namespace) -> int:
 
 
 def task_command(args: argparse.Namespace) -> int:
+    feature = args.command == "feature"
+    noun = "feature" if feature else "task"
+    loader = load_feature if feature else load_task_draft
+    render = render_feature_review if feature else render_task_review
     if bool(args.query) == bool(args.run_id):
         raise ValueError("Provide a task request or --run ID, but not both")
     config_path, config = _configured()
     workflow = TuiWorkflow(config_path, config)
+    def run(draft, report):
+        return (workflow.run_feature if feature else workflow.run_task)(draft, report)
     report = lambda message: diagnostic_console.print(message, markup=False)
     try:
         if args.run_id:
-            draft = load_task_draft(workflow.artifact_root, args.run_id)
+            draft = loader(workflow.artifact_root, args.run_id)
             if args.yolo:
-                result = workflow.run_task(draft, report)
+                result = run(draft, report)
             else:
                 result = None
         else:
             result = workflow.execute(
-                TuiCommand(TuiCommandKind.YOLO if args.yolo else TuiCommandKind.TASK, args.query, args.query),
+                TuiCommand((TuiCommandKind.FEATURE_YOLO if args.yolo else TuiCommandKind.FEATURE) if feature else (TuiCommandKind.YOLO if args.yolo else TuiCommandKind.TASK), args.query, args.query),
                 report,
             )
             draft = result.task_review
@@ -1277,17 +1290,17 @@ def task_command(args: argparse.Namespace) -> int:
             if args.json:
                 print(draft.model_dump_json(indent=2))
                 return 0
-            print(render_task_review(draft), end="")
+            print(render(draft), end="")
             if draft.plan.unresolved:
                 return 1
             if not sys.stdin.isatty():
-                diagnostic_console.print(f"Run this task with: devstill task --run {draft.id} --yolo", markup=False)
+                diagnostic_console.print(f"Run this {noun} with: devstill {noun} --run {draft.id} --yolo", markup=False)
                 return 0
-            diagnostic_console.print("Run this task now? [y/N] ", end="")
+            diagnostic_console.print(f"Run this {noun} now? [y/N] ", end="")
             if sys.stdin.readline().strip().casefold() not in {"y", "yes"}:
                 diagnostic_console.print("Task saved for review; no changes applied.")
                 return 0
-            result = workflow.run_task(draft, report)
+            result = run(draft, report)
         if args.json:
             print(json.dumps(result.task_state, indent=2))
         else:
@@ -1400,7 +1413,7 @@ def main() -> None:
             raise SystemExit(agent_command(args))
         if args.command == "plan":
             raise SystemExit(plan_command(args))
-        if args.command == "task":
+        if args.command in {"task", "feature"}:
             raise SystemExit(task_command(args))
         if args.command == "deep-plan":
             raise SystemExit(deep_plan_command(args))

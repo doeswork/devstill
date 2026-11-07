@@ -1,5 +1,10 @@
 # Retrieval benchmark plan and agent handoff
 
+**Direct Pi baseline:** [stock Pi YOLO versus Quick and feature coordination](PI_COMPARISON.md). Includes frozen source/runtime records, full model-call traces, paired correctness/latency reporting, and standards for development and fresh evaluation.
+The [integration smoke results](PI_SMOKE_RESULTS.md) passed coding/acceptance and final integrity checks; they do not establish a speed or quality advantage.
+
+**Current feature implementation:** [serial Quick composition, verification and benchmark commands](FEATURE_IMPLEMENTATION.md). The user selects Quick or Feature explicitly. The [completed comparisons and coordinator revision](FEATURE_COORDINATION_RESULTS.md) show working dependent tasks, but feature parity with Quick has not been achieved. [Design plan](FEATURE_TASK_PLAN.md).
+
 **Current direction:** [Quick restored underneath Task Review/YOLO](QUICK_RESTORE_RESULTS.md). Small-edit parity comes first; feature decomposition is deferred. The Task v1/v2 results below describe the superseded structured-edit experiments.
 
 **Latest 24-case coding comparison:** [144 attempts, failed parity gates, and per-request results](TASK_V2_RESULTS.md).
@@ -12,7 +17,7 @@
 
 **Implementation results:** [deterministic retrieval changes, controlled measurements and remaining release gates](IMPLEMENTATION_RESULTS.md).
 
-**Latest strategy:** [one-shot tasks composed into features](ONE_SHOT_STRATEGY.md). Start there for the next benchmark prototype: one reusable Devstill Task, explicit dependency contracts, bounded execution and validation of the combined feature. It replaces the proposed Quick/Feature/Mix modes.
+**Historical strategy:** [one-shot tasks composed into features](ONE_SHOT_STRATEGY.md). Its mandatory per-request Task Plan and separate coder were superseded. Use the explicit Quick/Feature plan above for the next implementation.
 
 **Earlier design:** [small-edit and feature retrieval plan, tested prototypes, and implementation handoff](NEXT_PLAN.md). The original campaign and protocol below remain useful background.
 

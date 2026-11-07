@@ -226,6 +226,24 @@ class ExecutorConfig(StrictModel):
         return commands
 
 
+class FeatureConfig(StrictModel):
+    timeout_seconds: float = Field(default=180, ge=1, le=3600)
+    checks: dict[str, list[str]] = Field(default_factory=dict)
+    task_checks: list[str] | None = None
+    final_checks: list[str] | None = None
+
+    @model_validator(mode="after")
+    def validate_checks(self):
+        for name, commands in self.checks.items():
+            if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", name):
+                raise ValueError("Feature check IDs must be simple names")
+            self.checks[name] = ExecutorConfig.validate_commands(commands)
+        for names in (self.task_checks, self.final_checks):
+            if names is not None and set(names) - self.checks.keys():
+                raise ValueError("Unknown configured feature check ID")
+        return self
+
+
 class DevstillConfig(StrictModel):
     version: int = 1
     repo: RepoConfig = Field(default_factory=RepoConfig)
@@ -235,6 +253,7 @@ class DevstillConfig(StrictModel):
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
     executor: ExecutorConfig = Field(default_factory=ExecutorConfig)
+    feature: FeatureConfig = Field(default_factory=FeatureConfig)
 
 
 def default_model_path() -> Path:

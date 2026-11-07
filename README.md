@@ -1,7 +1,7 @@
 devstill
 `devstill` is a standalone, local-first repository-intelligence TUI for developers and AI coding agents.
 Run `devstill` from any directory inside a configured codebase. It searches upward through parent directories until it finds a `devstill.json`, then opens the TUI for that repository.
-The goal is fast local retrieval followed by compact coding tasks. Indexing and embeddings stay local; Task Review and YOLO send selected source only to the configured model endpoint. Task Review and YOLO use the existing Quick retrieval, file-impact review and Pi executor. Feature decomposition is deferred until the small-task foundation is reliable.
+The goal is fast local retrieval followed by compact coding tasks. Indexing and embeddings stay local; Task Review and YOLO send selected source only to the configured model endpoint. Task Review and YOLO use the existing Quick retrieval, file-impact review and Pi executor. Explicit Feature mode coordinates serial Quick tasks; feature quality remains experimental ([comparison results](benchmarks/retrieval/FEATURE_COORDINATION_RESULTS.md)).
 Project goals
 `devstill` should provide several complementary search modes:
 Exact symbol lookup for known functions, classes, methods, fields, and paths
@@ -1009,10 +1009,20 @@ The experimental dependency scheduler and structured-edit engine remain readable
 for older saved drafts (`engine: structured`, also the default for drafts without
 an engine field). New Task Review/YOLO drafts use `engine: quick`.
 `task_concurrency` and `task_validation_commands` apply only to that older
-experimental engine; Quick uses `validation_commands`. Feature decomposition is
-not part of the current default path. See
+experimental engine; Quick uses `validation_commands`. Feature coordination is available only when explicitly selected; Quick remains
+the default. See
 [the Quick restoration and small-edit comparison](benchmarks/retrieval/QUICK_RESTORE_RESULTS.md)
 and [the historical failed Task comparison](benchmarks/retrieval/TASK_V2_RESULTS.md).
+
+Choose **Feature** beside the Review/YOLO selector for multiple Quick tasks.
+`/feature` reviews a coordinating plan; `/feature-yolo` runs it without a review
+stop. CLI equivalents are `devstill feature "request" [--yolo]` and
+`devstill feature --run FEATURE_ID --yolo`. Quick remains the startup default.
+Features run serially, refresh context between children, and stop on failed
+checks, stale inputs or scope conflicts. **Stop feature** prevents further work;
+applied changes remain. See [the implementation and benchmark handoff](benchmarks/retrieval/FEATURE_IMPLEMENTATION.md)
+for validation settings, limits and the prepared comparison commands. The [live feature comparison](benchmarks/retrieval/FEATURE_COORDINATION_RESULTS.md)
+shows progress, but feature mode still trails Quick on whole-feature acceptance.
 
 Interactive TUI
 
