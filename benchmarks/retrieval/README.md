@@ -2,7 +2,9 @@
 
 **Implementation results:** [deterministic retrieval changes, controlled measurements and remaining release gates](IMPLEMENTATION_RESULTS.md).
 
-**Latest follow-up:** [small-edit and feature retrieval plan, tested prototypes, and implementation handoff](NEXT_PLAN.md). Start there for the next implementation. The original campaign and protocol below remain useful background.
+**Latest strategy:** [one-shot tasks composed into features](ONE_SHOT_STRATEGY.md). Start there for the next benchmark prototype: one reusable Devstill Task, explicit dependency contracts, bounded execution and validation of the combined feature. It replaces the proposed Quick/Feature/Mix modes.
+
+**Earlier design:** [small-edit and feature retrieval plan, tested prototypes, and implementation handoff](NEXT_PLAN.md). The original campaign and protocol below remain useful background.
 
 Improve the evidence Devstill retrieves for repository questions and planning, while preserving fast local search. Start with a repeatable baseline, diagnose misses, then change one mechanism at a time. Production retrieval code is outside this package. The runner never calls Qwen, generates a plan, or executes a patch.
 
