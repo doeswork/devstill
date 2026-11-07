@@ -1,7 +1,7 @@
 devstill
 `devstill` is a standalone, local-first repository-intelligence TUI for developers and AI coding agents.
 Run `devstill` from any directory inside a configured codebase. It searches upward through parent directories until it finds a `devstill.json`, then opens the TUI for that repository.
-The long-term goal is to make `devstill` the fastest and most useful way for a human or local AI agent to understand, search, and navigate a Git repository. Indexing and retrieval stay local; `devstill plan` transmits selected source only to the endpoint the user explicitly configures.
+The goal is fast local retrieval followed by compact coding tasks. Indexing and embeddings stay local; Task Review and YOLO send selected source only to the configured model endpoint. Task Review and YOLO use the existing Quick retrieval, file-impact review and Pi executor. Feature decomposition is deferred until the small-task foundation is reliable.
 Project goals
 `devstill` should provide several complementary search modes:
 Exact symbol lookup for known functions, classes, methods, fields, and paths
@@ -945,20 +945,86 @@ and persistence progress on stderr, including checked/changed/unchanged/parsed f
 counts. The optional `optimum`/ONNX warning from the embedding model is suppressed;
 ONNX support is not used by Devstill's normal embedding workflow.
 
+Task Review and YOLO
+
+Both modes use the existing Quick engine: local hybrid retrieval, compact
+file-impact classification, then scoped Pi execution. There is no generated task
+breakdown, child-task plan or separate structured-edit prompt on this path.
+
+- **Task Review** shows Read/Add/Remove/Modify/Delete/New file impacts. **Run task**
+  approves coding and application together, without a second patch approval.
+- **YOLO** uses the same engine and scope checks, skipping the review stop.
+- **Search** performs local lookup without edits or a model call.
+
+The TUI starts in Task Review. The mode selector applies to ordinary text;
+`/task`, `/yolo` and `/search` explicitly choose a mode for that request. YOLO is
+never saved as the next session's default. **Edit request** returns a review to
+the composer; **Cancel** keeps its artifacts without running it.
+
+```bash
+devstill task "Change the submit button from green to blue"
+devstill task "Change the submit button from green to blue" --yolo
+devstill task "Make the header parser reject blank names" --json
+devstill task --run RUN_ID --yolo
+```
+
+Interactive CLI Task Review asks once whether to run the displayed task.
+With redirected stdin or `--json`, it saves the review without executing it;
+use the printed run ID to execute later. `--yolo --json` returns the execution
+result and exits nonzero on failure. Started runs cannot be replayed automatically.
+
+Quick retrieves 12 candidates and packs up to five chunks with the original
+adaptive selection and token budgeting. Tests are included when the request asks
+for them. The original file-impact classifier and its bounded format repair are
+unchanged. Task IDs, display metadata and run state are created locally; they
+require no extra generation. The original request and file impacts go directly to
+`RepositoryExecutor`, using the existing Pi prompts, tools and limits. Pi can
+make multiple bounded tool/model calls and one focused repair for a partial
+change; this is not a promise of a single model response per edit.
+
+Configure checks using the existing executor setting:
+
+```json
+{
+  "executor": {
+    "validation_commands": ["python -m pytest -q"]
+  }
+}
+```
+
+Only configured commands execute. Without checks the result is
+`applied_unvalidated`; `validated` means those checks passed. A failed check
+reports failure and leaves the applied patch available for inspection. Closing
+the TUI signals cancellation before application; already applied changes remain.
+
+Reviews, source hashes, selected evidence, model logs, patches, checks and run
+status live under `.devstill/tasks/RUN_ID/`. The original Plan/Pi artifacts are
+stored in its `quick/` subdirectory, so a task does not overwrite a separate
+`/plan` review. Source changes since retrieval/review stop application, and a
+successful write requests incremental indexing before the next task retrieval.
+Unresolved Search entries block execution. The existing Pi scope checks still
+reject unapproved writes and enforce the reviewed file impacts.
+
+The experimental dependency scheduler and structured-edit engine remain readable
+for older saved drafts (`engine: structured`, also the default for drafts without
+an engine field). New Task Review/YOLO drafts use `engine: quick`.
+`task_concurrency` and `task_validation_commands` apply only to that older
+experimental engine; Quick uses `validation_commands`. Feature decomposition is
+not part of the current default path. See
+[the Quick restoration and small-edit comparison](benchmarks/retrieval/QUICK_RESTORE_RESULTS.md)
+and [the historical failed Task comparison](benchmarks/retrieval/TASK_V2_RESULTS.md).
+
 Interactive TUI
 
 Run `devstill` from anywhere beneath an initialized repository. The prompt accepts
-ordinary natural-language searches and slash commands:
+ordinary task requests in the selected mode and slash commands:
 
 ```text
-where is authentication checked?
+Change the submit button from green to blue
+/task add account activation
+/yolo update the footer copyright
 /search registration flow
 /context explain the login session
-/plan add account activation
-/deep-plan trace the complete account activation change
-/execute
-/execute plan
-/execute deep-plan
 /index
 /files
 /agent
@@ -971,10 +1037,13 @@ where is authentication checked?
 
 Typing `/` opens command suggestions. Use Up and Down to highlight one and Tab to
 complete it in the prompt without executing it. The right sidebar offers the same
-commands and also prefills the prompt. Search runs locally; `/plan`, `/deep-plan`,
-`/execute`, and `/agent test` contact the configured endpoint. Context, Plan, Deep
-Plan, and execution commands keep the same artifact behavior as the CLI. Successful
-Plan and Deep Plan commands open an iterative Pi handoff: Enter submits a follow-up
+commands and also prefills the prompt. Search runs locally; `/task`, `/yolo`
+and `/agent test` contact the configured endpoint. Task Review shows file impacts
+inline, with Run task, Edit request and Cancel actions below the composer.
+
+The legacy `/plan`, `/deep-plan` and `/execute` commands remain accepted for
+compatibility, but are no longer primary sidebar actions. Their behavior is
+unchanged: Plan and Deep Plan open an iterative Pi handoff. Enter submits a follow-up
 refinement and **Preview with Pi** is the only execution trigger. The original query
 and all accepted refinements are persisted and sent to Pi. Pi
 handoff, label review, Search resolution, and patch approval stay inline: Plan

@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock
 from typing import Any
 
 from devstill.agent import AgentClient
@@ -58,12 +58,23 @@ from devstill.planning import (
     write_deep_plan_artifacts,
     write_plan_artifacts,
 )
+from devstill.quick_tasks import create_quick_draft
 from devstill.retrieval_policy import matches_retrieval_exclude
 from devstill.search import HybridSearch
 from devstill.storage import ChromaStore
+from devstill.task_runs import render_task_run, run_tasks
+from devstill.tasks import (
+    TaskDraft,
+    load_task_draft,
+    render_task_review,
+    save_task_draft,
+)
 
 
 class TuiCommandKind(str, Enum):
+    TASK = "task"
+    YOLO = "yolo"
+    TASK_RUN = "task_run"
     SEARCH = "search"
     CONTEXT = "context"
     PLAN = "plan"
@@ -88,6 +99,8 @@ class CommandSpec:
 
 
 COMMAND_SPECS = (
+    CommandSpec("/task ", "Task Review", "Review file impacts before running Quick", TuiCommandKind.TASK),
+    CommandSpec("/yolo ", "YOLO", "Retrieve, edit and check without review", TuiCommandKind.YOLO),
     CommandSpec(
         "/search ", "Search", "Find relevant code locally", TuiCommandKind.SEARCH
     ),
@@ -96,36 +109,6 @@ COMMAND_SPECS = (
         "Context",
         "Build five AI-ready source chunks",
         TuiCommandKind.CONTEXT,
-    ),
-    CommandSpec(
-        "/plan ",
-        "Plan",
-        "Classify file impact with the configured agent",
-        TuiCommandKind.PLAN,
-    ),
-    CommandSpec(
-        "/deep-plan ",
-        "Deep Plan",
-        "Refine file impact through a second retrieval pass",
-        TuiCommandKind.DEEP_PLAN,
-    ),
-    CommandSpec(
-        "/execute",
-        "Execute",
-        "Preview and approve the newest Plan with Pi",
-        TuiCommandKind.EXECUTE,
-    ),
-    CommandSpec(
-        "/execute plan",
-        "Execute Plan",
-        "Preview the ordinary Plan with Pi",
-        TuiCommandKind.EXECUTE,
-    ),
-    CommandSpec(
-        "/execute deep-plan",
-        "Execute Deep Plan",
-        "Preview the refined Deep Plan with Pi",
-        TuiCommandKind.EXECUTE,
     ),
     CommandSpec("/index", "Index", "Update the repository index", TuiCommandKind.INDEX),
     CommandSpec("/files", "Files", "Inspect repository coverage", TuiCommandKind.FILES),
@@ -180,6 +163,8 @@ class TuiResult:
     markdown: str
     prepared_execution: PreparedExecution | None = None
     execution_offer: TuiExecutionOffer | None = None
+    task_review: TaskDraft | None = None
+    task_state: dict | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -276,10 +261,12 @@ def parse_tui_command(value: str) -> TuiCommand:
         "/?": "/help",
     }
     name = aliases.get(name, name)
-    if name in {"/search", "/context", "/plan", "/deep-plan"}:
+    if name in {"/task", "/yolo", "/search", "/context", "/plan", "/deep-plan"}:
         if not query:
             raise ValueError(f"{name} requires a query.")
         kind = {
+            "/task": TuiCommandKind.TASK,
+            "/yolo": TuiCommandKind.YOLO,
             "/search": TuiCommandKind.SEARCH,
             "/context": TuiCommandKind.CONTEXT,
             "/plan": TuiCommandKind.PLAN,
@@ -333,7 +320,10 @@ def help_markdown() -> str:
     lines.extend(
         [
             "",
-            "Plain text runs local hybrid search. `/plan`, `/deep-plan`, `/execute`, and `/agent test` use the configured model.",
+            "Plain text uses the selected Task Review, YOLO or Search mode. Task Review is the startup default.",
+            "`/task` reviews file impacts before one Run action; `/yolo` edits without review. Both use the configured model and the same scope checks.",
+            "Both modes use compact file-impact review followed by the existing bounded Quick executor. No task decomposition is generated.",
+            "`/search` stays local. Legacy `/plan`, `/deep-plan`, `/execute`, and `/agent test` use the configured model.",
             "Advanced flags, rebuilds, configuration, and removal remain available in the CLI.",
             "",
             "## Clipboard",
@@ -491,6 +481,7 @@ class TuiWorkflow:
         self.config = config
         self.repo_root = resolve_repo_root(config_path, config)
         self.artifact_root = resolve_index_path(config_path, config).parent
+        self._tasks_cancelled = Event()
         self._runtime = TuiRetrievalRuntime(
             config_path,
             config,
@@ -849,7 +840,11 @@ class TuiWorkflow:
         return offer.plan
 
     def close(self) -> None:
+        self.cancel_tasks()
         self._runtime.close()
+
+    def cancel_tasks(self) -> None:
+        self._tasks_cancelled.set()
 
     def warm(self, report: ProgressCallback | None = None) -> None:
         """Open the persistent vector store and load the encoder for this session."""
@@ -867,6 +862,9 @@ class TuiWorkflow:
 
     def _open_search(self, report: ProgressCallback) -> HybridSearch:
         index_root = resolve_index_path(self.config_path, self.config).parent
+        if (index_root / ".tasks-need-index").exists():
+            report("Refreshing local embeddings after task edits")
+            self.execute(TuiCommand(TuiCommandKind.INDEX, "/index"), report)
         if (index_root / ".indexing-dirty").exists():
             raise RuntimeError(
                 f"Devstill index recovery is required at {index_root}. "
@@ -914,6 +912,33 @@ class TuiWorkflow:
         progress: ProgressCallback | None = None,
     ) -> TuiResult:
         report = progress or (lambda _message: None)
+        if command.kind in {TuiCommandKind.TASK, TuiCommandKind.YOLO}:
+            if not self.config.llm.enabled:
+                raise ValueError("Agent is disabled. Configure its endpoint and model first.")
+            report("Retrieving compact task evidence")
+            engine = self._open_search(report)
+            try:
+                candidates = engine.query(command.query, limit=planning_retrieval_limit(PLAN_MAX_CHUNKS))
+            finally:
+                engine.close()
+            from uuid import uuid4
+            log_path = self.artifact_root / "logs" / f"task-discovery-{uuid4().hex}.jsonl"
+            with AgentClient(self.config.llm, log_path=log_path) as client:
+                draft = create_quick_draft(
+                    client, query=command.query, repo=self.repo_root,
+                    candidates=candidates,
+                    mode="yolo" if command.kind is TuiCommandKind.YOLO else "review",
+                    excluded=self.config.retrieval.exclude,
+                )
+            directory = save_task_draft(self.artifact_root, draft)
+            (directory / "discovery-log.txt").write_text(str(log_path) + "\n")
+            if command.kind is TuiCommandKind.YOLO:
+                return self.run_task(draft, report)
+            return TuiResult("Task Review", render_task_review(draft), task_review=draft)
+
+        if command.kind is TuiCommandKind.TASK_RUN:
+            return self.run_task(load_task_draft(self.artifact_root, command.query), report)
+
         if command.kind is TuiCommandKind.SEARCH:
             report("Preparing local hybrid search")
             engine = self._open_search(report)
@@ -1165,6 +1190,7 @@ class TuiWorkflow:
             try:
                 summary = indexer.run(progress=index_progress)
                 quality = indexer.list_quality()
+                (self.artifact_root / ".tasks-need-index").unlink(missing_ok=True)
             finally:
                 indexer.close()
             return TuiResult("Index", render_index_markdown(summary, quality))
@@ -1257,6 +1283,13 @@ class TuiWorkflow:
             return TuiResult("Agent test", markdown)
 
         raise ValueError(f"{command.kind.value} is handled by the interface")
+
+    def run_task(self, draft: TaskDraft, progress: ProgressCallback | None = None) -> TuiResult:
+        state = run_tasks(
+            draft, repo=self.repo_root, artifact_root=self.artifact_root,
+            config=self.config, progress=progress, cancelled=self._tasks_cancelled.is_set,
+        )
+        return TuiResult("Task result", render_task_run(state), task_state=state)
 
     def apply_execution(
         self,

@@ -319,7 +319,10 @@ class AgentClient:
         schema_name: str = "devstill_output",
         max_output_tokens: int | None = None,
         reasoning: Literal["auto", "off"] = "auto",
+        max_attempts: int = 3,
     ) -> str:
+        if not 1 <= max_attempts <= 3:
+            raise ValueError("max_attempts must be between 1 and 3")
         token_limit = (
             self.config.max_output_tokens
             if max_output_tokens is None
@@ -362,7 +365,7 @@ class AgentClient:
                     mode=mode,
                 )
                 unsupported = self._unsupported_feature(response, payload)
-                if unsupported is None or attempt >= 3:
+                if unsupported is None or attempt >= max_attempts:
                     break
                 if unsupported == "reasoning":
                     payload.pop("chat_template_kwargs", None)

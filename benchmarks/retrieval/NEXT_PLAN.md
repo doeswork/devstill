@@ -1,5 +1,7 @@
 # Retrieval for small edits and complete features
 
+**Task workflow implementation:** [Task Review / YOLO and dependency execution](TASK_IMPLEMENTATION.md). Feature acceptance quality remains a separate evaluation gate.
+
 **Current next-stage strategy:** [one-shot tasks composed into features](ONE_SHOT_STRATEGY.md). One reusable Devstill Task handles a compact outcome; a Task Plan connects independent and ordered tasks through explicit contracts and dependencies. This replaces the proposed Quick/Feature/Mix routing. Start there for the next prototype; the evaluation and correctness requirements below remain applicable.
 
 **Implementation update:** [deterministic changes, controlled comparisons, Cargo pilot and remaining gates](IMPLEMENTATION_RESULTS.md). The proposal below is preserved as the original staged plan; its prototype-only status describes the earlier design round.

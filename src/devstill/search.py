@@ -302,4 +302,11 @@ class HybridSearch:
             per_file[chunk.path] += 1
             if len(selected) >= limit:
                 break
+        # Fingerprints describe the indexed file, not normalized parser snippets.
+        get_files = getattr(self.store, "get_files", None)
+        files = get_files() if callable(get_files) else {}
+        for result in selected:
+            record = files.get(result.chunk.path)
+            if record is not None:
+                result.source_hash = record.content_hash
         return selected

@@ -1,5 +1,9 @@
 # One-shot tasks composed into features
 
+**Current scope correction:** [Quick is the task primitive](QUICK_RESTORE_RESULTS.md). Restore small-edit parity first. Feature coordination below is a deferred proposal, not the current Task Review/YOLO path.
+
+**Implementation update:** [Task Review, YOLO, dependency execution and measured checks](TASK_IMPLEMENTATION.md). The proposal below records the design intent; the implementation report identifies what is now available and which quality claims remain unproven.
+
 Status: revised strategy, 2026-11-07; task composition is not implemented. This replaces the preceding Quick/Feature/Mix proposal in this document. It is the current next-stage handoff after [IMPLEMENTATION_RESULTS.md](IMPLEMENTATION_RESULTS.md); the independent evaluation, scope and correctness requirements in [NEXT_PLAN.md](NEXT_PLAN.md) remain applicable.
 
 Use one reusable **Devstill Task**: a compact objective, focused local retrieval, bounded execution and a clear validation result. A small request produces one task. A larger request produces several tasks with explicit dependencies and shared contracts. Optimize each task for first-attempt success and validate the combined feature.

@@ -462,3 +462,18 @@ def test_agent_diagnostic_log_preserves_raw_response_without_secret(
     assert "never-write-this-token" not in log_text
     assert "private source context" not in log_text
     http.close()
+
+
+def test_one_shot_request_does_not_retry_or_remove_thinking_setting():
+    payloads = []
+
+    def handler(request):
+        payloads.append(json.loads(request.content))
+        return httpx.Response(400, text="unknown field chat_template_kwargs")
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        client = AgentClient(llm_config(), client=http)
+        with pytest.raises(AgentError, match="HTTP 400"):
+            client.chat([], schema={"type":"object"}, reasoning="off", max_attempts=1)
+    assert len(payloads) == 1
+    assert payloads[0]["chat_template_kwargs"] == {"enable_thinking":False}

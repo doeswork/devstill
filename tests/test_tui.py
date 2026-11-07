@@ -257,6 +257,8 @@ def test_plain_text_runs_local_search_and_history(tmp_path: Path) -> None:
         workflow = FakeWorkflow()
         app = build_app(tmp_path, workflow)
         async with app.run_test(size=(120, 40)) as pilot:
+            app.query_one("#task-mode", Select).value = "search"
+            await pilot.pause()
             await pilot.press(*list("login"), "enter")
             await wait_until_idle(app, pilot)
             assert len(workflow.calls) == 1

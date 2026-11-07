@@ -71,7 +71,9 @@ from devstill.removal import build_removal_plan, execute_removal
 from devstill.repository import ensure_devstill_gitignore
 from devstill.retrieval_policy import normalize_retrieval_pattern
 from devstill.search import HybridSearch
+from devstill.tasks import load_task_draft, render_task_review
 from devstill.tui import DevstillApp
+from devstill.tui_commands import TuiCommand, TuiCommandKind, TuiWorkflow
 from devstill.updater import (
     fetch_latest_release,
     install_release,
@@ -309,6 +311,12 @@ def parser() -> argparse.ArgumentParser:
     agent_actions.add_parser("test", help="Send a small structured agent request.")
     agent_actions.add_parser("enable", help="Enable the configured agent.")
     agent_actions.add_parser("disable", help="Disable the configured agent.")
+
+    task = sub.add_parser("task", help="Review and run compact tasks, or use --yolo to skip review.")
+    task.add_argument("query", nargs="?", help="Requested outcome, such as changing a button color.")
+    task.add_argument("--run", dest="run_id", help="Run a previously reviewed task ID.")
+    task.add_argument("--yolo", action="store_true", help="Execute without review; scope and validation checks still apply.")
+    task.add_argument("--json", action="store_true", help="Print JSON; review-only unless --yolo is supplied.")
 
     plan = sub.add_parser(
         "plan",
@@ -1246,6 +1254,49 @@ def deep_plan_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def task_command(args: argparse.Namespace) -> int:
+    if bool(args.query) == bool(args.run_id):
+        raise ValueError("Provide a task request or --run ID, but not both")
+    config_path, config = _configured()
+    workflow = TuiWorkflow(config_path, config)
+    report = lambda message: diagnostic_console.print(message, markup=False)
+    try:
+        if args.run_id:
+            draft = load_task_draft(workflow.artifact_root, args.run_id)
+            if args.yolo:
+                result = workflow.run_task(draft, report)
+            else:
+                result = None
+        else:
+            result = workflow.execute(
+                TuiCommand(TuiCommandKind.YOLO if args.yolo else TuiCommandKind.TASK, args.query, args.query),
+                report,
+            )
+            draft = result.task_review
+        if not args.yolo:
+            if args.json:
+                print(draft.model_dump_json(indent=2))
+                return 0
+            print(render_task_review(draft), end="")
+            if draft.plan.unresolved:
+                return 1
+            if not sys.stdin.isatty():
+                diagnostic_console.print(f"Run this task with: devstill task --run {draft.id} --yolo", markup=False)
+                return 0
+            diagnostic_console.print("Run this task now? [y/N] ", end="")
+            if sys.stdin.readline().strip().casefold() not in {"y", "yes"}:
+                diagnostic_console.print("Task saved for review; no changes applied.")
+                return 0
+            result = workflow.run_task(draft, report)
+        if args.json:
+            print(json.dumps(result.task_state, indent=2))
+        else:
+            print(result.markdown, end="")
+        return 0 if result.task_state["status"] in {"validated", "applied_unvalidated"} else 1
+    finally:
+        workflow.close()
+
+
 def execute_command(args: argparse.Namespace) -> int:
     if args.dry_run and args.yes:
         raise ValueError("--dry-run and --yes cannot be used together")
@@ -1349,6 +1400,8 @@ def main() -> None:
             raise SystemExit(agent_command(args))
         if args.command == "plan":
             raise SystemExit(plan_command(args))
+        if args.command == "task":
+            raise SystemExit(task_command(args))
         if args.command == "deep-plan":
             raise SystemExit(deep_plan_command(args))
         if args.command == "execute":

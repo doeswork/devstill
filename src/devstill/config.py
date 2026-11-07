@@ -192,6 +192,8 @@ class ExecutorConfig(StrictModel):
     max_output_tokens: int = Field(default=4096, ge=64, le=65536)
     max_tool_calls: int = Field(default=12, ge=1, le=256)
     validation_commands: list[str] = Field(default_factory=list)
+    task_validation_commands: list[str] = Field(default_factory=list)
+    task_concurrency: int = Field(default=1, ge=1, le=4)
 
     @field_validator("backend")
     @classmethod
@@ -212,7 +214,7 @@ class ExecutorConfig(StrictModel):
             raise ValueError("context_window must be auto or at least 4096")
         return value
 
-    @field_validator("validation_commands")
+    @field_validator("validation_commands", "task_validation_commands")
     @classmethod
     def validate_commands(cls, value: list[str]) -> list[str]:
         commands: list[str] = []

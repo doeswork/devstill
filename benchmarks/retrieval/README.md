@@ -1,5 +1,15 @@
 # Retrieval benchmark plan and agent handoff
 
+**Current direction:** [Quick restored underneath Task Review/YOLO](QUICK_RESTORE_RESULTS.md). Small-edit parity comes first; feature decomposition is deferred. The Task v1/v2 results below describe the superseded structured-edit experiments.
+
+**Latest 24-case coding comparison:** [144 attempts, failed parity gates, and per-request results](TASK_V2_RESULTS.md).
+
+**Compact Task follow-up:** [runtime corrections and the 24-case coding protocol](TASK_V2_IMPLEMENTATION.md).
+
+**Measured old/new comparison:** [task workflow results, performance and failure diagnosis](TASK_COMPARISON_RESULTS.md). The new workflow currently regresses review reliability and latency; feature context remains incomplete.
+
+**Task workflow implementation:** [Task Review / YOLO, bounded task execution, tests and remaining evaluation](TASK_IMPLEMENTATION.md).
+
 **Implementation results:** [deterministic retrieval changes, controlled measurements and remaining release gates](IMPLEMENTATION_RESULTS.md).
 
 **Latest strategy:** [one-shot tasks composed into features](ONE_SHOT_STRATEGY.md). Start there for the next benchmark prototype: one reusable Devstill Task, explicit dependency contracts, bounded execution and validation of the combined feature. It replaces the proposed Quick/Feature/Mix modes.
