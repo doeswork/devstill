@@ -23,6 +23,7 @@ from devstill.context import (
     PLAN_MAX_CHUNKS,
     PLAN_MIN_CHUNKS,
     planning_retrieval_limit,
+    query_requests_tests,
     render_context_json,
     render_context_markdown,
     select_adaptive_context_results,
@@ -53,6 +54,7 @@ from devstill.planning import (
     refine_plan,
     render_plan_json,
     render_plan_markdown,
+    select_planning_context,
     write_deep_plan_artifacts,
     write_plan_artifacts,
 )
@@ -220,9 +222,7 @@ class TuiRetrievalRuntime:
     @property
     def device(self) -> str:
         try:
-            return str(
-                getattr(self.embedder, "device", self.config.embedding.device)
-            )
+            return str(getattr(self.embedder, "device", self.config.embedding.device))
         except RuntimeError:
             return "unavailable"
 
@@ -525,9 +525,15 @@ class TuiWorkflow:
         self.repo_root = resolve_repo_root(self.config_path, config)
         self.artifact_root = resolve_index_path(self.config_path, config).parent
 
-    def file_question_session(self, plan: PlanOutput, index: int) -> FileQuestionSession:
+    def file_question_session(
+        self, plan: PlanOutput, index: int
+    ) -> FileQuestionSession:
         return prepare_file_questions(
-            self.repo_root, self.config, self.artifact_root, plan, index,
+            self.repo_root,
+            self.config,
+            self.artifact_root,
+            plan,
+            index,
         )
 
     def save_manual_plan(
@@ -600,7 +606,9 @@ class TuiWorkflow:
             suppressed_paths=frozenset(suppressed),
             pinned_targets=offer.pinned_targets - {item.target},
         )
-        return TuiReviewResult(next_offer, markdown, f"Removed {item.target} from this plan")
+        return TuiReviewResult(
+            next_offer, markdown, f"Removed {item.target} from this plan"
+        )
 
     def replace_review_item(
         self,
@@ -791,16 +799,22 @@ class TuiWorkflow:
             for result in candidates
             if result.chunk.path not in offer.suppressed_paths
         ]
-        maximum = DEEP_PLAN_MAX_CHUNKS if offer.source == "deep-plan" else PLAN_MAX_CHUNKS
-        minimum = DEEP_PLAN_MIN_CHUNKS if offer.source == "deep-plan" else PLAN_MIN_CHUNKS
+        maximum = (
+            DEEP_PLAN_MAX_CHUNKS if offer.source == "deep-plan" else PLAN_MAX_CHUNKS
+        )
+        minimum = (
+            DEEP_PLAN_MIN_CHUNKS if offer.source == "deep-plan" else PLAN_MIN_CHUNKS
+        )
         results = select_adaptive_context_results(
             candidates,
             min_limit=minimum,
             max_limit=maximum,
-            include_tests=False,
+            include_tests=query_requests_tests(query),
         )
         if not results:
-            raise ValueError("No eligible retrieval context is available for refinement")
+            raise ValueError(
+                "No eligible retrieval context is available for refinement"
+            )
         notify("Asking the agent to refine the live plan")
         client = AgentClient(
             self.config.llm,
@@ -880,9 +894,7 @@ class TuiWorkflow:
         list_quality = getattr(getattr(engine, "store", None), "list_quality", None)
         if callable(list_quality):
             paths.update(
-                item.path
-                for item in list_quality()
-                if item.disposition == "indexed"
+                item.path for item in list_quality() if item.disposition == "indexed"
             )
         return tuple(
             sorted(
@@ -918,7 +930,9 @@ class TuiWorkflow:
                 candidates = engine.query(command.query, limit=32)
             finally:
                 engine.close()
-            results = select_context_results(candidates, 5, include_tests=False)
+            results = select_context_results(
+                candidates, 5, include_tests=query_requests_tests(command.query)
+            )
             json_output = render_context_json(results)
             markdown = render_context_markdown(
                 results,
@@ -943,16 +957,18 @@ class TuiWorkflow:
                 repository_paths = self._plan_picker_paths(engine, candidates)
             finally:
                 engine.close()
-            results = select_adaptive_context_results(
-                candidates,
-                min_limit=PLAN_MIN_CHUNKS,
-                max_limit=PLAN_MAX_CHUNKS,
-                include_tests=False,
-            )
-            report(TuiPreview(render_plan_preview_markdown(results, command.query)))
             agent_log = self.artifact_root / "logs" / "agent.jsonl"
             client = AgentClient(self.config.llm, log_path=agent_log)
             try:
+                results = select_planning_context(
+                    candidates,
+                    client=client,
+                    query=command.query,
+                    repository=str(self.repo_root),
+                    min_limit=PLAN_MIN_CHUNKS,
+                    max_limit=PLAN_MAX_CHUNKS,
+                )
+                report(TuiPreview(render_plan_preview_markdown(results, command.query)))
                 report(f"Agent response log: {agent_log}")
                 report(f"Sending {len(results)} source chunks to {client.endpoint}")
                 plan = generate_plan(
@@ -995,11 +1011,14 @@ class TuiWorkflow:
                     limit=planning_retrieval_limit(PLAN_MAX_CHUNKS),
                 )
                 repository_paths = self._plan_picker_paths(engine, candidates)
-                initial_results = select_adaptive_context_results(
+                initial_results = select_planning_context(
                     candidates,
+                    client=client,
+                    query=command.query,
+                    repository=str(self.repo_root),
                     min_limit=PLAN_MIN_CHUNKS,
                     max_limit=PLAN_MAX_CHUNKS,
-                    include_tests=False,
+                    include_tests=query_requests_tests(command.query),
                 )
                 report(
                     TuiPreview(
@@ -1076,7 +1095,7 @@ class TuiWorkflow:
                     search=search_reasons,
                     deep_limit=DEEP_PLAN_MAX_CHUNKS,
                     deep_minimum=DEEP_PLAN_MIN_CHUNKS,
-                    include_tests=False,
+                    include_tests=query_requests_tests(command.query),
                     on_initial=initial_ready,
                     on_context=context_ready,
                     retrieval_exclude=self.config.retrieval.exclude,
@@ -1208,11 +1227,7 @@ class TuiWorkflow:
                     f"- Response log: `{self.artifact_root / 'logs' / 'agent.jsonl'}`",
                     "",
                     "The API key value is never displayed.",
-                    *(
-                        (f"\n> Warning: {limits.warning}",)
-                        if limits.warning
-                        else ()
-                    ),
+                    *((f"\n> Warning: {limits.warning}",) if limits.warning else ()),
                 )
             )
             return TuiResult("Agent", markdown)

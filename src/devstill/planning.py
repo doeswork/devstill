@@ -10,7 +10,12 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from devstill.agent import AgentClient, extract_json_object
-from devstill.context import context_record
+from devstill.context import (
+    PLAN_MIN_CHUNKS,
+    context_record,
+    query_requests_tests,
+    select_adaptive_context_results,
+)
 from devstill.models import SearchResult
 from devstill.retrieval_policy import matches_retrieval_exclude
 
@@ -222,9 +227,7 @@ def _safe_new_file(repo_root: Path, target: str) -> None:
             f"New target must use a repository-relative POSIX path: {target}"
         )
     if any(character in target for character in "*?[]{}"):
-        raise ValueError(
-            f"New target must be an exact path, not a pattern: {target}"
-        )
+        raise ValueError(f"New target must be an exact path, not a pattern: {target}")
     path = PurePosixPath(target)
     if (
         path.is_absolute()
@@ -232,9 +235,7 @@ def _safe_new_file(repo_root: Path, target: str) -> None:
         or target.endswith("/")
         or ".." in path.parts
     ):
-        raise ValueError(
-            f"New target is not a safe repository-relative path: {target}"
-        )
+        raise ValueError(f"New target is not a safe repository-relative path: {target}")
     candidate = (repo_root / Path(*path.parts)).resolve(strict=False)
     root = repo_root.resolve()
     if not candidate.is_relative_to(root):
@@ -393,6 +394,53 @@ def _request_plan(
     )
 
 
+def select_planning_context(
+    candidates: list[SearchResult],
+    *,
+    client: AgentClient,
+    query: str,
+    repository: str,
+    max_limit: int = 5,
+    min_limit: int = PLAN_MIN_CHUNKS,
+    include_tests: bool = False,
+) -> list[SearchResult]:
+    """Pack the whole eligible pool against the actual initial planning prompt."""
+    config = client.config
+    fits = None
+    if getattr(config, "context_window", None) is not None:
+        budget = config.context_window - config.planning_max_output_tokens - 256
+        if config.planning_input_tokens is not None:
+            budget = min(budget, config.planning_input_tokens)
+
+        def fits(results):
+            messages = [
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": _user_prompt(query, repository, results)},
+            ]
+            count = client.count_prompt_tokens(
+                messages, reasoning=config.planning_reasoning
+            )
+            window = min(
+                config.context_window,
+                getattr(client, "_tokenizer_context_window", config.context_window),
+            )
+            return count <= min(
+                budget, window - config.planning_max_output_tokens - 256
+            )
+
+        if not fits([]):
+            raise ValueError(
+                "Planning instructions and request exceed the input token budget before adding source"
+            )
+    return select_adaptive_context_results(
+        candidates,
+        min_limit=min_limit,
+        max_limit=max_limit,
+        include_tests=include_tests or query_requests_tests(query),
+        fits=fits,
+    )
+
+
 def generate_plan(
     client: AgentClient,
     *,
@@ -540,9 +588,7 @@ def refine_plan(
     accepted = refinement.strip()
     if not accepted:
         raise ValueError("refinement must not be blank")
-    combined_request = "\n\n".join(
-        (current.query, *current.refinements, accepted)
-    )
+    combined_request = "\n\n".join((current.query, *current.refinements, accepted))
     eligible = [
         result
         for result in results

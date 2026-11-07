@@ -38,9 +38,9 @@ from devstill.context import (
     PLAN_MAX_CHUNKS,
     PLAN_MIN_CHUNKS,
     planning_retrieval_limit,
+    query_requests_tests,
     render_context_json,
     render_context_markdown,
-    select_adaptive_context_results,
     select_context_results,
     write_context_artifacts,
 )
@@ -63,6 +63,7 @@ from devstill.planning import (
     generate_plan,
     render_plan_json,
     render_plan_markdown,
+    select_planning_context,
     write_deep_plan_artifacts,
     write_plan_artifacts,
 )
@@ -527,9 +528,7 @@ def doctor(load_model: bool) -> int:
             )
             vectors = backend.encode(["devstill repository intelligence"])
             shape = (len(vectors), len(vectors[0]) if vectors else 0)
-            console.print(
-                f"Embedding shape: {shape}; device: {backend.device}"
-            )
+            console.print(f"Embedding shape: {shape}; device: {backend.device}")
             backend.close()
         except Exception as exc:  # noqa: BLE001
             console.print(f"[red]Model load failed: {exc}[/red]")
@@ -554,7 +553,9 @@ def device_command(value: str | None) -> int:
         console.print(f"GPU: [green]{info.gpu_name}[/green]")
     elif requested == "auto":
         console.print("GPU: [dim]unavailable; automatic mode is using CPU[/dim]")
-    console.print("The existing index remains valid; future operations use this device.")
+    console.print(
+        "The existing index remains valid; future operations use this device."
+    )
     return 0
 
 
@@ -1088,15 +1089,18 @@ def plan_command(args: argparse.Namespace) -> int:
         )
     finally:
         engine.close()
-    results = select_adaptive_context_results(
-        candidates,
-        min_limit=min(PLAN_MIN_CHUNKS, args.limit),
-        max_limit=args.limit,
-        include_tests=args.include_tests,
-    )
     agent_log = resolve_index_path(config_path, config).parent / "logs/agent.jsonl"
     client = AgentClient(config.llm, log_path=agent_log)
     try:
+        results = select_planning_context(
+            candidates,
+            client=client,
+            query=args.query,
+            repository=str(repo_root),
+            min_limit=min(PLAN_MIN_CHUNKS, args.limit),
+            max_limit=args.limit,
+            include_tests=args.include_tests,
+        )
         diagnostic_console.print(f"Agent response log: {agent_log}")
         diagnostic_console.print(
             f"Sending {len(results)} source chunks to {client.endpoint}"
@@ -1157,11 +1161,14 @@ def deep_plan_command(args: argparse.Namespace) -> int:
             semantic_only=args.semantic_only,
             lexical_only=args.lexical_only,
         )
-        initial_results = select_adaptive_context_results(
+        initial_results = select_planning_context(
             candidates,
+            client=client,
+            query=args.query,
+            repository=str(repo_root),
             min_limit=min(PLAN_MIN_CHUNKS, args.initial_limit),
             max_limit=args.initial_limit,
-            include_tests=args.include_tests,
+            include_tests=args.include_tests or query_requests_tests(args.query),
         )
         diagnostic_console.print(f"Agent response log: {agent_log}")
         diagnostic_console.print(
@@ -1212,7 +1219,7 @@ def deep_plan_command(args: argparse.Namespace) -> int:
             search=search_reasons,
             deep_limit=args.limit,
             deep_minimum=min(DEEP_PLAN_MIN_CHUNKS, args.limit),
-            include_tests=args.include_tests,
+            include_tests=args.include_tests or query_requests_tests(args.query),
             on_initial=initial_ready,
             on_context=context_ready,
             retrieval_exclude=config.retrieval.exclude,

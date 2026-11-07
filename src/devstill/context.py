@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import TypedDict
 
@@ -75,6 +76,72 @@ def is_test_chunk(chunk: SourceChunk) -> bool:
     )
 
 
+def query_requests_tests(query: str) -> bool:
+    """Allow validation context when the request explicitly asks for it."""
+    positive = re.sub(
+        r"\b(?:no|without|skip|exclude)\s+(?:new\s+)?(?:tests?|testing)\b"
+        r"|\bleave\s+(?:the\s+)?tests?\s+(?:alone|unchanged)\b",
+        "",
+        query,
+        flags=re.IGNORECASE,
+    )
+    return bool(
+        re.search(
+            r"\b(?:tests?|testing|regressions?|assertions?|specs?)\b",
+            positive,
+            re.IGNORECASE,
+        )
+    )
+
+
+def overlaps_context(candidate: SearchResult, selected: list[SearchResult]) -> bool:
+    c = candidate.chunk
+    return any(
+        p.chunk.path == c.path
+        and max(
+            0,
+            min(p.chunk.end_line, c.end_line)
+            - max(p.chunk.start_line, c.start_line)
+            + 1,
+        )
+        / min(c.end_line - c.start_line + 1, p.chunk.end_line - p.chunk.start_line + 1)
+        >= 0.8
+        for p in selected
+    )
+
+
+def focused_context_results(results: list[SearchResult]) -> list[SearchResult]:
+    """Prefer competitive child snippets to their enclosing class or module."""
+    focused = []
+    for parent in results:
+        if parent.chunk.kind not in {
+            "class",
+            "module",
+        } or DIRECT_MATCH_CHANNELS.intersection(parent.scores):
+            focused.append(parent)
+            continue
+        child = next(
+            (
+                child
+                for child in results
+                if child.chunk.path == parent.chunk.path
+                and child.chunk.kind in {"method", "function"}
+                and parent.chunk.start_line
+                <= child.chunk.start_line
+                <= child.chunk.end_line
+                <= parent.chunk.end_line
+                and (child.chunk.start_line, child.chunk.end_line)
+                != (parent.chunk.start_line, parent.chunk.end_line)
+                and child.final_score >= parent.final_score * 0.75
+            ),
+            None,
+        )
+        # Keep the parent's rank slot when substituting its focused evidence.
+        # Simply removing it lets a lower-ranked bulky sibling consume the budget.
+        focused.append(child if child is not None else parent)
+    return focused
+
+
 def select_context_results(
     results: list[SearchResult],
     limit: int,
@@ -131,6 +198,7 @@ def select_adaptive_context_results(
     max_limit: int,
     include_tests: bool,
     max_per_file: int = 2,
+    fits: Callable[[list[SearchResult]], bool] | None = None,
 ) -> list[SearchResult]:
     """Select compact, diverse context and stop after a clear relevance drop."""
     if min_limit < 0:
@@ -147,7 +215,7 @@ def select_adaptive_context_results(
     )
     unique: list[SearchResult] = []
     seen: set[tuple[str, int, int]] = set()
-    for result in filtered:
+    for result in focused_context_results(filtered):
         source_range = (
             result.chunk.path,
             result.chunk.start_line,
@@ -158,28 +226,34 @@ def select_adaptive_context_results(
         seen.add(source_range)
         unique.append(result)
 
-    diverse: list[SearchResult] = []
+    selected: list[SearchResult] = []
     overflow: list[SearchResult] = []
     per_file: dict[str, int] = {}
     for result in unique:
+        if len(selected) >= max_limit:
+            break
+        if overlaps_context(result, selected):
+            continue
+        if len(selected) >= min_limit and not context_candidate_supported(
+            selected, result
+        ):
+            continue
+        if fits is not None and not fits([*selected, result]):
+            continue
         path = result.chunk.path
         if per_file.get(path, 0) >= max_per_file:
             overflow.append(result)
             continue
-        diverse.append(result)
+        selected.append(result)
         per_file[path] = per_file.get(path, 0) + 1
 
-    if len(diverse) < min_limit:
-        diverse.extend(overflow[: min_limit - len(diverse)])
-
-    selected: list[SearchResult] = []
-    for candidate in diverse:
-        if len(selected) >= max_limit:
+    for candidate in overflow:
+        if len(selected) >= min_limit:
             break
-        if len(selected) >= min_limit and not context_candidate_supported(
-            selected, candidate
-        ):
-            break
+        if overlaps_context(candidate, selected):
+            continue
+        if fits is not None and not fits([*selected, candidate]):
+            continue
         selected.append(candidate)
     return selected
 

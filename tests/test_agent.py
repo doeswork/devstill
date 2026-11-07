@@ -63,6 +63,64 @@ def test_llm_config_defaults_and_url_safety() -> None:
         LlmConfig(enabled=True)
     with pytest.raises(ValueError, match="environment variable"):
         llm_config(api_key_env="NOT-VALID")
+    with pytest.raises(ValueError, match="requires context_window"):
+        llm_config(planning_input_tokens=8192)
+
+
+@pytest.mark.parametrize("configured_window", [4096, 8192])
+def test_full_prompt_budget_counts_chat_template_and_blocks_overflow(configured_window):
+    calls = []
+
+    def handler(request):
+        payload = json.loads(request.content)
+        calls.append((request.url.path, payload))
+        if request.url.path == "/tokenize":
+            assert payload["add_generation_prompt"]
+            assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+            return httpx.Response(200, json={"count": 3900, "max_model_len": 4096})
+        return completion("unexpected generation")
+
+    with (
+        httpx.Client(transport=httpx.MockTransport(handler)) as http,
+        AgentClient(
+            llm_config(context_window=configured_window), client=http
+        ) as client,
+        pytest.raises(AgentError, match="output reservation exceed"),
+    ):
+        client.chat(
+            [{"role": "user", "content": "large request"}],
+            max_output_tokens=256,
+            reasoning="off",
+        )
+    assert [path for path, _ in calls] == ["/tokenize"]
+
+
+def test_server_tokenizer_cache_uses_full_messages_and_rejects_invalid_count():
+    calls = []
+
+    def handler(request):
+        payload = json.loads(request.content)
+        calls.append(payload)
+        return httpx.Response(200, json={"count": True if len(calls) > 1 else 12})
+
+    with (
+        httpx.Client(transport=httpx.MockTransport(handler)) as http,
+        AgentClient(llm_config(), client=http) as client,
+    ):
+        messages = [
+            {"role": "system", "content": "instructions"},
+            {"role": "user", "content": "request"},
+        ]
+        assert (
+            client.count_prompt_tokens(messages)
+            == client.count_prompt_tokens(messages)
+            == 12
+        )
+        with pytest.raises(AgentError, match="invalid token count"):
+            client.count_prompt_tokens(
+                [*messages, {"role": "user", "content": "history"}]
+            )
+    assert len(calls) == 2
 
 
 def test_atomic_llm_update_preserves_other_config_and_refuses_symlink(

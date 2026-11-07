@@ -1,0 +1,1434 @@
+{
+  "schema_version": 1,
+  "name": "werkzeug-reviewed-v1",
+  "corpus_commit": "6389612fd1ee1bd93579eed5026e8fd471d04abd",
+  "description": "60 source-reviewed questions frozen before retrieval. Same-author review; independent relevance adjudication still desirable. Holdout families separated from development.",
+  "cases": [
+    {
+      "id": "w01",
+      "family": "filenames",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where is an uploaded filename converted to portable ASCII and stripped of path separators?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/utils.py",
+            "lines": [
+              219,
+              229
+            ],
+            "sha256": "46c13d6b9f6ae68d70679548c52d32730531f82f644ca28e5d9de37f6728c8f3"
+          }
+        ]
+      ],
+      "rationale": "Filename normalization and separator removal are performed in secure_filename."
+    },
+    {
+      "id": "w02",
+      "family": "filenames",
+      "category": "typo",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "secur_filenam",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/utils.py",
+            "lines": [
+              219,
+              229
+            ],
+            "sha256": "46c13d6b9f6ae68d70679548c52d32730531f82f644ca28e5d9de37f6728c8f3"
+          }
+        ]
+      ],
+      "rationale": "Misspelled known-symbol lookup; shares a family with all filename paraphrases."
+    },
+    {
+      "id": "w03",
+      "family": "path_safety",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "How are user supplied path components prevented from escaping a trusted directory?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/security.py",
+            "lines": [
+              154,
+              166
+            ],
+            "sha256": "04f6eee1cf0bfa308e1972ebd3005b1b7992868b5154e1e6508f7881dbb12deb"
+          }
+        ]
+      ],
+      "rationale": "safe_join rejects absolute paths and parent traversal."
+    },
+    {
+      "id": "w04",
+      "family": "path_safety",
+      "category": "multi_file",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Trace how serving a file from a directory rejects a traversal path before returning a response.",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/utils.py",
+            "lines": [
+              564,
+              577
+            ],
+            "sha256": "858d00ee07e91e817853cdb4430d47dd8bde07b827c24db756acd72f25bd70d9"
+          }
+        ],
+        [
+          {
+            "path": "src/werkzeug/security.py",
+            "lines": [
+              154,
+              166
+            ],
+            "sha256": "04f6eee1cf0bfa308e1972ebd3005b1b7992868b5154e1e6508f7881dbb12deb"
+          }
+        ]
+      ],
+      "rationale": "Both the file-serving call site and path-safety implementation are required."
+    },
+    {
+      "id": "w05",
+      "family": "passwords",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where is a stored password hash split into method and salt and compared without an ordinary equality check?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/security.py",
+            "lines": [
+              126,
+              131
+            ],
+            "sha256": "c54deffc26f1515df0a81737b57919eb32311024f0d74c1d9952f51418ca8b7d"
+          }
+        ]
+      ],
+      "rationale": "check_password_hash delegates hashing and uses compare_digest."
+    },
+    {
+      "id": "w06",
+      "family": "passwords",
+      "category": "exact_symbol",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "generate_password_hash",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/security.py",
+            "lines": [
+              107,
+              109
+            ],
+            "sha256": "50f94a62b26e10ccf496b5864833af9c05c92ec3a9b2bb70ee2711520e03f493"
+          }
+        ]
+      ],
+      "rationale": "Known symbol should retrieve the implementation, not just references."
+    },
+    {
+      "id": "w07",
+      "family": "proxy_headers",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "How does middleware rewrite the client IP address and URL scheme from trusted forwarding headers?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/middleware/proxy_fix.py",
+            "lines": [
+              150,
+              162
+            ],
+            "sha256": "8cf6fc9ece97f74294cfa59432ffc66883b2b8e92770254ee118b5684c38a615"
+          }
+        ]
+      ],
+      "rationale": "ProxyFix reads the forwarded values and rewrites the environment."
+    },
+    {
+      "id": "w08",
+      "family": "multidict",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where does a mapping return every value for a repeated key and skip entries whose conversion fails?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/datastructures/structures.py",
+            "lines": [
+              278,
+              290
+            ],
+            "sha256": "54bcee93693c123cf01cb55bc7bb70392bc2ca6ea243b6bd6a9d7f799417a2dd"
+          }
+        ]
+      ],
+      "rationale": "MultiDict.getlist copies all values or performs per-item conversion."
+    },
+    {
+      "id": "w09",
+      "family": "json_body",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "What happens when a request contains malformed JSON and the caller asks to suppress the parsing error?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/wrappers/request.py",
+            "lines": [
+              608,
+              622
+            ],
+            "sha256": "ccb86194849385592c0a6bf7ad251ee948d1ffa2b93c286780c361f243483fda"
+          }
+        ]
+      ],
+      "rationale": "The silent branch catches ValueError and caches None separately."
+    },
+    {
+      "id": "w10",
+      "family": "form_dispatch",
+      "category": "multi_file",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Trace how a request chooses its body parser and stores the parsed form fields and uploaded files.",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/wrappers/request.py",
+            "lines": [
+              269,
+              287
+            ],
+            "sha256": "2429bc8e6aed3fce2e096cf96dddc964fad70371080e9b7dca832e3f5e9a8e49"
+          }
+        ],
+        [
+          {
+            "path": "src/werkzeug/formparser.py",
+            "lines": [
+              231,
+              247
+            ],
+            "sha256": "755bb3e2207544dff894d99b03621b57389d62aa7aacd86edc8e02de3653e81b"
+          }
+        ]
+      ],
+      "rationale": "Need the request integration and MIME-based parser dispatch, not only one layer."
+    },
+    {
+      "id": "w11",
+      "family": "ranges",
+      "category": "multi_file",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Trace how an HTTP byte range is parsed and turned into a partial-content response.",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/http.py",
+            "lines": [
+              821,
+              846
+            ],
+            "sha256": "40597fa56e20358f32fa24bf58d1e77fa0acced60bb35d976414a1ccfdf12b55"
+          }
+        ],
+        [
+          {
+            "path": "src/werkzeug/wrappers/response.py",
+            "lines": [
+              686,
+              702
+            ],
+            "sha256": "df87ce6189e7f49173c9c79678fc48e560b72de11fe62c09c1ab1334b4faf501"
+          }
+        ]
+      ],
+      "rationale": "Range parsing and response status/header updates are separate required evidence groups."
+    },
+    {
+      "id": "w12",
+      "family": "ranges",
+      "category": "path_filter",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where are response length, range headers and status set for a partial-content request?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {
+        "path": "src/werkzeug/wrappers/response.py"
+      },
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/wrappers/response.py",
+            "lines": [
+              697,
+              702
+            ],
+            "sha256": "cd5050d97760eba65e53e5b3a6601463bead0018d796896f42c98156ddbd725f"
+          }
+        ]
+      ],
+      "rationale": "Same retrieval task restricted to the response implementation."
+    },
+    {
+      "id": "w13",
+      "family": "header_options",
+      "category": "exact_symbol",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "parse_options_header",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/http.py",
+            "lines": [
+              473,
+              479
+            ],
+            "sha256": "0164650885db641064daa68e140ae5463062b579d145ba995ae6671bc9e420ea"
+          }
+        ]
+      ],
+      "rationale": "Requires the header value and parameter splitting code."
+    },
+    {
+      "id": "w14",
+      "family": "filenames",
+      "category": "test_discovery",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Find the regression assertions for uploaded filenames containing parent-directory traversal and accented characters.",
+      "answerable": true,
+      "include_tests": true,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "tests/test_utils.py",
+            "lines": [
+              295,
+              303
+            ],
+            "sha256": "fea879dcd82cd5e596531fd06731a99f6d51ab9d8ec2540b97ab78d1726ff523"
+          }
+        ]
+      ],
+      "rationale": "Tests are explicitly requested and must be eligible for context selection."
+    },
+    {
+      "id": "w15",
+      "family": "request_limits",
+      "category": "documentation",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Find the documentation distinguishing total request size, in-memory form-field size, and multipart part-count limits.",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "docs/request_data.rst",
+            "lines": [
+              82,
+              91
+            ],
+            "sha256": "5228cb2b1539f5a0f515f72ee3cf70dc84cae2dc6a38bbc8efbc92e14009eaaa"
+          }
+        ]
+      ],
+      "rationale": "Documentation intent should retrieve the distinctions between all three controls."
+    },
+    {
+      "id": "w16",
+      "family": "route_dispatch",
+      "category": "path_filter",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where is URL matching delegated to the state-machine matcher with domain, path, method and websocket inputs?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {
+        "path": "src/werkzeug/routing/"
+      },
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/routing/map.py",
+            "lines": [
+              599,
+              606
+            ],
+            "sha256": "91310f242d21fdd9d46fddfb9d17c2549009d23365bdeaaaae6c432158ac68eb"
+          }
+        ]
+      ],
+      "rationale": "Scoped query isolates the MapAdapter call into the matcher."
+    },
+    {
+      "id": "w17",
+      "family": "json_body",
+      "category": "disambiguation",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Find request JSON parsing, rather than response JSON parsing, when silent and cache options are enabled.",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/wrappers/request.py",
+            "lines": [
+              598,
+              605
+            ],
+            "sha256": "6437d3d3c6180f6f6a45c676c457c2939f8e9f7c659793d87e32dc9a39d3bd78"
+          }
+        ]
+      ],
+      "rationale": "Request and response have similarly named get_json methods."
+    },
+    {
+      "id": "w18",
+      "family": "multidict",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Find the implementation that appends another value for an existing dictionary key without replacing previous values.",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/datastructures/structures.py",
+            "lines": [
+              248,
+              256
+            ],
+            "sha256": "2e8a20350d7ec6b007836bc2ebdfc9b4d03e9ce728ac1b26d6f7fe1cc3984386"
+          }
+        ]
+      ],
+      "rationale": "MultiDict.add appends through setdefault; category corrected to natural language below."
+    },
+    {
+      "id": "w19",
+      "family": "absent_oauth",
+      "category": "no_answer",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where does this library automatically refresh OAuth access tokens after expiration?",
+      "answerable": false,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [],
+      "rationale": "Provisional negative: Werkzeug does not implement an OAuth refresh client. Reviewer must check the pinned corpus and dependency boundary."
+    },
+    {
+      "id": "w20",
+      "family": "absent_database",
+      "category": "no_answer",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where does this library run database schema migrations inside a transaction?",
+      "answerable": false,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [],
+      "rationale": "Provisional negative: no schema migration engine is part of this WSGI library. Reviewer must confirm absence."
+    },
+    {
+      "id": "w21",
+      "family": "property_cache",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "How does a cached attribute compute a value only once and store it on the instance?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/utils.py",
+            "lines": [
+              100,
+              112
+            ],
+            "sha256": "95af0683e27411d78c0a57223ac5b23ba82a275b5696366afe065f3efaaf39c7"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w22",
+      "family": "dynamic_import",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where is an object imported using its dotted module path and missing attributes converted to import errors?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/utils.py",
+            "lines": [
+              603,
+              608
+            ],
+            "sha256": "c542ec891dcd3b07b407c96713d23ee75a3035477cab4e0e60d1ef74cf99a403"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w23",
+      "family": "module_discovery",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where are Python modules enumerated recursively with optional package inclusion?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/utils.py",
+            "lines": [
+              641,
+              649
+            ],
+            "sha256": "2fcca5aba134ee04a5777e4c9059129cdfdb69e53209ea6773dedf666c2c0846"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w24",
+      "family": "charset",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where is a charset appended for text or XML MIME types?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/utils.py",
+            "lines": [
+              184,
+              192
+            ],
+            "sha256": "3d9077823160678e9424eb06be14c9919ca86b05b4ad8133f2cef091300a7a1a"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w25",
+      "family": "header_options",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where are semicolon-separated header options split from the main header value?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/http.py",
+            "lines": [
+              473,
+              479
+            ],
+            "sha256": "0164650885db641064daa68e140ae5463062b579d145ba995ae6671bc9e420ea"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w26",
+      "family": "json_body",
+      "category": "path_filter",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where is silent JSON parsing failure cached separately from the normal result?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/wrappers/request.py",
+            "lines": [
+              611,
+              622
+            ],
+            "sha256": "c025cf91a6f8927fe1595e98429937e9806c41cce8bb88364921fa71f9298cf3"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w27",
+      "family": "multidict",
+      "category": "exact_symbol",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "MultiDict.getlist",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/datastructures/structures.py",
+            "lines": [
+              278,
+              290
+            ],
+            "sha256": "54bcee93693c123cf01cb55bc7bb70392bc2ca6ea243b6bd6a9d7f799417a2dd"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w28",
+      "family": "absent_tasks",
+      "category": "no_answer",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where is a scheduled background task placed into the Celery queue?",
+      "answerable": false,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [],
+      "rationale": "Absent application-level integration; no implementation in the pinned WSGI library."
+    },
+    {
+      "id": "w29",
+      "family": "absent_vector",
+      "category": "no_answer",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where are documents embedded and stored in a vector database?",
+      "answerable": false,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [],
+      "rationale": "Absent application-level integration; no implementation in the pinned WSGI library."
+    },
+    {
+      "id": "w30",
+      "family": "absent_payment",
+      "category": "no_answer",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where are Stripe subscription webhook signatures verified?",
+      "answerable": false,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [],
+      "rationale": "Absent application-level integration; no implementation in the pinned WSGI library."
+    },
+    {
+      "id": "w31",
+      "family": "local_stack",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "How does a context-local stack avoid mutating a list shared with another context when pushing?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/local.py",
+            "lines": [
+              142,
+              145
+            ],
+            "sha256": "e0594cd0e6761036542408194c70dee812e007397b34badfb9ed00ecb38d6de6"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w32",
+      "family": "local_stack",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where does popping a context-local stack return None when it is empty?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/local.py",
+            "lines": [
+              152,
+              158
+            ],
+            "sha256": "5f2dd5bad2e5bdd114d94730b8dfd39c0bd70993c8912cc6bfc4c51e18ac7c7e"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w33",
+      "family": "local_cleanup",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where are all managed context locals released during cleanup?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/local.py",
+            "lines": [
+              224,
+              225
+            ],
+            "sha256": "81484062ab92acf837211af55577a1fa1a24bc189eeb5334f978f96a9b8c297d"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w34",
+      "family": "etag",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where is an entity tag quoted and optionally prefixed as weak?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/http.py",
+            "lines": [
+              909,
+              914
+            ],
+            "sha256": "12609e601ec1b72c4fff757b7cb17de41c5418f469e975fb5cd487748dfc1d73"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w35",
+      "family": "etag",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where is the weak prefix removed while decoding an entity tag?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/http.py",
+            "lines": [
+              934,
+              943
+            ],
+            "sha256": "f58b72ca8a42e191c4f8abe8471a9572fa430aae62aab8f21f7387b06ce0e35c"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w36",
+      "family": "etag_hash",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where is a response entity tag computed as a SHA1 hexadecimal digest of bytes?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/http.py",
+            "lines": [
+              981,
+              981
+            ],
+            "sha256": "c5ccfd3f2672131bff80fc4768cdffb199631652e75ecc26573fef2bf47ba947"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w37",
+      "family": "http_date",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "How are parsed HTTP timestamps without timezone information normalized to UTC?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/http.py",
+            "lines": [
+              1003,
+              1010
+            ],
+            "sha256": "43620d47b0991af0ce9ae4935f74960341f5e78d85df3407ba1602f042fac93b"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w38",
+      "family": "http_age",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where does parsing a negative HTTP Age return no duration?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/http.py",
+            "lines": [
+              1053,
+              1064
+            ],
+            "sha256": "20192918b0c1fdeada1a124cfb4557d634b3d9d7f4924615adeb3a2dc57a20d2"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w39",
+      "family": "http_age",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where does serializing a negative HTTP Age raise an error?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/http.py",
+            "lines": [
+              1081,
+              1084
+            ],
+            "sha256": "fd75cd65c59a19380873d7dff4a0ce04c753ac94b9db8d1b8eb6e10de89d9937"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w40",
+      "family": "cookie_parse",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where is a cookie header extracted from a WSGI environment and delegated to the sans-IO parser?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/http.py",
+            "lines": [
+              1209,
+              1218
+            ],
+            "sha256": "cb368c89a306e71fb513de0d44c7ecbd6919ec81c91b49efcb56d4fbb285e69f"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w41",
+      "family": "cookie_dump",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where does a partitioned cookie automatically enable the Secure attribute?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/http.py",
+            "lines": [
+              1330,
+              1331
+            ],
+            "sha256": "fdc1ea8af69cccf890d7c0b7fc8e83bdf748b89ef9658e937f7d4a041a041af0"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w42",
+      "family": "cookie_dump",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where are invalid SameSite cookie values rejected?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/http.py",
+            "lines": [
+              1324,
+              1328
+            ],
+            "sha256": "d1f174b6c60d17de77bd149388a3451856cee0ea9d1a98dbeca95cbbe72c78cc"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w43",
+      "family": "hop_headers",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where are hop-by-hop headers removed in place from the outgoing header list?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/http.py",
+            "lines": [
+              1157,
+              1159
+            ],
+            "sha256": "239535bd3cac8a15cf5cabd6116f8beec168eb21c24274498c804c7d6e2154c0"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w44",
+      "family": "dispatcher",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "How is the longest mounted URL prefix chosen before dispatching a WSGI request?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/middleware/dispatcher.py",
+            "lines": [
+              68,
+              76
+            ],
+            "sha256": "c3a2af08e8f796111f5ab800ff42dfde210ef0b8d62f69236e55e2c3e4f2ded8"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w45",
+      "family": "dispatcher",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where are SCRIPT_NAME and PATH_INFO adjusted for a mounted application?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/middleware/dispatcher.py",
+            "lines": [
+              78,
+              81
+            ],
+            "sha256": "1dc1b8ad994d2b9898922d6f58373f29ff403db75268b0c7bdaa59c182c5d66e"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w46",
+      "family": "accept_quality",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where is content negotiation decided using both client quality and specificity?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/datastructures/accept.py",
+            "lines": [
+              175,
+              190
+            ],
+            "sha256": "4b39b8b2bb2949506f22b3ba57f045028077df33bd49161c7bac7c83c50aed5a"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w47",
+      "family": "headers",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where is a header appended while preserving existing values for the same key?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/datastructures/headers.py",
+            "lines": [
+              356,
+              361
+            ],
+            "sha256": "53706fe06d354bec369a05c18dc516b55ff0a007173583dfec726bb215f9d64d"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w48",
+      "family": "headers",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where does setting a header replace its first occurrence and remove duplicates?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/datastructures/headers.py",
+            "lines": [
+              402,
+              413
+            ],
+            "sha256": "b8122ef6045a1d9e737c0a66da9d1537159b39a6b8f8be350268fdf2ee9aaf23"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w49",
+      "family": "http_exception",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where is an HTTP exception converted into a WSGI response using its status and headers?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/exceptions.py",
+            "lines": [
+              149,
+              152
+            ],
+            "sha256": "2fac0e08fe3557b3eeeec9e798530aa255eaca9671ae66b0f194c9013e2d697b"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w50",
+      "family": "http_exception",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where is the default HTML error body constructed with escaped names?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/exceptions.py",
+            "lines": [
+              116,
+              122
+            ],
+            "sha256": "2ab388f6c6335d52c2dd14926dd81029ac3ced2f36a9f040b1c081fa1d1df8bb"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w51",
+      "family": "file_wrapper",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where does a file iterator read a fixed size block and stop when no bytes remain?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/wsgi.py",
+            "lines": [
+              331,
+              335
+            ],
+            "sha256": "e9fcdcb20c8902d2ff1455b6222f07f43a2ddc8741687199499d3c2823fd65e5"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w52",
+      "family": "closing_iterator",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where are all registered cleanup callbacks invoked when a response iterator closes?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/wsgi.py",
+            "lines": [
+              259,
+              260
+            ],
+            "sha256": "5f8dae8d18caf9b5e46ea572f2e46bf49b2e6b2adb5df228c5edc6b8c0373138"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w53",
+      "family": "shared_etag",
+      "category": "natural_language",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where does static-file middleware build an entity tag from timestamp, size and filename checksum?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/middleware/shared_data.py",
+            "lines": [
+              222,
+              225
+            ],
+            "sha256": "59dfbdca7c522d2055405ba01a69c332a9f13e88d277b0620483ab74d2dbe0c8"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w54",
+      "family": "http_date",
+      "category": "exact_symbol",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "parse_date",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/http.py",
+            "lines": [
+              1003,
+              1010
+            ],
+            "sha256": "43620d47b0991af0ce9ae4935f74960341f5e78d85df3407ba1602f042fac93b"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w55",
+      "family": "headers",
+      "category": "path_filter",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where is an existing header replaced without retaining duplicate values?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {
+        "path": "src/werkzeug/datastructures/headers.py"
+      },
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/datastructures/headers.py",
+            "lines": [
+              402,
+              413
+            ],
+            "sha256": "b8122ef6045a1d9e737c0a66da9d1537159b39a6b8f8be350268fdf2ee9aaf23"
+          }
+        ]
+      ],
+      "rationale": "Source-verified implementation span; negative cases concern absent application-level integrations."
+    },
+    {
+      "id": "w56",
+      "family": "absent_redis",
+      "category": "no_answer",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where is a Redis connection pool created for caching sessions?",
+      "answerable": false,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [],
+      "rationale": "Absent application-level integration; no implementation in the pinned WSGI library."
+    },
+    {
+      "id": "w57",
+      "family": "absent_kafka",
+      "category": "no_answer",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where are Kafka consumer offsets committed after handling events?",
+      "answerable": false,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [],
+      "rationale": "Absent application-level integration; no implementation in the pinned WSGI library."
+    },
+    {
+      "id": "w58",
+      "family": "absent_graphql",
+      "category": "no_answer",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where are GraphQL resolvers registered for the query schema?",
+      "answerable": false,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [],
+      "rationale": "Absent application-level integration; no implementation in the pinned WSGI library."
+    },
+    {
+      "id": "w59",
+      "family": "absent_s3",
+      "category": "no_answer",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where does an uploaded file get stored in an S3 bucket?",
+      "answerable": false,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [],
+      "rationale": "Absent application-level integration; no implementation in the pinned WSGI library."
+    },
+    {
+      "id": "w60",
+      "family": "absent_training",
+      "category": "no_answer",
+      "split": "holdout",
+      "label_status": "reviewed",
+      "reviewer": "Codex source review; same-author review, not independent",
+      "query": "Where is the neural network training optimizer configured?",
+      "answerable": false,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [],
+      "rationale": "Absent application-level integration; no implementation in the pinned WSGI library."
+    }
+  ]
+}

@@ -6,6 +6,7 @@ from devstill.context import (
     context_record,
     is_test_chunk,
     planning_retrieval_limit,
+    query_requests_tests,
     render_context_json,
     render_context_markdown,
     select_adaptive_context_results,
@@ -158,3 +159,82 @@ def test_context_artifacts_overwrite_both_files(tmp_path) -> None:
     write_context_artifacts(tmp_path, "# Second", "[]")
     assert markdown_path.read_text(encoding="utf-8") == "# Second\n"
     assert json_path.read_text(encoding="utf-8") == "[]\n"
+
+
+def test_context_backfills_after_budget_and_overlap_rejections():
+    large = make_result(path="src/large.py", name="large", code="x" * 100)
+    first = make_result(name="first", code="abc", start_line=1, end_line=5)
+    overlap = make_result(name="overlap", code="bc", start_line=2, end_line=4)
+    last = make_result(name="last", code="def", start_line=10, end_line=12)
+    selected = select_adaptive_context_results(
+        [large, first, overlap, last],
+        min_limit=1,
+        max_limit=2,
+        include_tests=False,
+        fits=lambda rs: sum(len(r.chunk.code) for r in rs) <= 6,
+    )
+    assert selected == [first, last]
+
+
+def test_context_can_skip_unsupported_candidate_and_use_later_anchor():
+    first = make_result(name="first", path="first.py")
+    weak = make_result(name="weak", path="weak.py")
+    weak.scores = {"semantic": 0.1}
+    anchor = make_result(name="anchor", path="anchor.py")
+    anchor.scores = {"exact": 1.0}
+    assert select_adaptive_context_results(
+        [first, weak, anchor],
+        min_limit=1,
+        max_limit=2,
+        include_tests=False,
+    ) == [first, anchor]
+
+
+def test_requested_tests_are_detected_without_prompt_length_routing():
+    assert query_requests_tests("Fix safe_join and add regression assertions")
+    assert query_requests_tests("Extend the existing tests")
+    assert not query_requests_tests("Update the error message without tests")
+    assert not query_requests_tests("Leave the tests unchanged; rename the variable")
+
+
+def test_focused_method_keeps_parent_from_consuming_budget():
+    parent = make_result(
+        kind="class", name="Values", code="x" * 100, start_line=1, end_line=80
+    )
+    method = make_result(
+        kind="method", name="Values.get", code="abc", start_line=10, end_line=11
+    )
+    helper = make_result(name="helper", code="def", start_line=90, end_line=92)
+    assert select_adaptive_context_results(
+        [parent, method, helper],
+        min_limit=1,
+        max_limit=2,
+        include_tests=False,
+        fits=lambda rs: sum(len(r.chunk.code) for r in rs) <= 6,
+    ) == [method, helper]
+    parent.scores = {"exact": 1.0}
+    assert select_adaptive_context_results(
+        [parent, method],
+        min_limit=1,
+        max_limit=2,
+        include_tests=False,
+    ) == [parent]
+
+
+def test_focused_child_retains_parent_priority_over_bulky_sibling():
+    parent = make_result(
+        kind="class", name="Response", code="x" * 9, start_line=10, end_line=30
+    )
+    sibling = make_result(
+        kind="class", name="Response", code="y" * 9, start_line=31, end_line=50
+    )
+    child = make_result(
+        kind="method", name="Response.range", code="abc", start_line=11, end_line=15
+    )
+    assert select_adaptive_context_results(
+        [parent, sibling, child],
+        min_limit=1,
+        max_limit=3,
+        include_tests=False,
+        fits=lambda rs: sum(len(r.chunk.code) for r in rs) <= 10,
+    ) == [child]

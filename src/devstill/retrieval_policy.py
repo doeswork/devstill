@@ -4,7 +4,35 @@ import fnmatch
 import re
 from pathlib import PurePosixPath
 
+from devstill.models import SourceChunk
+
 _GLOB_CHARACTERS = frozenset("*?[]")
+
+
+def query_references(query: str) -> list[str]:
+    """Extract bounded explicit code references, without generating new symbols."""
+    matches = re.finditer(
+        r"\b[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+\b|\b[A-Za-z_]\w*_\w+\b|`([A-Za-z_]\w*)`",
+        query,
+    )
+    return list(dict.fromkeys(m.group(1) or m.group(0) for m in matches))[:6]
+
+
+def is_overload(chunk: SourceChunk) -> bool:
+    return chunk.language == "python" and any(
+        str(d).rsplit(".", 1)[-1] == "overload"
+        for d in chunk.parser_metadata.get("decorators", [])
+    )
+
+
+def requests_signatures(query: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(overloads?|signatures?|typing|type hints?|type annotations?)\b",
+            query,
+            re.IGNORECASE,
+        )
+    )
 
 
 def normalize_retrieval_pattern(value: str) -> str:
@@ -15,7 +43,9 @@ def normalize_retrieval_pattern(value: str) -> str:
     if len(normalized) > 240:
         raise ValueError("retrieval exclusion must be at most 240 characters")
     if "\0" in normalized or "\\" in normalized:
-        raise ValueError("retrieval exclusions must use repository-relative POSIX paths")
+        raise ValueError(
+            "retrieval exclusions must use repository-relative POSIX paths"
+        )
     if re.match(r"^[A-Za-z]:", normalized):
         raise ValueError("retrieval exclusions must not use drive-letter paths")
     path = PurePosixPath(normalized)
@@ -43,4 +73,3 @@ def matches_retrieval_exclude(path: str, patterns: list[str]) -> bool:
         )
         for pattern in patterns
     )
-

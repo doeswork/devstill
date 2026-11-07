@@ -1,0 +1,520 @@
+{
+  "schema_version": 1,
+  "name": "werkzeug-dev-seeds-v1",
+  "corpus_commit": "6389612fd1ee1bd93579eed5026e8fd471d04abd",
+  "description": "Twenty development seeds with source-anchored evidence. Requires independent review and expansion; intentionally contains no held-out cases.",
+  "cases": [
+    {
+      "id": "w01",
+      "family": "filenames",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": null,
+      "query": "Where is an uploaded filename converted to portable ASCII and stripped of path separators?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/utils.py",
+            "lines": [
+              219,
+              229
+            ],
+            "sha256": "46c13d6b9f6ae68d70679548c52d32730531f82f644ca28e5d9de37f6728c8f3"
+          }
+        ]
+      ],
+      "rationale": "Filename normalization and separator removal are performed in secure_filename."
+    },
+    {
+      "id": "w02",
+      "family": "filenames",
+      "category": "typo",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": null,
+      "query": "secur_filenam",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/utils.py",
+            "lines": [
+              219,
+              229
+            ],
+            "sha256": "46c13d6b9f6ae68d70679548c52d32730531f82f644ca28e5d9de37f6728c8f3"
+          }
+        ]
+      ],
+      "rationale": "Misspelled known-symbol lookup; shares a family with all filename paraphrases."
+    },
+    {
+      "id": "w03",
+      "family": "path_safety",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": null,
+      "query": "How are user supplied path components prevented from escaping a trusted directory?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/security.py",
+            "lines": [
+              154,
+              166
+            ],
+            "sha256": "04f6eee1cf0bfa308e1972ebd3005b1b7992868b5154e1e6508f7881dbb12deb"
+          }
+        ]
+      ],
+      "rationale": "safe_join rejects absolute paths and parent traversal."
+    },
+    {
+      "id": "w04",
+      "family": "path_safety",
+      "category": "multi_file",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": null,
+      "query": "Trace how serving a file from a directory rejects a traversal path before returning a response.",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/utils.py",
+            "lines": [
+              564,
+              577
+            ],
+            "sha256": "858d00ee07e91e817853cdb4430d47dd8bde07b827c24db756acd72f25bd70d9"
+          }
+        ],
+        [
+          {
+            "path": "src/werkzeug/security.py",
+            "lines": [
+              154,
+              166
+            ],
+            "sha256": "04f6eee1cf0bfa308e1972ebd3005b1b7992868b5154e1e6508f7881dbb12deb"
+          }
+        ]
+      ],
+      "rationale": "Both the file-serving call site and path-safety implementation are required."
+    },
+    {
+      "id": "w05",
+      "family": "passwords",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": null,
+      "query": "Where is a stored password hash split into method and salt and compared without an ordinary equality check?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/security.py",
+            "lines": [
+              126,
+              131
+            ],
+            "sha256": "c54deffc26f1515df0a81737b57919eb32311024f0d74c1d9952f51418ca8b7d"
+          }
+        ]
+      ],
+      "rationale": "check_password_hash delegates hashing and uses compare_digest."
+    },
+    {
+      "id": "w06",
+      "family": "passwords",
+      "category": "exact_symbol",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": null,
+      "query": "generate_password_hash",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/security.py",
+            "lines": [
+              107,
+              109
+            ],
+            "sha256": "50f94a62b26e10ccf496b5864833af9c05c92ec3a9b2bb70ee2711520e03f493"
+          }
+        ]
+      ],
+      "rationale": "Known symbol should retrieve the implementation, not just references."
+    },
+    {
+      "id": "w07",
+      "family": "proxy_headers",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": null,
+      "query": "How does middleware rewrite the client IP address and URL scheme from trusted forwarding headers?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/middleware/proxy_fix.py",
+            "lines": [
+              150,
+              162
+            ],
+            "sha256": "8cf6fc9ece97f74294cfa59432ffc66883b2b8e92770254ee118b5684c38a615"
+          }
+        ]
+      ],
+      "rationale": "ProxyFix reads the forwarded values and rewrites the environment."
+    },
+    {
+      "id": "w08",
+      "family": "multidict",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": null,
+      "query": "Where does a mapping return every value for a repeated key and skip entries whose conversion fails?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/datastructures/structures.py",
+            "lines": [
+              278,
+              290
+            ],
+            "sha256": "54bcee93693c123cf01cb55bc7bb70392bc2ca6ea243b6bd6a9d7f799417a2dd"
+          }
+        ]
+      ],
+      "rationale": "MultiDict.getlist copies all values or performs per-item conversion."
+    },
+    {
+      "id": "w09",
+      "family": "json_body",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": null,
+      "query": "What happens when a request contains malformed JSON and the caller asks to suppress the parsing error?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/wrappers/request.py",
+            "lines": [
+              608,
+              622
+            ],
+            "sha256": "ccb86194849385592c0a6bf7ad251ee948d1ffa2b93c286780c361f243483fda"
+          }
+        ]
+      ],
+      "rationale": "The silent branch catches ValueError and caches None separately."
+    },
+    {
+      "id": "w10",
+      "family": "form_dispatch",
+      "category": "multi_file",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": null,
+      "query": "Trace how a request chooses its body parser and stores the parsed form fields and uploaded files.",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/wrappers/request.py",
+            "lines": [
+              269,
+              287
+            ],
+            "sha256": "2429bc8e6aed3fce2e096cf96dddc964fad70371080e9b7dca832e3f5e9a8e49"
+          }
+        ],
+        [
+          {
+            "path": "src/werkzeug/formparser.py",
+            "lines": [
+              231,
+              247
+            ],
+            "sha256": "755bb3e2207544dff894d99b03621b57389d62aa7aacd86edc8e02de3653e81b"
+          }
+        ]
+      ],
+      "rationale": "Need the request integration and MIME-based parser dispatch, not only one layer."
+    },
+    {
+      "id": "w11",
+      "family": "ranges",
+      "category": "multi_file",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": null,
+      "query": "Trace how an HTTP byte range is parsed and turned into a partial-content response.",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/http.py",
+            "lines": [
+              821,
+              846
+            ],
+            "sha256": "40597fa56e20358f32fa24bf58d1e77fa0acced60bb35d976414a1ccfdf12b55"
+          }
+        ],
+        [
+          {
+            "path": "src/werkzeug/wrappers/response.py",
+            "lines": [
+              686,
+              702
+            ],
+            "sha256": "df87ce6189e7f49173c9c79678fc48e560b72de11fe62c09c1ab1334b4faf501"
+          }
+        ]
+      ],
+      "rationale": "Range parsing and response status/header updates are separate required evidence groups."
+    },
+    {
+      "id": "w12",
+      "family": "ranges",
+      "category": "path_filter",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": null,
+      "query": "Where are response length, range headers and status set for a partial-content request?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {
+        "path": "src/werkzeug/wrappers/response.py"
+      },
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/wrappers/response.py",
+            "lines": [
+              697,
+              702
+            ],
+            "sha256": "cd5050d97760eba65e53e5b3a6601463bead0018d796896f42c98156ddbd725f"
+          }
+        ]
+      ],
+      "rationale": "Same retrieval task restricted to the response implementation."
+    },
+    {
+      "id": "w13",
+      "family": "header_options",
+      "category": "exact_symbol",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": null,
+      "query": "parse_options_header",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/http.py",
+            "lines": [
+              473,
+              479
+            ],
+            "sha256": "0164650885db641064daa68e140ae5463062b579d145ba995ae6671bc9e420ea"
+          }
+        ]
+      ],
+      "rationale": "Requires the header value and parameter splitting code."
+    },
+    {
+      "id": "w14",
+      "family": "filenames",
+      "category": "test_discovery",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": null,
+      "query": "Find the regression assertions for uploaded filenames containing parent-directory traversal and accented characters.",
+      "answerable": true,
+      "include_tests": true,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "tests/test_utils.py",
+            "lines": [
+              295,
+              303
+            ],
+            "sha256": "fea879dcd82cd5e596531fd06731a99f6d51ab9d8ec2540b97ab78d1726ff523"
+          }
+        ]
+      ],
+      "rationale": "Tests are explicitly requested and must be eligible for context selection."
+    },
+    {
+      "id": "w15",
+      "family": "request_limits",
+      "category": "documentation",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": null,
+      "query": "Find the documentation distinguishing total request size, in-memory form-field size, and multipart part-count limits.",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "docs/request_data.rst",
+            "lines": [
+              82,
+              91
+            ],
+            "sha256": "5228cb2b1539f5a0f515f72ee3cf70dc84cae2dc6a38bbc8efbc92e14009eaaa"
+          }
+        ]
+      ],
+      "rationale": "Documentation intent should retrieve the distinctions between all three controls."
+    },
+    {
+      "id": "w16",
+      "family": "route_dispatch",
+      "category": "path_filter",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": null,
+      "query": "Where is URL matching delegated to the state-machine matcher with domain, path, method and websocket inputs?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {
+        "path": "src/werkzeug/routing/"
+      },
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/routing/map.py",
+            "lines": [
+              599,
+              606
+            ],
+            "sha256": "91310f242d21fdd9d46fddfb9d17c2549009d23365bdeaaaae6c432158ac68eb"
+          }
+        ]
+      ],
+      "rationale": "Scoped query isolates the MapAdapter call into the matcher."
+    },
+    {
+      "id": "w17",
+      "family": "json_body",
+      "category": "disambiguation",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": null,
+      "query": "Find request JSON parsing, rather than response JSON parsing, when silent and cache options are enabled.",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/wrappers/request.py",
+            "lines": [
+              598,
+              605
+            ],
+            "sha256": "6437d3d3c6180f6f6a45c676c457c2939f8e9f7c659793d87e32dc9a39d3bd78"
+          }
+        ]
+      ],
+      "rationale": "Request and response have similarly named get_json methods."
+    },
+    {
+      "id": "w18",
+      "family": "multidict",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": null,
+      "query": "Find the implementation that appends another value for an existing dictionary key without replacing previous values.",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/datastructures/structures.py",
+            "lines": [
+              248,
+              256
+            ],
+            "sha256": "2e8a20350d7ec6b007836bc2ebdfc9b4d03e9ce728ac1b26d6f7fe1cc3984386"
+          }
+        ]
+      ],
+      "rationale": "MultiDict.add appends through setdefault; category corrected to natural language below."
+    },
+    {
+      "id": "w19",
+      "family": "absent_oauth",
+      "category": "no_answer",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": null,
+      "query": "Where does this library automatically refresh OAuth access tokens after expiration?",
+      "answerable": false,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [],
+      "rationale": "Provisional negative: Werkzeug does not implement an OAuth refresh client. Reviewer must check the pinned corpus and dependency boundary."
+    },
+    {
+      "id": "w20",
+      "family": "absent_database",
+      "category": "no_answer",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": null,
+      "query": "Where does this library run database schema migrations inside a transaction?",
+      "answerable": false,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [],
+      "rationale": "Provisional negative: no schema migration engine is part of this WSGI library. Reviewer must confirm absence."
+    }
+  ]
+}

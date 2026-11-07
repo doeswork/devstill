@@ -49,9 +49,11 @@ class FakeEmbedder:
 class FakeChroma:
     def __init__(self) -> None:
         self.records: dict[str, tuple[list[float], str]] = {}
+        self.metadata: dict[str, dict] = {}
 
     def reset_collection(self) -> None:
         self.records.clear()
+        self.metadata.clear()
 
     def upsert_search_units(
         self,
@@ -62,6 +64,8 @@ class FakeChroma:
     ) -> None:
         for unit, vector in zip(units, embeddings, strict=True):
             self.records[unit.id] = (vector, unit.source_chunk_ids[0])
+            chunk = chunks[unit.source_chunk_ids[0]]
+            self.metadata[unit.id] = {"path": chunk.path, "kind": chunk.kind}
         if progress is not None and units:
             progress(len(units), len(units))
 
@@ -72,10 +76,25 @@ class FakeChroma:
             progress(len(unit_ids), len(unit_ids))
 
     def query_embedding(
-        self, embedding: list[float], limit: int
+        self, embedding: list[float], limit: int, *, where: dict | None = None
     ) -> list[tuple[str, float]]:
         values = []
-        for vector, chunk_id in self.records.values():
+
+        def matches(metadata, expression):
+            if not expression:
+                return True
+            if "$and" in expression:
+                return all(matches(metadata, item) for item in expression["$and"])
+            return all(
+                metadata.get(key) in value["$in"]
+                if isinstance(value, dict)
+                else metadata.get(key) == value
+                for key, value in expression.items()
+            )
+
+        for unit_id, (vector, chunk_id) in self.records.items():
+            if not matches(self.metadata[unit_id], where):
+                continue
             score = sum(
                 left * right for left, right in zip(vector, embedding, strict=True)
             )

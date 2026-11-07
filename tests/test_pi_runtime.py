@@ -97,6 +97,28 @@ def test_auto_context_uses_llamacpp_metadata_and_falls_back() -> None:
     assert fallback.warning
 
 
+@pytest.mark.parametrize("context_window", [262144, 32768, 0, 4095, True, "262144"])
+def test_auto_context_uses_valid_vllm_max_model_len(context_window) -> None:
+    with httpx.Client(
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                json={"data": [{"id": "qwen-local", "max_model_len": context_window}]},
+            )
+        )
+    ) as client:
+        limits = resolve_pi_limits(
+            LlmConfig(enabled=True, model="qwen-local"),
+            ExecutorConfig(),
+            client=client,
+        )
+    valid = type(context_window) is int and context_window >= 4096
+    assert limits.context_window == (context_window if valid else 8192)
+    assert limits.source == ("model metadata" if valid else "fallback")
+    assert limits.max_output_tokens == (4096 if valid else 2730)
+    assert (limits.warning is None) == valid
+
+
 def test_policy_forces_nonthinking_tool_calls_and_scoped_contracts() -> None:
     policy = (
         Path(__file__).parents[1] / "src/devstill/pi/devstill_policy.ts"

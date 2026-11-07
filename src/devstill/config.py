@@ -139,6 +139,8 @@ class LlmConfig(StrictModel):
     max_output_tokens: int = Field(default=2048, ge=64, le=65536)
     planning_max_output_tokens: int = Field(default=6144, ge=64, le=65536)
     planning_reasoning: Literal["off", "auto"] = "off"
+    context_window: int | None = Field(default=None, ge=4096)
+    planning_input_tokens: int | None = Field(default=None, ge=1024)
 
     @field_validator("base_url")
     @classmethod
@@ -176,6 +178,8 @@ class LlmConfig(StrictModel):
     def validate_enabled_model(self) -> LlmConfig:
         if self.enabled and not self.model:
             raise ValueError("model is required when the agent is enabled")
+        if self.planning_input_tokens is not None and self.context_window is None:
+            raise ValueError("planning_input_tokens requires context_window")
         return self
 
 
@@ -199,7 +203,9 @@ class ExecutorConfig(StrictModel):
 
     @field_validator("context_window")
     @classmethod
-    def validate_context_window(cls, value: Literal["auto"] | int) -> Literal["auto"] | int:
+    def validate_context_window(
+        cls, value: Literal["auto"] | int
+    ) -> Literal["auto"] | int:
         if value == "auto":
             return value
         if isinstance(value, bool) or value < 4096:
