@@ -9,6 +9,7 @@ separate gate, and their results are recorded for review.
 
 from __future__ import annotations
 
+import ast
 import json
 import time
 
@@ -277,6 +278,78 @@ def render_context(query, sections, requirements=None):
     return "\n\n".join(parts)
 
 
+_OPERATORS = {
+    "Eq": "==",
+    "NotEq": "!=",
+    "Is": "is",
+    "IsNot": "is not",
+    "In": "in",
+    "NotIn": "not in",
+    "Lt": "<",
+    "LtE": "<=",
+    "Gt": ">",
+    "GtE": ">=",
+}
+
+
+def _comparisons(code):
+    """Map each asserted left-hand expression to its right-hand sources."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return None
+    found = {}
+    for node in ast.walk(tree):
+        test = getattr(node, "test", None)
+        if (
+            isinstance(node, ast.Assert)
+            and isinstance(test, ast.Compare)
+            and len(test.ops) == 1
+        ):
+            found.setdefault(ast.unparse(test.left), []).append(
+                ast.unparse(test.comparators[0])
+            )
+    return found
+
+
+def _literal_repr(source):
+    try:
+        return repr(ast.literal_eval(source))
+    except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+        return None
+
+
+def weakening_note(previous, code):
+    """Warn when a new check drops or flips an assertion that just failed."""
+    if not previous:
+        return ""
+    found = _comparisons(code)
+    if found is None:
+        return ""
+    left, right = previous["left_src"], previous["right_src"]
+    shown = f"`assert {left} {_OPERATORS.get(previous.get('op'), '==')} {right}`"
+    advice = (
+        f" If {right} is what the request requires or keeps, the code is wrong: "
+        "restore the assertion and fix the code."
+    )
+    rights = found.get(left)
+    if rights is None:
+        return (
+            f"\nWarning: your previous check asserted {shown}, which failed (actual "
+            f"value {previous['left']}); this check no longer asserts it." + advice
+        )
+    if previous.get("op") in {"Eq", "Is"} and any(
+        source != right and _literal_repr(source) == previous["left"]
+        for source in rights
+    ):
+        return (
+            f"\nWarning: your previous check asserted {shown}, which failed (actual "
+            f"value {previous['left']}); this check now expects that actual value."
+            + advice
+        )
+    return ""
+
+
 def _call_name(call):
     return (call.get("function") or {}).get("name", "")
 
@@ -313,6 +386,7 @@ def agent_loop(
     nudged = False
     step = 0
     last_edit_step = -1
+    failed_assert = None  # the latest failing check comparison, if any
     usage = {"prompt_tokens": 0, "completion_tokens": 0}
 
     def trace():
@@ -364,11 +438,13 @@ def agent_loop(
             if found:
                 guard_reports += 1
                 new, output = found
+                diff = guard.diff()
                 return (
                     "Existing tests that passed before your change now fail:\n"
                     + "\n".join(new[:10])
                     + "\n\nOutput (tail):\n"
                     + output[-2500:]
+                    + (f"\n\nYour changes so far:\n```diff\n{diff}\n```" if diff else "")
                     + "\nFix the code so they pass again, unless the request explicitly "
                     "asks to change that behavior."
                 )
@@ -522,7 +598,11 @@ def agent_loop(
                             max(1.0, deadline - time.perf_counter()),
                         )
                         report("Running check")
+                        note = weakening_note(failed_assert, code)
                         result = workspace.python(code, timeout, checkpoint)
+                        failed_assert = result.meta.get("failed_assert")
+                        if note:
+                            result.text += note
                         if result.changed:
                             last_edit_step = step - 0.5
                             changed()

@@ -582,6 +582,8 @@ def test_loop_feeds_regressions_back_before_accepting_done(tested):
         and "test_neg" in feedback
         and "test_known_bad" not in feedback
     )
+    assert "Your changes so far:\n```diff\n--- a/pkg/m.py" in feedback
+    assert "-    return -a\n+    return a" in feedback
 
 
 def test_files_named_in_the_request_are_shown_head_and_tail(tmp_path):
@@ -644,3 +646,36 @@ def test_turn_limit_judges_the_latest_check_after_the_edit(work):
     result = agent_loop(tools_for(work), "Fix add", [], chat, work, FAR, max_turns=2)
     assert result["status"] == "applied_unvalidated" and result["finished"] == "turn_limit"
     assert result["verified"]
+
+
+def test_weakening_note_flags_dropped_or_flipped_failed_assertions():
+    from devstill.runtime.agent_loop import weakening_note
+
+    failed = {"left_src": "f('a/b')", "right_src": "'a/b'", "op": "Eq", "left": "'a%2Fb'", "right": "'a/b'"}
+    flipped = weakening_note(failed, "assert f('a/b') == 'a%2Fb'\n")
+    assert "now expects that actual value" in flipped and "fix the code" in flipped
+    dropped = weakening_note(failed, "assert f('x') == 'x'\n")
+    assert "no longer asserts it" in dropped
+    assert weakening_note(failed, "assert f('a/b') == 'a/b'\n") == ""  # kept
+    assert weakening_note(None, "assert True\n") == ""
+    assert weakening_note(failed, "def (:\n") == ""
+
+
+def test_loop_warns_when_a_check_is_bent_to_match_wrong_code(work):
+    chat = scripted(
+        reply(call("python", 0, code="from pkg.m import add\nassert add(2, 3) == 5\n")),
+        reply(
+            call("python", 0, code="from pkg.m import add\nassert add(2, 3) == -1\n"),
+        ),
+        reply(
+            call("edit", 0, path="pkg/m.py", oldText="a - b", newText="a + b"),
+            call("python", 1, code="from pkg.m import add\nassert add(2, 3) == 5\n"),
+            call("done", 2, summary="fixed"),
+        ),
+    )
+    result = agent_loop(tools_for(work), "Fix add", [], chat, work, FAR)
+    assert result["status"] == "applied_unvalidated"
+    first = [m for m in chat.seen[1] if m["role"] == "tool"][-1]["content"]
+    assert "left:  -1" in first and "right: 5" in first
+    second = [m for m in chat.seen[2] if m["role"] == "tool"][-1]["content"]
+    assert "now expects that actual value" in second

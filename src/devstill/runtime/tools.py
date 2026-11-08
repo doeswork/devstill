@@ -9,6 +9,7 @@ current text so a failed match can be repaired in one step.
 from __future__ import annotations
 
 import difflib
+import json
 import os
 import re
 import signal
@@ -60,6 +61,7 @@ class ToolError(ValueError):
 PYTHON_RUNNER = r"""
 import ast, sys, traceback
 path = sys.argv[1]
+record = sys.argv[2] if len(sys.argv) > 2 else None
 source = open(path, encoding="utf-8").read()
 namespace = {"__name__": "__main__", "__file__": path}
 sys.argv = [path]
@@ -83,6 +85,16 @@ except AssertionError as exc:
                         left = eval(compile(ast.Expression(test.left), path, "eval"), scope)
                         right = eval(compile(ast.Expression(test.comparators[0]), path, "eval"), scope)
                         print(f"  left:  {left!r}\n  right: {right!r}", file=sys.stderr)
+                        if record:
+                            import json
+                            with open(record, "w", encoding="utf-8") as out:
+                                json.dump({
+                                    "left_src": ast.unparse(test.left),
+                                    "right_src": ast.unparse(test.comparators[0]),
+                                    "op": type(test.ops[0]).__name__,
+                                    "left": repr(left)[:300],
+                                    "right": repr(right)[:300],
+                                }, out)
                     break
         except Exception:
             pass
@@ -95,6 +107,9 @@ class ToolResult:
     text: str
     ok: bool = True
     changed: list[str] = field(default_factory=list)
+    # Structured details for the loop (not shown to the model), e.g. the
+    # comparison of a failing check assertion.
+    meta: dict = field(default_factory=dict)
 
 
 def _normal_line(line: str) -> str:
@@ -407,9 +422,18 @@ class Workspace:
         with tempfile.TemporaryDirectory(prefix="devstill-check-") as folder:
             runner = Path(folder) / "runner.py"
             script = Path(folder) / "check.py"
+            record = Path(folder) / "failed-assert.json"
             runner.write_text(PYTHON_RUNNER)
             script.write_text(code)
-            return self._run(["python", str(runner), str(script)], timeout, checkpoint)
+            result = self._run(
+                ["python", str(runner), str(script), str(record)], timeout, checkpoint
+            )
+            if record.is_file():
+                try:
+                    result.meta["failed_assert"] = json.loads(record.read_text())
+                except ValueError:
+                    pass
+            return result
 
     def bash(self, command: str, timeout: float, checkpoint=lambda: None) -> ToolResult:
         if not command.strip():
@@ -580,6 +604,25 @@ class TestGuard:
             self._generation += 1
             if self._process is not None:
                 _kill(self._process)
+
+    def diff(self, limit=1500):
+        """Unified diff of the agent's changes so far, for regression feedback."""
+        chunks = []
+        for name in self.workspace.changed:
+            path = self.workspace.root / name
+            before = self.originals(name) or b""
+            after = path.read_bytes() if path.exists() else b""
+            chunks.extend(
+                difflib.unified_diff(
+                    before.decode("utf-8", errors="replace").splitlines(keepends=True),
+                    after.decode("utf-8", errors="replace").splitlines(keepends=True),
+                    fromfile="a/" + name,
+                    tofile="b/" + name,
+                    n=1,
+                )
+            )
+        text = "".join(chunks)
+        return text if len(text) <= limit else text[:limit] + "\n[diff truncated]"
 
     def regressions(self, wait):
         """Return (new_failures, output) for the latest change, or None if unknown."""
