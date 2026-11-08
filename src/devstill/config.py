@@ -244,6 +244,15 @@ class FeatureConfig(StrictModel):
         return self
 
 
+class EditingConfig(StrictModel):
+    # Quick uses the native Devstill editor; false explicitly selects legacy Quick.
+    enabled: bool = True
+    timeout_seconds: float = Field(default=120, ge=1, le=3600)
+    max_output_tokens: int = Field(default=4096, ge=64, le=65536)
+    max_context_chars: int = Field(default=48000, ge=1024)
+    python: str | None = None
+
+
 class DevstillConfig(StrictModel):
     version: int = 1
     repo: RepoConfig = Field(default_factory=RepoConfig)
@@ -254,6 +263,7 @@ class DevstillConfig(StrictModel):
     llm: LlmConfig = Field(default_factory=LlmConfig)
     executor: ExecutorConfig = Field(default_factory=ExecutorConfig)
     feature: FeatureConfig = Field(default_factory=FeatureConfig)
+    editing: EditingConfig = Field(default_factory=EditingConfig)
 
 
 def default_model_path() -> Path:

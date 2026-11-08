@@ -1,3 +1,5 @@
+> Archived historical document. Statements and commands describe the workflow at that time. Use the [active test plan](../../../benchmarks/retrieval/TEST_PLAN.md) for current work. Original path: `benchmarks/retrieval/NEXT_PLAN.md`.
+
 # Retrieval for small edits and complete features
 
 **Task workflow implementation:** [Task Review / YOLO and dependency execution](TASK_IMPLEMENTATION.md). Feature acceptance quality remains a separate evaluation gate.
@@ -18,7 +20,7 @@ These 12 new cases deliberately stress changes: five small edits, five feature a
 
 ## What was tested
 
-[change_probes.py](change_probes.py) imports existing search code into an isolated benchmark process. It does not patch or register production behavior. Every variant uses the same existing CUDA index and the current working-tree search baseline, which already includes the earlier prose/fuzzy change. The Qwen endpoint is `http://192.168.0.131:1234/v1`; the configured server model is `vllm-qwen38-27b`. The model name is the server identifier, not an independent verification of its underlying weights.
+[change_probes.py](../../../benchmarks/retrieval/change_probes.py) imports existing search code into an isolated benchmark process. It does not patch or register production behavior. Every variant uses the same existing CUDA index and the current working-tree search baseline, which already includes the earlier prose/fuzzy change. The Qwen endpoint is `http://192.168.0.131:1234/v1`; the configured server model is `vllm-qwen38-27b`. The model name is the server identifier, not an independent verification of its underlying weights.
 
 | Variant | Candidate and context policy |
 | --- | --- |
@@ -29,7 +31,7 @@ These 12 new cases deliberately stress changes: five small edits, five feature a
 
 Caps are 2,048 context tokens for small edits/absent lookups and 4,096 for features/new capabilities. Counts come from the serving Qwen tokenizer's `/tokenize` endpoint applied to serialized context records. They exclude system messages, tools, history and output reservation: this is **not** full-prompt budget enforcement. Candidate counts and context chunk caps differ by variant; these are diagnostic bundles, not isolated causal ablations.
 
-Authoritative results use [werkzeug.changes.v2_1.json](werkzeug.changes.v2_1.json) and `.devstill/retrieval-design-v2/rescored/summary.json`. Coverage is the mean per-task fraction of required evidence groups present in the final context; complete means every labeled group is present.
+Authoritative results use [werkzeug.changes.v2_1.json](../../../benchmarks/retrieval/werkzeug.changes.v2_1.json) and `.devstill/retrieval-design-v2/rescored/summary.json`. Coverage is the mean per-task fraction of required evidence groups present in the final context; complete means every labeled group is present.
 
 | Workload | Current | Wider + tests | + canonical anchors | + Qwen facets |
 | --- | --- | --- | --- | --- |
@@ -50,7 +52,7 @@ Qwen rewrite time was about 0.75 seconds median for small edits and 0.78 seconds
 
 The first prototype incorrectly failed to recognize certain overload chunks: their decorator begins at column zero while the class method remains indented. The corrected prototype consults existing parser decorator metadata before attempting AST parsing. A targeted `MultiDict.getlist` lookup then includes the real body at lines 262–290; the current path spends slots on overload signatures at 258–261 and omits the body. This is a successful diagnostic, not a production fix. It added no aggregate gain over the wider variant on the ten change tasks.
 
-Two label errors were found while reviewing outputs. `feature_conversion` included blank line 117 outside the implementation; `feature_downloads` joined two required test bodies across unindexed whitespace. Version 2.1 removes the blank line and scores both test bodies as separate required groups. Queries and retrieved results did not change. [rescore_probes.py](rescore_probes.py) applies the new labels uniformly to every saved variant and rejects changed queries. These are disclosed post-run corrections, not a fresh held-out result.
+Two label errors were found while reviewing outputs. `feature_conversion` included blank line 117 outside the implementation; `feature_downloads` joined two required test bodies across unindexed whitespace. Version 2.1 removes the blank line and scores both test bodies as separate required groups. Queries and retrieved results did not change. [rescore_probes.py](../../../benchmarks/retrieval/rescore_probes.py) applies the new labels uniformly to every saved variant and rejects changed queries. These are disclosed post-run corrections, not a fresh held-out result.
 
 Preserved local artifacts:
 

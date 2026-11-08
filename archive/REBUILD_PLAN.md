@@ -1,6 +1,8 @@
+> Archived historical document. Statements and commands describe the workflow at that time. Use the [active test plan](../benchmarks/retrieval/TEST_PLAN.md) for current work. Original path: `REBUILD_PLAN.md`.
+
 # Devstill: a minimal coding runtime with shared TUI and headless interfaces
 
-Status: implementation plan, not an implemented runtime.
+Status: staged implementation in progress. See [MINIMAL_RUNTIME.md](../MINIMAL_RUNTIME.md) for the implemented opt-in core, interfaces, validation and remaining gates. This document describes the complete target, not current guarantees.
 Inspected source revision: `d2f25ff` (`re-build`).
 Scope of this change: documentation only. No new live benchmarks are required to write this plan.
 

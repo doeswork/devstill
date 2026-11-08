@@ -1,3 +1,5 @@
+> Archived historical document. Statements and commands describe the workflow at that time. Use the [active test plan](../../../benchmarks/retrieval/TEST_PLAN.md) for current work. Original path: `benchmarks/retrieval/TASK_COMPARISON_RESULTS.md`.
+
 # Task workflow versus legacy Plan/Pi: measured comparison
 
 Run 2026-11-07. **The new workflow is not an overall improvement yet.** It reduced generation turns on successful coding cases and improved Cargo context coverage with a larger allowance, but introduced definition failures and increased review latency. Feature retrieval on Werkzeug did not improve. Fix the task-definition failures before promoting this as the preferred feature workflow.

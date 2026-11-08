@@ -1,3 +1,5 @@
+> Archived historical document. Statements and commands describe the workflow at that time. Use the [active test plan](../../../benchmarks/retrieval/TEST_PLAN.md) for current work. Original path: `benchmarks/retrieval/FEATURE_TASK_PLAN.md`.
+
 # Features composed from Quick tasks
 
 Status: design reference. [Implementation and benchmark handoff](FEATURE_IMPLEMENTATION.md)
@@ -54,7 +56,7 @@ run for an explicit amendment, including in YOLO.
 ## 2. Preserve Quick as the execution primitive
 
 The feature runner must call `create_quick_draft` and `run_quick_task` from
-[`quick_tasks.py`](../../src/devstill/quick_tasks.py). It must not call the
+[`quick_tasks.py`](../../../src/devstill/quick_tasks.py). It must not call the
 experimental `create_task_draft`/`TaskExecutor` or manufacture a new coding
 response format. A child cannot create children or ask a model for the next step.
 

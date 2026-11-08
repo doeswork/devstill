@@ -1,3 +1,5 @@
+> Archived historical document. Statements and commands describe the workflow at that time. Use the [active test plan](../../../benchmarks/retrieval/TEST_PLAN.md) for current work. Original path: `benchmarks/retrieval/TASK_IMPLEMENTATION.md`.
+
 # Task Review and YOLO implementation
 
 **Historical implementation:** new requests now use [Quick directly](QUICK_RESTORE_RESULTS.md). The generated dependency plan and separate structured-edit executor described below are retained only for older saved drafts and experiments.

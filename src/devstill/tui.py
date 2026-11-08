@@ -1261,7 +1261,7 @@ class DevstillApp(App[None]):
         self._resolving_search_index: int | None = None
         self._resolving_search_label: PlanLabel | None = None
         self._pi_status = inspect_pi()
-        self._task_review: TaskDraft | FeatureDraft | None = None
+        self._task_review: TaskDraft | FeatureDraft | dict | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -1390,13 +1390,16 @@ class DevstillApp(App[None]):
             prompt.disabled = True
             self._show_composer_actions("cancel-task", "edit-task", "run-task")
             draft = self._task_review
-            count = len(draft.plan.tasks) if draft else 0
+            count = 1 if isinstance(draft, dict) else (len(draft.plan.tasks) if draft else 0)
             button = self.query_one("#run-task", Button)
             button.label = "Run task" if count == 1 else f"Run {count} tasks"
             if isinstance(draft, FeatureDraft):
                 button.label = "Run feature"
                 prompt.placeholder = "Review the feature, then Run feature or Edit request"
-            button.disabled = self._busy or draft is None or bool(draft.plan.unresolved)
+            if isinstance(draft, dict):
+                button.label = "Apply patch"
+                prompt.placeholder = "Review the checked patch, then Apply patch or Edit request"
+            button.disabled = self._busy or draft is None or (not isinstance(draft, dict) and bool(draft.plan.unresolved))
         elif mode is ComposerMode.PI_HANDOFF:
             prompt.placeholder = "Refine this plan, then press Enter"
             prompt.disabled = self._busy
@@ -2157,12 +2160,22 @@ class DevstillApp(App[None]):
         if button_id == "stop-feature":
             self.workflow.cancel_tasks()
             event.button.disabled = True
-            self.query_one("#activity", Static).update("Stopping feature before further application; applied changes remain")
+            self.query_one("#activity", Static).update("Stopping work before further application; applied changes remain")
             return
         if button_id in {"cancel-task", "edit-task", "run-task"}:
             if self._busy or self._task_review is None:
                 return
             draft = self._task_review
+            if isinstance(draft, dict):
+                self._task_review = None
+                self._set_composer_mode(ComposerMode.NORMAL)
+                if button_id == "run-task":
+                    self._start_worker(TuiCommand(TuiCommandKind.EDIT_APPLY, "Apply reviewed patch", draft["id"], draft["digest"]))
+                elif button_id == "edit-task":
+                    self.query_one("#command-input", PromptTextArea).text = "/edit " + draft["query"]
+                else:
+                    self.query_one("#activity", Static).update("Patch saved; no changes applied")
+                return
             if button_id == "run-task" and draft.plan.unresolved:
                 return
             self._task_review = None
@@ -2387,7 +2400,7 @@ class DevstillApp(App[None]):
         progress_bar.display = command.kind is TuiCommandKind.INDEX
         progress_bar.update(total=100, progress=0)
         self.query_one("#activity", Static).update(f"Running {escape(command.raw)}")
-        if command.kind in {TuiCommandKind.FEATURE, TuiCommandKind.FEATURE_YOLO, TuiCommandKind.FEATURE_RUN}:
+        if command.kind in {TuiCommandKind.EDIT, TuiCommandKind.EDIT_YOLO, TuiCommandKind.FEATURE, TuiCommandKind.FEATURE_YOLO, TuiCommandKind.FEATURE_RUN} or (self.config.editing.enabled and command.kind in {TuiCommandKind.TASK, TuiCommandKind.YOLO}):
             self._show_composer_actions("stop-feature")
             self.query_one("#stop-feature", Button).disabled = False
         self._active_worker = self.run_worker(
@@ -2597,8 +2610,9 @@ class DevstillApp(App[None]):
             if task_review is not None:
                 self._task_review = task_review
                 self._set_composer_mode(ComposerMode.TASK_REVIEW)
-                self.query_one("#activity", Static).update("Task needs more context" if task_review.plan.unresolved else "Review task impacts, then run")
-                self.query_one("#edit-task" if task_review.plan.unresolved else "#run-task", Button).focus()
+                unresolved = not isinstance(task_review, dict) and task_review.plan.unresolved
+                self.query_one("#activity", Static).update("Review the checked patch, then apply" if isinstance(task_review, dict) else ("Task needs more context" if unresolved else "Review task impacts, then run"))
+                self.query_one("#edit-task" if unresolved else "#run-task", Button).focus()
             elif pending is not None:
                 self._pending_execution = pending
                 self._pending_entry = (

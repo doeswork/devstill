@@ -1,0 +1,246 @@
+[
+  {
+    "id": "nq01",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "named symbol",
+    "family": "src/werkzeug/http.py",
+    "query": "Make unquote_etag return (None, None) for whitespace-only input. Preserve empty quoted tags, weak tags and ordinary tags.",
+    "checks": "from werkzeug.http import unquote_etag as f\nassert f(' \\t ')==(None,None)\nassert f('\"\"')==('',False)\nassert f('W/\"x\"')==('x',True)\nassert f('x')==('x',False)",
+    "edits": [
+      {
+        "path": "src/werkzeug/http.py",
+        "old": "    etag = etag.strip()",
+        "new": "    etag = etag.strip()\n    if not etag:\n        return None, None"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh source-authored case; same agent authors and reviews; not independent adjudication",
+    "allowed_change_areas": [
+      "src/werkzeug/http.py"
+    ]
+  },
+  {
+    "id": "nq02",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "class method",
+    "family": "src/werkzeug/datastructures/range.py",
+    "query": "Range must snapshot the ranges passed to its constructor as a list so later caller mutations cannot alter the header. Preserve serialization and validation.",
+    "checks": "from werkzeug.datastructures import Range\nx=[(0,3)]; r=Range('bytes',x); x.append((5,7)); assert r.to_header()=='bytes=0-2'\nassert Range('bytes',[(2,None)]).to_header()=='bytes=2-'\ntry: Range('bytes',[(3,2)])\nexcept ValueError: pass\nelse: raise AssertionError('invalid accepted')",
+    "edits": [
+      {
+        "path": "src/werkzeug/datastructures/range.py",
+        "old": "        self.ranges = ranges",
+        "new": "        self.ranges = list(ranges)"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh source-authored case; same agent authors and reviews; not independent adjudication",
+    "allowed_change_areas": [
+      "src/werkzeug/datastructures/range.py"
+    ]
+  },
+  {
+    "id": "nq03",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "semantic lookup",
+    "family": "src/werkzeug/routing/converters.py",
+    "query": "When building a URL for the converter that accepts one of a fixed set of strings, an unhashable invalid value should raise ValueError rather than leaking TypeError. Keep valid values and the sorted allowed-values error message.",
+    "checks": "from werkzeug.routing import Map\nfrom werkzeug.routing.converters import AnyConverter\nc=AnyConverter(Map(),'b','a'); assert c.to_url('a')=='a'\nfor x in ([],{},'z'):\n try: c.to_url(x)\n except ValueError as e: assert \"'a', 'b'\" in str(e)\n else: raise AssertionError('accepted')",
+    "edits": [
+      {
+        "path": "src/werkzeug/routing/converters.py",
+        "old": "        if value in self.items:",
+        "new": "        if isinstance(value, str) and value in self.items:"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh source-authored case; same agent authors and reviews; not independent adjudication",
+    "allowed_change_areas": [
+      "src/werkzeug/routing/converters.py"
+    ]
+  },
+  {
+    "id": "nq04",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "semantic lookup",
+    "family": "src/werkzeug/datastructures/headers.py",
+    "query": "When retrieving all values of an HTTP header with a conversion callable, skip values that raise TypeError as well as ValueError. Preserve order, case-insensitive lookup and the unconverted list.",
+    "checks": "from werkzeug.datastructures import Headers\nh=Headers([('X','1'),('x','bad'),('X','2')])\ndef convert(x):\n if x=='bad': raise TypeError('bad')\n return int(x)\nassert h.getlist('x',type=convert)==[1,2]\nassert h.getlist('X')==['1','bad','2']\nassert h.getlist('missing',type=int)==[]",
+    "edits": [
+      {
+        "path": "src/werkzeug/datastructures/headers.py",
+        "old": "                    except ValueError:\n                        continue",
+        "new": "                    except (ValueError, TypeError):\n                        continue"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh source-authored case; same agent authors and reviews; not independent adjudication",
+    "allowed_change_areas": [
+      "src/werkzeug/datastructures/headers.py"
+    ]
+  },
+  {
+    "id": "nq05",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "large file",
+    "family": "src/werkzeug/http.py",
+    "query": "parse_content_range_header should normalize the parsed range unit to lowercase. Keep range bounds, wildcard length, malformed-input behavior and on_update callbacks.",
+    "checks": "from werkzeug.http import parse_content_range_header as f\nr=f('BYTES 0-2/10'); assert r.units=='bytes' and (r.start,r.stop,r.length)==(0,3,10)\nassert f('ITEMS */*').units=='items'\nassert f('bad') is None\nseen=[]; r=f('BYTES 0-2/10',on_update=lambda x:seen.append(x)); r.start=1; assert seen[-1] is r",
+    "edits": [
+      {
+        "path": "src/werkzeug/http.py",
+        "old": "        units, rangedef = (value or \"\").strip().split(None, 1)",
+        "new": "        units, rangedef = (value or \"\").strip().split(None, 1)\n        units = units.lower()"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh source-authored case; same agent authors and reviews; not independent adjudication",
+    "allowed_change_areas": [
+      "src/werkzeug/http.py"
+    ]
+  },
+  {
+    "id": "nq06",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "large file edge",
+    "family": "src/werkzeug/datastructures/headers.py",
+    "query": "Headers.getlist should propagate RuntimeError from a conversion callable, but add a keyword-only unique=False option which when true removes duplicate converted or unconverted values preserving order. Support unhashable converted values.",
+    "checks": "from werkzeug.datastructures import Headers\nh=Headers([('X','1'),('X','1'),('X','2')]); assert h.getlist('x',unique=True)==['1','2']; assert h.getlist('x')==['1','1','2']\nassert h.getlist('x',type=lambda x:[x],unique=True)==[['1'],['2']]\ndef bad(x): raise RuntimeError('x')\ntry: h.getlist('x',type=bad,unique=True)\nexcept RuntimeError: pass\nelse: raise AssertionError('swallowed')",
+    "edits": [
+      {
+        "path": "src/werkzeug/datastructures/headers.py",
+        "old": "        self, key: str, type: cabc.Callable[[str], T] | None = None\n    ) -> list[str] | list[T]:",
+        "new": "        self, key: str, type: cabc.Callable[[str], T] | None = None, *, unique: bool = False\n    ) -> list[str] | list[T]:"
+      },
+      {
+        "path": "src/werkzeug/datastructures/headers.py",
+        "old": "                        result.append(type(v))",
+        "new": "                        converted = type(v)\n                        if not unique or converted not in result:\n                            result.append(converted)"
+      },
+      {
+        "path": "src/werkzeug/datastructures/headers.py",
+        "old": "        return [v for k, v in self if k.lower() == ikey]",
+        "new": "        values = [v for k, v in self if k.lower() == ikey]\n        return list(dict.fromkeys(values)) if unique else values"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh source-authored case; same agent authors and reviews; not independent adjudication",
+    "allowed_change_areas": [
+      "src/werkzeug/datastructures/headers.py",
+      "src/werkzeug/datastructures/headers.py",
+      "src/werkzeug/datastructures/headers.py"
+    ]
+  },
+  {
+    "id": "nq07",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "ambiguous method",
+    "family": "src/werkzeug/routing/converters.py",
+    "query": "UUIDConverter.to_url should canonicalize valid UUID strings through uuid.UUID before rendering them, including uppercase and unhyphenated input. Preserve UUID objects and BaseConverter.to_url behavior; invalid UUID strings should raise ValueError.",
+    "checks": "import uuid\nfrom werkzeug.routing import Map\nfrom werkzeug.routing.converters import UUIDConverter,BaseConverter\nc=UUIDConverter(Map()); s='AABBCCDD00112233445566778899AABB'; expected=str(uuid.UUID(s)); assert c.to_url(s)==expected; assert c.to_url(uuid.UUID(s))==expected\nassert BaseConverter(Map()).to_url('a b')=='a%20b'\ntry: c.to_url('bad')\nexcept ValueError: pass\nelse: raise AssertionError('accepted')",
+    "edits": [
+      {
+        "path": "src/werkzeug/routing/converters.py",
+        "old": "    def to_url(self, value: uuid.UUID) -> str:\n        return str(value)",
+        "new": "    def to_url(self, value: uuid.UUID | str) -> str:\n        if isinstance(value, str):\n            value = uuid.UUID(value)\n        return str(value)"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh source-authored case; same agent authors and reviews; not independent adjudication",
+    "allowed_change_areas": [
+      "src/werkzeug/routing/converters.py"
+    ]
+  },
+  {
+    "id": "nq08",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "two file export",
+    "family": "src/werkzeug/datastructures/range.py",
+    "query": "Add a public Range.is_single property indicating exactly one stored range and export Range from the werkzeug package root. Preserve existing datastructures import and root exports.",
+    "checks": "from werkzeug import Range,Request,Response,Client\nfrom werkzeug.datastructures import Range as R\nassert R is Range\nassert Range('bytes',[(0,2)]).is_single is True\nassert Range('bytes',[]).is_single is False\nassert Range('bytes',[(0,2),(4,6)]).is_single is False",
+    "edits": [
+      {
+        "path": "src/werkzeug/datastructures/range.py",
+        "old": "    def range_for_length(self, length:",
+        "new": "    @property\n    def is_single(self) -> bool:\n        return len(self.ranges) == 1\n\n    def range_for_length(self, length:"
+      },
+      {
+        "path": "src/werkzeug/__init__.py",
+        "old": null,
+        "new": "\nfrom .datastructures import Range as Range\n"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh source-authored case; same agent authors and reviews; not independent adjudication",
+    "allowed_change_areas": [
+      "src/werkzeug/datastructures/range.py",
+      "src/werkzeug/__init__.py"
+    ]
+  },
+  {
+    "id": "nq09",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "new module export",
+    "family": "src/werkzeug/header_names.py",
+    "query": "Create werkzeug.header_names with normalize_header_name(value: str) -> str that strips only surrounding ASCII space/tab and lowercases, rejecting CR or LF anywhere with ValueError. Export the function from the werkzeug package root.",
+    "checks": "from werkzeug import normalize_header_name as f\nfrom werkzeug.header_names import normalize_header_name\nassert f is normalize_header_name\nassert f(' \\tX-Test\\t ' )=='x-test'; assert f('')==''; assert f('\\u00a0X')=='\\u00a0x'\nfor x in ('x\\ny','\\rx'):\n try: f(x)\n except ValueError: pass\n else: raise AssertionError('newline accepted')",
+    "edits": [
+      {
+        "path": "src/werkzeug/header_names.py",
+        "old": null,
+        "new": "def normalize_header_name(value: str) -> str:\n    if \"\\r\" in value or \"\\n\" in value:\n        raise ValueError(\"newline in header name\")\n    return value.strip(\" \\t\").lower()\n"
+      },
+      {
+        "path": "src/werkzeug/__init__.py",
+        "old": null,
+        "new": "\nfrom .header_names import normalize_header_name as normalize_header_name\n"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh source-authored case; same agent authors and reviews; not independent adjudication",
+    "allowed_change_areas": [
+      "src/werkzeug/header_names.py",
+      "src/werkzeug/__init__.py"
+    ]
+  },
+  {
+    "id": "nq10",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "escaping",
+    "family": "src/werkzeug/routing/converters.py",
+    "query": "BaseConverter.to_url should percent-encode the plus character instead of leaving it safe. Preserve slash and comma, spaces, non-ASCII encoding and existing escaping of percent signs.",
+    "checks": "from werkzeug.routing.converters import BaseConverter\nfrom werkzeug.routing import Map\nc=BaseConverter(Map()); assert c.to_url('a+b')=='a%2Bb'; assert c.to_url('a/b,c')=='a/b,c'; assert c.to_url('a b')=='a%20b'; assert c.to_url('%')=='%25'; assert c.to_url('\u00e9')=='%C3%A9'",
+    "edits": [
+      {
+        "path": "src/werkzeug/routing/converters.py",
+        "old": "safe=\"!$&'()*+,/:;=@\"",
+        "new": "safe=\"!$&'()*,/:;=@\""
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh source-authored case; same agent authors and reviews; not independent adjudication",
+    "allowed_change_areas": [
+      "src/werkzeug/routing/converters.py"
+    ]
+  }
+]

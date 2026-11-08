@@ -313,11 +313,25 @@ def parser() -> argparse.ArgumentParser:
     agent_actions.add_parser("enable", help="Enable the configured agent.")
     agent_actions.add_parser("disable", help="Disable the configured agent.")
 
+    edit = sub.add_parser("edit", help="Minimal editor: prepare an actual patch without Pi.")
+    edit.add_argument("query")
+    edit.add_argument("--yolo", action="store_true", help="Apply after checks, without a review stop.")
+    edit.add_argument("--json", action="store_true")
+    runs = sub.add_parser("runs", help="Inspect, apply or discard saved minimal proposals.")
+    runs.add_argument("action", choices=("show", "apply", "discard"))
+    runs.add_argument("run_id")
+    runs.add_argument("--digest", help="Reviewed proposal digest, required for apply.")
+    runs.add_argument("--json", action="store_true")
+    session = sub.add_parser("session", help="Persistent minimal editor JSONL session.")
+    session.add_argument("--stdio", action="store_true", required=True)
+
     task = sub.add_parser("task", help="Review and run compact tasks, or use --yolo to skip review.")
     task.add_argument("query", nargs="?", help="Requested outcome, such as changing a button color.")
     task.add_argument("--run", dest="run_id", help="Run a previously reviewed task ID.")
     task.add_argument("--yolo", action="store_true", help="Execute without review; scope and validation checks still apply.")
     task.add_argument("--json", action="store_true", help="Print JSON; review-only unless --yolo is supplied.")
+
+    task.add_argument("--engine", choices=("minimal", "legacy"), default=None)
 
     feature = sub.add_parser("feature", help="Review a feature and run its Quick tasks serially.")
     feature.add_argument("query", nargs="?", help="The complete feature outcome.")
@@ -1262,6 +1276,13 @@ def deep_plan_command(args: argparse.Namespace) -> int:
 
 
 def task_command(args: argparse.Namespace) -> int:
+    if args.command == "task":
+        config_path, config = _configured()
+        if getattr(args, "engine", None) == "minimal" or (getattr(args, "engine", None) is None and config.editing.enabled):
+            from devstill.runtime.cli import command
+            if args.run_id:
+                raise ValueError("Use devstill runs apply ID --digest DIGEST for minimal proposals")
+            return command(args, config_path, config)
     feature = args.command == "feature"
     noun = "feature" if feature else "task"
     loader = load_feature if feature else load_task_draft
@@ -1380,6 +1401,10 @@ def execute_command(args: argparse.Namespace) -> int:
 def main() -> None:
     args = parser().parse_args()
     try:
+        if args.command in {"edit", "runs", "session"}:
+            from devstill.runtime.cli import command
+            config_path, config = _configured()
+            raise SystemExit(command(args, config_path, config))
         if args.command == "help":
             raise SystemExit(show_help(args.topic))
         if args.command == "init":
@@ -1421,6 +1446,8 @@ def main() -> None:
             raise SystemExit(execute_command(args))
         config_path, config = _configured()
         DevstillApp(config_path, config).run()
+    except KeyboardInterrupt:
+        raise SystemExit(130) from None
     except (FileNotFoundError, RuntimeError, ValueError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise SystemExit(1) from exc

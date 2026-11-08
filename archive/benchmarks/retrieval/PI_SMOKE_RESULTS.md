@@ -1,3 +1,5 @@
+> Archived historical document. Statements and commands describe the workflow at that time. Use the [active test plan](../../../benchmarks/retrieval/TEST_PLAN.md) for current work. Original path: `benchmarks/retrieval/PI_SMOKE_RESULTS.md`.
+
 # Direct Pi benchmark integration checks — 2026-11-07
 
 The direct baseline runs Pi 1.5.0 with one original user request and its native

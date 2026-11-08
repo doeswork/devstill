@@ -6,14 +6,16 @@ This is a Python small-edit experiment, not a production executor or sandbox.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import subprocess
 import time
 from pathlib import Path
+from typing import Annotated
 
 import httpx
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from benchmarks.retrieval.context_pilot import retrieve_context
 from benchmarks.retrieval.pi_comparison import write
@@ -35,9 +37,11 @@ class Read(BaseModel):
 
 class EditResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    edits: list[Edit]
-    reads: list[Read]
-    checks: list[list[str]]
+    edits: list[Edit] = Field(max_length=20)
+    reads: list[Read] = Field(max_length=4)
+    checks: list[Annotated[list[str], Field(min_length=3)]] = Field(
+        min_length=1, max_length=3
+    )
 
 
 SYSTEM = """Implement the user's request using the supplied repository excerpts.
@@ -47,13 +51,25 @@ Return only a JSON object with these arrays:
  "checks":[["python","-c","assert ..."]]}
 Prefer completing the change immediately. Each old string must occur exactly once.
 Preserve indentation and unrelated behavior. Include all parts of the request.
-Provide at least one meaningful behavior check. Checks run in the repo with src on
+Every response MUST include 1..3 executable behavior checks, even when requesting
+reads. Never return empty checks or an empty completion response. Checks run only
+after edits exist, in the repo with src on
 PYTHONPATH. Allowed checks: python -c CODE or python -m pytest ARGS.
+Prefer a short self-contained Python check that imports the changed API and
+asserts the requested public behavior. Include every import it needs. Avoid
+reflection, annotation comparisons, or inspecting source when runtime assertions
+can check the behavior. Do not use a check that merely prints or always succeeds.
+Never disable an assertion with 'or True', 'assert True', or another constant
+success. If an expectation is wrong, correct it from the public behavior instead
+of masking its failure. A failed check must be fixed, not bypassed.
 Do not use hidden benchmark files. You can edit existing files or create a new file
 with old="". When evidence is insufficient, request up to four reads, each at most
-400 lines, with empty edits and checks. You have at most two responses total,
+400 lines, with empty edits and a nonempty checks list for the later edit.
+You have at most two responses total,
 including any read request or repair after failed checks. Do not return a plan.
-After edits are applied, you may return empty edits and corrected checks.
+After edits are applied, repair checks with empty edits unless the actual source
+behavior is wrong. Fix missing imports, syntax or mistaken expectations in checks
+rather than reapplying an old edit. Read the check traceback before repairing.
 Use ordinary JSON escaping: decoded Python check strings must contain real newlines,
 not literal backslash-n sequences. Keep checks short and focused on the request."""
 
@@ -115,7 +131,17 @@ def read_sources(repo, reads):
     return result
 
 
-def run_checks(repo, commands, deadline):
+def always_truthy(node):
+    """Recognize only obvious unconditional assertion success, not program semantics."""
+    if isinstance(node, ast.Constant):
+        return bool(node.value)
+    if isinstance(node, ast.BoolOp):
+        values = [always_truthy(value) for value in node.values]
+        return any(values) if isinstance(node.op, ast.Or) else all(values)
+    return False
+
+
+def validate_checks(commands):
     if not isinstance(commands, list) or not 1 <= len(commands) <= 3:
         raise ValueError("Provide 1..3 behavior checks")
     # Validate all commands before executing any.
@@ -128,6 +154,21 @@ def run_checks(repo, commands, deadline):
             len(command) >= 3 and command[:3] == ["python", "-m", "pytest"]
         ):
             raise ValueError("Use python -c CODE or python -m pytest ARGS")
+        if command[:2] == ["python", "-c"]:
+            compile(command[2], "<model-check>", "exec")
+            if any(
+                isinstance(node, ast.Assert) and always_truthy(node.test)
+                for node in ast.walk(ast.parse(command[2]))
+            ):
+                raise ValueError(
+                    "Check contains an always-true assertion (for example 'or True'). "
+                    "Do not bypass a failed expectation. Test the public behavior "
+                    "with an assertion that can fail."
+                )
+
+
+def run_checks(repo, commands, deadline):
+    validate_checks(commands)
     results = []
     env = dict(os.environ, PYTHONPATH=str(repo / "src") + os.pathsep + str(repo))
     for command in commands:
@@ -169,12 +210,20 @@ def edit_loop(repo, query, records, generate, output, deadline):
         try:
             from devstill.agent import extract_json_object
 
-            action = extract_json_object(content)
+            raw = extract_json_object(content)
+            if not raw.get("checks"):
+                raise ValueError(
+                    "Missing behavior checks. Return 1..3 checks using python -c "
+                    "CODE or python -m pytest. No edits from this response were applied."
+                )
+            action = EditResponse.model_validate(raw).model_dump()
+            # Check command shape and Python syntax before applying any edits.
+            validate_checks(action["checks"])
             if action.get("reads"):
                 feedback["reads"] = read_sources(repo, action["reads"])
             if action.get("edits"):
                 changed.extend(apply_edits(repo, action["edits"]))
-            if action.get("checks") and changed:
+            if changed:
                 feedback["checks"] = run_checks(repo, action.get("checks"), deadline)
                 if all(c["returncode"] == 0 for c in feedback["checks"]):
                     write(
@@ -187,6 +236,11 @@ def edit_loop(repo, query, records, generate, output, deadline):
                         "changed_files": sorted(set(changed)),
                         "checks": feedback["checks"],
                     }
+            elif not action["reads"]:
+                raise ValueError(
+                    "No edits have been applied. Return concrete edits and behavior "
+                    "checks, or request source reads if context is insufficient."
+                )
         except (
             ValueError,
             TypeError,
@@ -196,12 +250,25 @@ def edit_loop(repo, query, records, generate, output, deadline):
             subprocess.TimeoutExpired,
         ) as exc:
             feedback["error"] = str(exc)
+            feedback["error_type"] = type(exc).__name__
         feedback["changed_files"] = sorted(set(changed))
+        feedback["edits_applied"] = bool(changed)
+        if changed:
+            feedback["next_action"] = (
+                "The listed edits are already applied. Return checks-only (edits=[], "
+                "reads=[]) if the check is missing or wrong. Include needed imports "
+                "and test public behavior. Edit current source only if behavior is wrong."
+            )
+        else:
+            feedback["next_action"] = (
+                "No edits have been applied. Use the feedback or returned source to "
+                "return exact edits plus at least one executable behavior check."
+            )
         messages.append(
             {
                 "role": "user",
                 "content": json.dumps(feedback)
-                + "\nRepair using the current files; already applied edits remain. This is your final attempt.",
+                + "\nYou must include 1..3 behavior checks. This is your final attempt.",
             }
         )
         write(output / "editor-trace.json", messages)

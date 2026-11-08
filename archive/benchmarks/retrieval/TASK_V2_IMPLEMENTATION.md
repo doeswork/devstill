@@ -1,3 +1,5 @@
+> Archived historical document. Statements and commands describe the workflow at that time. Use the [active test plan](../../../benchmarks/retrieval/TEST_PLAN.md) for current work. Original path: `benchmarks/retrieval/TASK_V2_IMPLEMENTATION.md`.
+
 # Compact Task corrections and real coding evaluation
 
 **Superseded default:** Task Review/YOLO now use [the existing Quick engine](QUICK_RESTORE_RESULTS.md); feature decomposition is deferred. This document records the evaluated v2 experiment.

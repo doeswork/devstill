@@ -1,3 +1,5 @@
+> Archived historical document. Statements and commands describe the workflow at that time. Use the [active test plan](../../../benchmarks/retrieval/TEST_PLAN.md) for current work. Original path: `benchmarks/retrieval/TASK_V2_RESULTS.md`.
+
 # Compact Task v2: real coding comparison
 
 **Follow-up:** [Quick restored as the Task primitive, with 12 small-edit cases](QUICK_RESTORE_RESULTS.md). The historical v2 results below remain unchanged.
@@ -78,9 +80,9 @@ The next controlled experiments should preserve the old compact scope for a sing
 ## Artifacts and handoff
 
 - Runtime changes and reproduction: [TASK_V2_IMPLEMENTATION.md](TASK_V2_IMPLEMENTATION.md).
-- Cases and evaluator-only reference recipes: [coding_cases.py](coding_cases.py).
-- Verification and campaign runner: [coding_campaign.py](coding_campaign.py).
-- Offline audit and stricter workflow scoring: [coding_report.py](coding_report.py).
+- Cases and evaluator-only reference recipes: [coding_cases.py](../../../benchmarks/retrieval/coding_cases.py).
+- Verification and campaign runner: [coding_campaign.py](../../../benchmarks/retrieval/coding_campaign.py).
+- Offline audit and stricter workflow scoring: [coding_report.py](../../../benchmarks/retrieval/coding_report.py).
 - `.devstill/task-v2-case-verification-c/`: 24 baseline/reference checks, reference patches and frozen case manifest.
 - `.devstill/task-v2-coding-final/`: all 144 outcomes, source pools, definitions, coding contexts, patches, validation output and source audit.
 - `.devstill/task-v2-coding-audit.json`: final scored rows and workload gates.

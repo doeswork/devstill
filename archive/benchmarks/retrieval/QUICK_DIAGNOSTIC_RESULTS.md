@@ -1,4 +1,8 @@
+> Archived historical document. Statements and commands describe the workflow at that time. Use the [active test plan](../../../benchmarks/retrieval/TEST_PLAN.md) for current work. Original path: `benchmarks/retrieval/QUICK_DIAGNOSTIC_RESULTS.md`.
+
 # Small execution diagnostic results
+
+**Latest check hardening:** [final 10-case paired retest](QUICK_CHECK_HARDENING_RESULTS.md) completed 10/10 for both editor and native Pi, with 14 versus 67 model requests. The median paired wall ratio was 0.975; reliability improved on these development cases, while a substantial speed advantage remains unproven.
 
 **Later ten-case check:** [20 attempts in 4m22s](QUICK_FAST_V1_RESULTS.md). The unchanged minimal editor passed independent checks on 10/10 patches but completed only 6/10 workflows versus Pi's 8/10. The earlier 4/4 draw below did not establish stable workflow reliability.
 

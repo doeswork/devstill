@@ -82,6 +82,9 @@ from devstill.tasks import (
 
 
 class TuiCommandKind(str, Enum):
+    EDIT = "edit"
+    EDIT_YOLO = "edit_yolo"
+    EDIT_APPLY = "edit_apply"
     TASK = "task"
     YOLO = "yolo"
     TASK_RUN = "task_run"
@@ -112,6 +115,8 @@ class CommandSpec:
 
 
 COMMAND_SPECS = (
+    CommandSpec("/edit ", "Minimal Review", "Generate and check an actual patch without Pi", TuiCommandKind.EDIT),
+    CommandSpec("/edit-yolo ", "Minimal YOLO", "Generate, check and apply with the minimal editor", TuiCommandKind.EDIT_YOLO),
     CommandSpec("/task ", "Task Review", "Review file impacts before running Quick", TuiCommandKind.TASK),
     CommandSpec("/yolo ", "YOLO", "Retrieve, edit and check without review", TuiCommandKind.YOLO),
     CommandSpec("/feature ", "Feature Review", "Quick first; coordinate when needed", TuiCommandKind.FEATURE),
@@ -178,7 +183,7 @@ class TuiResult:
     markdown: str
     prepared_execution: PreparedExecution | None = None
     execution_offer: TuiExecutionOffer | None = None
-    task_review: TaskDraft | FeatureDraft | None = None
+    task_review: TaskDraft | FeatureDraft | dict | None = None
     task_state: dict | None = None
 
 
@@ -276,10 +281,12 @@ def parse_tui_command(value: str) -> TuiCommand:
         "/?": "/help",
     }
     name = aliases.get(name, name)
-    if name in {"/task", "/yolo", "/feature", "/feature-yolo", "/search", "/context", "/plan", "/deep-plan"}:
+    if name in {"/edit", "/edit-yolo", "/task", "/yolo", "/feature", "/feature-yolo", "/search", "/context", "/plan", "/deep-plan"}:
         if not query:
             raise ValueError(f"{name} requires a query.")
         kind = {
+            "/edit": TuiCommandKind.EDIT,
+            "/edit-yolo": TuiCommandKind.EDIT_YOLO,
             "/task": TuiCommandKind.TASK,
             "/yolo": TuiCommandKind.YOLO,
             "/feature": TuiCommandKind.FEATURE,
@@ -499,6 +506,7 @@ class TuiWorkflow:
         self.config = config
         self.repo_root = resolve_repo_root(config_path, config)
         self.artifact_root = resolve_index_path(config_path, config).parent
+        self._minimal = None
         self._tasks_cancelled = Event()
         self._tasks_closed = Event()
         self._runtime = TuiRetrievalRuntime(
@@ -528,6 +536,9 @@ class TuiWorkflow:
         )
 
     def update_config(self, config: DevstillConfig) -> None:
+        if self._minimal is not None:
+            self._minimal.close()
+            self._minimal = None
         if self._retrieval_key(config) != self._retrieval_key(self.config):
             self._runtime.close()
             self._runtime = TuiRetrievalRuntime(self.config_path, config)
@@ -862,9 +873,13 @@ class TuiWorkflow:
         self._tasks_closed.set()
         self.cancel_tasks()
         self._runtime.close()
+        if self._minimal is not None:
+            self._minimal.close()
 
     def cancel_tasks(self) -> None:
         self._tasks_cancelled.set()
+        if self._minimal is not None:
+            self._minimal.cancelled.set()
 
     def tasks_cancelled(self) -> bool:
         return self._tasks_cancelled.is_set() or self._tasks_closed.is_set()
@@ -939,6 +954,27 @@ class TuiWorkflow:
         progress: ProgressCallback | None = None,
     ) -> TuiResult:
         report = progress or (lambda _message: None)
+        minimal_kind = command.kind in {TuiCommandKind.EDIT, TuiCommandKind.EDIT_YOLO, TuiCommandKind.EDIT_APPLY}
+        minimal_kind = minimal_kind or (self.config.editing.enabled and command.kind in {TuiCommandKind.TASK, TuiCommandKind.YOLO})
+        if minimal_kind:
+            if self._tasks_closed.is_set():
+                raise ValueError("Workflow is closed")
+            from devstill.runtime.service import RuntimeSession, render
+            if self._minimal is None:
+                embedder, chroma = self._runtime.dependencies(report, warm_encoder=False)
+                self._minimal = RuntimeSession(self.config_path, self.config, embedder=embedder, chroma=chroma)
+            if command.kind == TuiCommandKind.EDIT_APPLY:
+                proposal = self._minimal.load(command.query)
+                state = self._minimal.apply(command.query, command.instruction)
+                return TuiResult("Task applied", render({**proposal, **state}), task_state=state)
+            proposal = self._minimal.prepare(command.query, report=report)
+            if proposal["status"] != "ready":
+                return TuiResult("Task failed", render(proposal), task_state=proposal)
+            if command.kind in {TuiCommandKind.EDIT_YOLO, TuiCommandKind.YOLO}:
+                state = self._minimal.apply(proposal["id"], proposal["digest"])
+                return TuiResult("Task applied", render({**proposal, **state}), task_state=state)
+            return TuiResult("Patch review", render(proposal), task_review=proposal)
+
         if command.kind in {TuiCommandKind.TASK, TuiCommandKind.YOLO, TuiCommandKind.TASK_RUN,
                             TuiCommandKind.FEATURE, TuiCommandKind.FEATURE_YOLO, TuiCommandKind.FEATURE_RUN} and self._tasks_closed.is_set():
             raise ValueError("Workflow is closed")

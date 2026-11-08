@@ -1,12 +1,14 @@
 devstill
 
-Proposed architecture: [minimal runtime rebuild plan](REBUILD_PLAN.md). This is a
-staged replacement of the coding workflow that retains the existing retrieval
-foundation; it is not yet the behavior of the installed application.
+Native Quick runtime: [usage, implementation status and measured limits](MINIMAL_RUNTIME.md). Quick now uses Devstill’s own editor in TUI and headless mode; Pi is a comparison baseline and explicit legacy option.
+
+Evaluation: [active native Quick test plan](benchmarks/retrieval/TEST_PLAN.md) and
+[latest measured results](benchmarks/retrieval/QUICK_CONTEXT_REPAIR_RESULTS.md). Superseded
+plans and reports are preserved in the [historical archive](archive/README.md).
 
 `devstill` is a standalone, local-first repository-intelligence TUI for developers and AI coding agents.
 Run `devstill` from any directory inside a configured codebase. It searches upward through parent directories until it finds a `devstill.json`, then opens the TUI for that repository.
-The goal is fast local retrieval followed by compact coding tasks. Indexing and embeddings stay local; Task Review and YOLO send selected source only to the configured model endpoint. Task Review and YOLO use the existing Quick retrieval, file-impact review and Pi executor. Explicit Feature mode tries Quick first and coordinates only unresolved reviews; feature quality remains experimental ([comparison results](benchmarks/retrieval/FEATURE_COORDINATION_RESULTS.md)).
+The goal is fast local retrieval followed by compact coding tasks. Indexing and embeddings stay local; Task Review and YOLO send selected source only to the configured model endpoint. Task Review and YOLO use local retrieval and Devstill’s native bounded editor. Review shows the actual checked patch; YOLO applies it automatically. Explicit Feature mode tries Quick first and coordinates only unresolved reviews; feature quality remains experimental ([comparison results](archive/benchmarks/retrieval/FEATURE_COORDINATION_RESULTS.md)).
 Project goals
 `devstill` should provide several complementary search modes:
 Exact symbol lookup for known functions, classes, methods, fields, and paths
@@ -1016,8 +1018,8 @@ an engine field). New Task Review/YOLO drafts use `engine: quick`.
 `task_concurrency` and `task_validation_commands` apply only to that older
 experimental engine; Quick uses `validation_commands`. Feature coordination is available only when explicitly selected; Quick remains
 the default. See
-[the Quick restoration and small-edit comparison](benchmarks/retrieval/QUICK_RESTORE_RESULTS.md)
-and [the historical failed Task comparison](benchmarks/retrieval/TASK_V2_RESULTS.md).
+[the Quick restoration and small-edit comparison](archive/benchmarks/retrieval/QUICK_RESTORE_RESULTS.md)
+and [the historical failed Task comparison](archive/benchmarks/retrieval/TASK_V2_RESULTS.md).
 
 Choose **Feature** beside the Review/YOLO selector for multiple Quick tasks.
 `/feature` tries the original request through Quick first; `/feature-yolo` runs
@@ -1026,8 +1028,8 @@ unresolved review invokes coordination, capped at three tasks. CLI equivalents a
 `devstill feature --run FEATURE_ID --yolo`. Quick remains the startup default.
 Features run serially, refresh context between children, and stop on failed
 checks, stale inputs or scope conflicts. **Stop feature** prevents further work;
-applied changes remain. See [the implementation and benchmark handoff](benchmarks/retrieval/FEATURE_IMPLEMENTATION.md)
-for validation settings, limits and the prepared comparison commands. The [live feature comparison](benchmarks/retrieval/FEATURE_COORDINATION_RESULTS.md)
+applied changes remain. See [the implementation and benchmark handoff](archive/benchmarks/retrieval/FEATURE_IMPLEMENTATION.md)
+for validation settings, limits and the prepared comparison commands. The [live feature comparison](archive/benchmarks/retrieval/FEATURE_COORDINATION_RESULTS.md)
 shows progress, but feature mode still trails Quick on whole-feature acceptance.
 
 Interactive TUI

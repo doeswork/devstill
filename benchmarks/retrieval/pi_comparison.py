@@ -27,7 +27,7 @@ from benchmarks.retrieval.coding_report import completed
 from benchmarks.retrieval.recording_proxy import recording_proxy, transport_metrics
 
 ROOT = Path(__file__).resolve().parents[2]
-VARIANTS = ("pi", "quick", "review", "baseline", "feature", "pi_context", "minimal")
+VARIANTS = ("pi", "quick", "review", "baseline", "feature", "pi_context", "minimal", "runtime")
 
 
 def write(path, value):
@@ -238,6 +238,10 @@ def direct_pi(case, repo, output, runtime):
 
 
 def worker(args):
+    if args.variant == "runtime":
+        from benchmarks.retrieval.runtime_candidate import runtime_worker
+
+        return runtime_worker(args)
     if args.variant == "pi_context":
         from benchmarks.retrieval.context_pilot import context_worker
 

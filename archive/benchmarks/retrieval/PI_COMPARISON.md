@@ -1,3 +1,5 @@
+> Archived historical document. Statements and commands describe the workflow at that time. Use the [active test plan](../../../benchmarks/retrieval/TEST_PLAN.md) for current work. Original path: `benchmarks/retrieval/PI_COMPARISON.md`.
+
 # Direct Pi versus Devstill: benchmark protocol
 
 The product target is a lower time to a correct completed change than stock Pi,

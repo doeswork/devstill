@@ -1,3 +1,5 @@
+> Archived historical document. Statements and commands describe the workflow at that time. Use the [active test plan](../../../benchmarks/retrieval/TEST_PLAN.md) for current work. Original path: `benchmarks/retrieval/QUICK_DIAGNOSTIC.md`.
+
 # Quick execution diagnostic
 
 Broad campaigns remain stopped. This experiment changes benchmark code only.

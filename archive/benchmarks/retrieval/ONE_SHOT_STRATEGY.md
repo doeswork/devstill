@@ -1,3 +1,5 @@
+> Archived historical document. Statements and commands describe the workflow at that time. Use the [active test plan](../../../benchmarks/retrieval/TEST_PLAN.md) for current work. Original path: `benchmarks/retrieval/ONE_SHOT_STRATEGY.md`.
+
 # One-shot tasks composed into features
 
 **Superseded design:** use [the explicit Quick/Feature implementation plan](FEATURE_TASK_PLAN.md) for new work. The historical proposal below required a Task Plan for every request and proposed a separate one-response coder. New work preserves the working Quick primitive and adds coordination only when the user selects Feature.

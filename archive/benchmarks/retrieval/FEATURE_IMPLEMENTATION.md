@@ -1,3 +1,5 @@
+> Archived historical document. Statements and commands describe the workflow at that time. Use the [active test plan](../../../benchmarks/retrieval/TEST_PLAN.md) for current work. Original path: `benchmarks/retrieval/FEATURE_IMPLEMENTATION.md`.
+
 # Feature coordination over Quick: implementation and benchmark handoff
 
 Feature is an explicit, opt-in workflow that tries the original request through

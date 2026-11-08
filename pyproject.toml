@@ -42,7 +42,7 @@ dependencies = [
 dev = ["pytest>=8,<10", "ruff>=0.12,<1"]
 
 [project.scripts]
-devstill = "devstill.cli:main"
+devstill = "devstill.entrypoint:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

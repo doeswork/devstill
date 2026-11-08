@@ -41,6 +41,7 @@ def test_commands_expose_review_and_yolo():
 @pytest.mark.parametrize("mode", [TuiCommandKind.TASK, TuiCommandKind.YOLO])
 def test_workflow_review_and_yolo_share_scope_and_execution(repo, monkeypatch, mode):
     cfg = config(context_window=12288)
+    cfg.editing.enabled = False  # explicitly exercise the retained legacy adapter
     value = draft(repo)
     client = FakeClient(
         json.dumps(
@@ -203,7 +204,7 @@ def test_cli_review_json_does_not_execute(repo, monkeypatch, capsys):
 
     monkeypatch.setattr(cli, "TuiWorkflow", Workflow)
     monkeypatch.setattr(cli, "_configured", lambda: (repo / "devstill.json", config()))
-    assert cli.task_command(parser().parse_args(["task", "button", "--json"])) == 0
+    assert cli.task_command(parser().parse_args(["task", "button", "--json", "--engine", "legacy"])) == 0
     assert json.loads(capsys.readouterr().out)["id"] == value.id
 
 

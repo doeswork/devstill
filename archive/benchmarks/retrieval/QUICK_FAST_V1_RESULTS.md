@@ -1,3 +1,5 @@
+> Archived historical document. Statements and commands describe the workflow at that time. Use the [active test plan](../../../benchmarks/retrieval/TEST_PLAN.md) for current work. Original path: `benchmarks/retrieval/QUICK_FAST_V1_RESULTS.md`.
+
 # Ten-case fast editor comparison — 2026-11-07
 
 Completed **20 attempts over 10 distinct Python requests in 4 minutes 22 seconds**. Native Pi and the unchanged revision-2 minimal editor were each given one draw per case and a common **30-second worker deadline**. No attempt timed out. This is a short development diagnostic, not a held-out or repeated reliability evaluation.

@@ -1,3 +1,5 @@
+> Archived historical document. Statements and commands describe the workflow at that time. Use the [active test plan](../../../benchmarks/retrieval/TEST_PLAN.md) for current work. Original path: `benchmarks/retrieval/RESULTS.md`.
+
 # First retrieval campaign results
 
 The first campaign supports a small query-ranking change: apply fuzzy symbol matching only to queries of at most three whitespace-separated words. Longer questions still use exact, prefix, path, full-text and semantic retrieval. Short identifiers and typos keep fuzzy matching. The change improves development evidence coverage and measured warm latency while preserving held-out file and evidence hits. Keep it for review; this is one Python corpus, not a general code-search quality claim.

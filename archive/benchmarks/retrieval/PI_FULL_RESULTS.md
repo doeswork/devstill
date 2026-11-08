@@ -1,3 +1,5 @@
+> Archived historical document. Statements and commands describe the workflow at that time. Use the [active test plan](../../../benchmarks/retrieval/TEST_PLAN.md) for current work. Original path: `benchmarks/retrieval/PI_FULL_RESULTS.md`.
+
 # Fast-mode four-way comparison
 
 Status: stopped at the user's request after **48/288 completed attempts**.

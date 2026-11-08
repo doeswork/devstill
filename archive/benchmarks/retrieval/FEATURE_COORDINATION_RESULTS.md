@@ -1,3 +1,5 @@
+> Archived historical document. Statements and commands describe the workflow at that time. Use the [active test plan](../../../benchmarks/retrieval/TEST_PLAN.md) for current work. Original path: `benchmarks/retrieval/FEATURE_COORDINATION_RESULTS.md`.
+
 # Feature coordinator revision: measured progress, parity not achieved
 
 ## Current default: Quick first

@@ -1,3 +1,5 @@
+> Archived historical document. Statements and commands describe the workflow at that time. Use the [active test plan](../../../benchmarks/retrieval/TEST_PLAN.md) for current work. Original path: `benchmarks/retrieval/QUICK_RESTORE_RESULTS.md`.
+
 # Quick restored as the Task primitive
 
 Task Review and YOLO now use the existing Quick retrieval, file-impact classifier
