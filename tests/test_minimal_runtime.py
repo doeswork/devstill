@@ -16,6 +16,8 @@ def session(tmp_path, monkeypatch):
     config.llm.model = "test"
     config.repo.root = str(tmp_path)
     config.index.path = str(tmp_path / ".devstill/chroma")
+    # These tests exercise the structured two-response editor explicitly.
+    config.editing.engine = "structured"
     runtime = RuntimeSession(tmp_path / "devstill.json", config)
     monkeypatch.setattr(
         runtime,

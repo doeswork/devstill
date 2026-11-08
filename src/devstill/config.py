@@ -247,10 +247,19 @@ class FeatureConfig(StrictModel):
 class EditingConfig(StrictModel):
     # Quick uses the native Devstill editor; false explicitly selects legacy Quick.
     enabled: bool = True
+    # "loop": retrieval-primed tool loop (read/bash/edit/write/done).
+    # "structured": the earlier two-response JSON editor with mandatory checks.
+    engine: Literal["loop", "structured"] = "loop"
     timeout_seconds: float = Field(default=120, ge=1, le=3600)
     max_output_tokens: int = Field(default=4096, ge=64, le=65536)
     max_context_chars: int = Field(default=48000, ge=1024)
     python: str | None = None
+    # Loop engine limits: model calls, output tokens per call, command timeout
+    # and the first-turn context budget (smaller context = faster first token).
+    max_turns: int = Field(default=10, ge=1, le=50)
+    turn_output_tokens: int = Field(default=2048, ge=128, le=65536)
+    bash_timeout_seconds: float = Field(default=30, ge=1, le=600)
+    loop_context_chars: int = Field(default=16000, ge=2000)
 
 
 class DevstillConfig(StrictModel):

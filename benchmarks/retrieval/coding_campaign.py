@@ -36,8 +36,33 @@ CORPORA = {
         "cargo-final.json",
         "8f40fc59fb0c8df91c97405785197f3c630304ea",
     ),
+    # Second Python codebase so small-task results are not Werkzeug-specific.
+    "click": (
+        "click-8.1.8",
+        "click.json",
+        "934813e4d421071a1b3db3973c02fe2721359a6e",
+    ),
 }
+PYTHON_CORPORA = {"werkzeug", "click"}
 BENCH = Path("/tmp/devstill-retrieval-bench")
+# Protected upstream regressions run after every Werkzeug acceptance check.
+# Covers routing/datastructures/utils, which most small cases edit (~11 s).
+WERKZEUG_REGRESSIONS = (
+    "tests/test_http.py",
+    "tests/test_security.py",
+    "tests/test_wrappers.py",
+    "tests/test_wsgi.py",
+    "tests/test_exceptions.py",
+    "tests/test_routing.py",
+    "tests/test_datastructures.py",
+    "tests/test_utils.py",
+    "tests/test_urls.py",
+    "tests/test_formparser.py",
+    "tests/test_local.py",
+    "tests/test_test.py",
+    "tests/test_internal.py",
+    "tests/test_send_file.py",
+)
 RUST_ENV = {
     "RUSTUP_HOME": "/tmp/devstill-rustup",
     "CARGO_HOME": "/tmp/devstill-cargo",
@@ -125,16 +150,32 @@ def accept(case, repo, artifact, *, protect_regressions=False):
             work,
             ignore=shutil.ignore_patterns(".git", ".devstill", "__pycache__"),
         )
-        if case["corpus"] == "werkzeug":
+        if case["corpus"] in PYTHON_CORPORA:
             if protect_regressions:
                 # The direct-Pi comparison allows ordinary test edits. Restore
                 # evaluator regressions so deleting/weakening them cannot win.
+                # Test-authoring cases name the candidate test files to keep.
                 source = BENCH / "repos" / CORPORA[case["corpus"]][0] / "tests"
+                kept = {
+                    name: (work / name).read_bytes()
+                    for name in case.get("keep_test_paths", [])
+                    if (work / name).is_file()
+                }
                 shutil.rmtree(work / "tests", ignore_errors=True)
                 shutil.copytree(source, work / "tests")
+                for name, data in kept.items():
+                    (work / name).parent.mkdir(parents=True, exist_ok=True)
+                    (work / name).write_bytes(data)
             check = Path(temp) / "accept.py"
             check.write_text(case["checks"] + "\n")
             env["PYTHONPATH"] = str(work / "src")
+            env["PYTHONDONTWRITEBYTECODE"] = "1"
+            if case["corpus"] == "werkzeug":
+                regressions = list(WERKZEUG_REGRESSIONS)
+            else:
+                # click's ini turns every warning into an error, which breaks
+                # collection under pytest 9; behavior tests are unaffected.
+                regressions = ["-o", "filterwarnings=", "tests"]
             commands = [
                 [str(ROOT / ".venv/bin/python"), str(check)],
                 [
@@ -142,11 +183,9 @@ def accept(case, repo, artifact, *, protect_regressions=False):
                     "-m",
                     "pytest",
                     "-q",
-                    "tests/test_http.py",
-                    "tests/test_security.py",
-                    "tests/test_wrappers.py",
-                    "tests/test_wsgi.py",
-                    "tests/test_exceptions.py",
+                    "-p",
+                    "no:cacheprovider",
+                    *regressions,
                 ],
             ]
         else:

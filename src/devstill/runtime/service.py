@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import tempfile
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from threading import Event
 from uuid import uuid4
 
@@ -21,12 +23,73 @@ from devstill.context import (
 from devstill.credentials import resolve_api_key
 from devstill.embeddings import EmbeddingBackend
 from devstill.runtime import workspace
+from devstill.runtime.agent_loop import agent_loop
 from devstill.runtime.artifacts import digest, load, run_directory, write
 from devstill.runtime.checks import run_checks
 from devstill.runtime.context import focused_candidates, support_records
 from devstill.runtime.editor import edit_loop, editor_messages, response_schema
+from devstill.runtime.loop_context import build_sections
 from devstill.runtime.requirements import delivery_checks, delivery_requirements
+from devstill.runtime.tools import Workspace
 from devstill.search import HybridSearch
+
+DOC_SUFFIXES = {".rst", ".md", ".markdown", ".txt", ".adoc"}
+DOC_WORDS = re.compile(
+    r"\b(docs?|documentation|readme|changelog|changes|release notes|\.rst|\.md)\b",
+    re.IGNORECASE,
+)
+
+
+def code_first(results, query):
+    """Rank code ahead of prose (changelogs, docs) unless the request is about docs."""
+    if DOC_WORDS.search(query):
+        return results
+
+    def prose(result):
+        path = PurePosixPath(result.chunk.path)
+        return path.suffix.lower() in DOC_SUFFIXES or (
+            path.parts and path.parts[0] in {"docs", "doc"}
+        )
+
+    return [r for r in results if not prose(r)] + [r for r in results if prose(r)]
+
+
+def alternates(ranked, chosen, query, files=2):
+    """Best chunk from up to `files` other code files, in rank order."""
+    from devstill.context import is_test_chunk
+
+    seen = {r.chunk.path for r in chosen}
+    extra = []
+    tests = query_requests_tests(query)
+    for result in code_first(ranked, query):
+        chunk = result.chunk
+        path = chunk.path
+        if path in seen or (is_test_chunk(chunk) and not tests):
+            continue
+        if PurePosixPath(path).suffix.lower() in DOC_SUFFIXES:
+            continue
+        # A whole-class chunk rarely fits the budget; take a function or
+        # method-sized chunk from the same file instead.
+        if chunk.end_line - chunk.start_line > 80:
+            continue
+        seen.add(path)
+        extra.append(result)
+        if len(extra) >= files:
+            break
+    return extra
+
+
+def needs_token_count(config, chars):
+    """Ask the server's tokenizer only when a prompt could plausibly overflow.
+
+    A token never covers less than one character in practice, so a prompt
+    whose character count plus the output reserve fits the window cannot
+    overflow; skipping /tokenize saves one HTTP round trip per check.
+    """
+    window = config.llm.context_window
+    if not window:
+        return False
+    return chars + config.editing.max_output_tokens + 1024 >= window
 
 
 def render_check_changes(execution):
@@ -91,8 +154,9 @@ class RuntimeSession:
         if time.perf_counter() >= deadline:
             raise TimeoutError("Task deadline exhausted")
 
-    def evidence(self, query):
+    def evidence(self, query, budget_chars=None, lexical_first=False):
         cfg = self.config
+        budget_chars = budget_chars or cfg.editing.max_context_chars
         requirements = delivery_requirements(self.repo, query)
         if self.embedder is None:
             self.embedder = EmbeddingBackend(
@@ -126,11 +190,26 @@ class RuntimeSession:
             lexical = search.query(query, limit=12, lexical_only=True)
             exact = [r for r in lexical if r.scores.get("exact", 0) > 0]
             unique_path = {r.chunk.path for r in exact}
-            candidates = (
-                lexical if len(unique_path) == 1 else search.query(query, limit=12)
-            )
+            if lexical_first:
+                # The loop can search on its own, so a cold embedding-model
+                # load (several seconds) is only worth paying when lexical
+                # search finds nothing; a warm session uses hybrid ranking.
+                warm = getattr(self.embedder, "_model", None) is not None
+                candidates = (
+                    search.query(query, limit=12) if warm or not lexical else lexical
+                )
+                candidates = code_first(candidates, query)
+            else:
+                candidates = (
+                    lexical if len(unique_path) == 1 else search.query(query, limit=12)
+                )
 
+            ranked = candidates
             candidates = focused_candidates(candidates, query)
+            if lexical_first:
+                # Name the next-best code locations too: a wrong primary file
+                # otherwise costs several exploratory calls.
+                candidates = candidates + alternates(ranked, candidates, query)
 
             def records_for(results):
                 records, complete_paths = [], set()
@@ -151,12 +230,13 @@ class RuntimeSession:
                         }
                         complete_paths.add(record["path"])
                     records.append(record)
-                return records + support_records(
+                support = support_records(
                     self.repo,
                     records,
                     requirements,
                     lambda name: workspace.guard(self.repo, cfg, name),
                 )
+                return records + [{**record, "support": True} for record in support]
 
             with AgentClient(cfg.llm) as counter:
 
@@ -164,12 +244,10 @@ class RuntimeSession:
                     messages = editor_messages(
                         query, records_for(results), requirements
                     )
-                    if (
-                        sum(len(m["content"]) for m in messages)
-                        > cfg.editing.max_context_chars - 4000
-                    ):
+                    chars = sum(len(m["content"]) for m in messages)
+                    if chars > budget_chars - 4000:
                         return False
-                    if cfg.llm.context_window is None:
+                    if not needs_token_count(cfg, chars):
                         return True
                     tokens = counter.count_prompt_tokens(messages, reasoning="off")
                     return (
@@ -212,7 +290,7 @@ class RuntimeSession:
             raise ValueError(
                 "Editor transcript exceeds the configured character budget"
             )
-        if llm.context_window:
+        if needs_token_count(self.config, sum(len(m["content"]) for m in messages)):
             with AgentClient(llm) as counter:
                 count = counter.count_prompt_tokens(messages, reasoning="off")
             if (
@@ -247,6 +325,95 @@ class RuntimeSession:
         if choice.get("finish_reason") != "stop":
             raise ValueError(f"Incomplete generation: {choice.get('finish_reason')}")
         return choice["message"]["content"]
+
+    def run_loop(
+        self,
+        work,
+        query,
+        records,
+        requirements,
+        chat,
+        directory,
+        deadline,
+        emit,
+        sources,
+    ):
+        """Run the tool loop in the prepared workspace copy."""
+        cfg = self.config
+        env = dict(os.environ)
+        if cfg.editing.python:
+            # The configured project interpreter answers to `python` in commands.
+            env["PATH"] = (
+                str(Path(cfg.editing.python).parent) + os.pathsep + env.get("PATH", "")
+            )
+        env["PYTHONPATH"] = os.pathsep.join((str(work / "src"), str(work)))
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        tools = Workspace(
+            work,
+            guard=lambda name: workspace.guard(work, cfg, name),
+            resolve=lambda name: workspace.source_path(work, name),
+            env=env,
+            tracked=[
+                name for name, entry in sources.items() if not entry.get("support")
+            ],
+        )
+        sections = build_sections(work, records, cfg.editing.loop_context_chars)
+
+        def checks(repo, commands, limit):
+            return run_checks(
+                repo,
+                commands,
+                limit,
+                lambda: self.checkpoint(limit),
+                cfg.editing.python,
+            )
+
+        return agent_loop(
+            tools,
+            query,
+            sections,
+            chat,
+            directory,
+            deadline,
+            checkpoint=lambda: self.checkpoint(deadline),
+            requirements=requirements,
+            required_checks=delivery_checks(requirements),
+            check_runner=checks,
+            max_turns=cfg.editing.max_turns,
+            bash_timeout=cfg.editing.bash_timeout_seconds,
+            report=emit,
+        )
+
+    def chat(self, messages, tools, deadline):
+        """One tool-calling completion; the deadline bounds the whole request."""
+        self.checkpoint(deadline)
+        llm = self.config.llm
+        remaining = deadline - time.perf_counter()
+        if remaining <= 0:
+            raise TimeoutError("Editor deadline exhausted")
+        response = self.client.post(
+            completion_url(llm.base_url),
+            headers={
+                "Authorization": "Bearer " + (resolve_api_key(llm) or "devstill-local")
+            },
+            timeout=max(0.01, remaining),
+            json={
+                "model": llm.model,
+                "messages": messages,
+                "tools": tools,
+                "max_tokens": self.config.editing.turn_output_tokens,
+                "chat_template_kwargs": {"enable_thinking": False},
+            },
+        )
+        response.raise_for_status()
+        self.checkpoint(deadline)
+        payload = response.json()
+        choice = payload["choices"][0]
+        return {
+            "message": choice.get("message") or {},
+            "finish_reason": choice.get("finish_reason"),
+            "usage": payload.get("usage") or {},
+        }
 
     def prepare(self, query, *, report=lambda message: None):
         if self.closed:
@@ -295,17 +462,24 @@ class RuntimeSession:
                 )
             report(message)
 
+        loop = self.config.editing.engine == "loop"
         try:
             emit("Retrieving source evidence")
             requirements = delivery_requirements(self.repo, query)
             proposal["requirements"] = requirements
-            records = self.evidence(query)
+            records = (
+                self.evidence(
+                    query, self.config.editing.loop_context_chars, lexical_first=True
+                )
+                if loop
+                else self.evidence(query)
+            )
             proposal["evidence"] = records
             write(directory / "evidence.json", records)
             self.checkpoint(deadline)
             with tempfile.TemporaryDirectory(prefix="devstill-task-") as temporary:
                 work = Path(temporary)
-                sources = workspace.snapshot(self.repo, work, self.config)
+                sources = workspace.snapshot(self.repo, work, self.config, support=loop)
                 proposal["sources"] = sources
                 for record in records:
                     if (
@@ -349,24 +523,49 @@ class RuntimeSession:
                             raise RuntimeError(f"Check modified source: {name}")
                     return results
 
-                outcome = edit_loop(
-                    work,
-                    query,
-                    records,
-                    generate,
-                    directory,
-                    deadline,
-                    checkpoint=lambda: self.checkpoint(deadline),
-                    check_runner=checks,
-                    path_guard=lambda name: workspace.guard(work, self.config, name),
-                    requirements=requirements,
-                    required_checks=delivery_checks(requirements),
-                )
+                if loop:
+
+                    def chat(messages, tools, limit):
+                        nonlocal calls
+                        self.checkpoint(limit)
+                        calls += 1
+                        write(directory / f"request-{calls}.json", messages)
+                        reply = self.chat(messages, tools, limit)
+                        write(directory / f"response-{calls}.json", reply)
+                        return reply
+
+                    outcome = self.run_loop(
+                        work,
+                        query,
+                        records,
+                        requirements,
+                        chat,
+                        directory,
+                        deadline,
+                        emit,
+                        sources,
+                    )
+                else:
+                    outcome = edit_loop(
+                        work,
+                        query,
+                        records,
+                        generate,
+                        directory,
+                        deadline,
+                        checkpoint=lambda: self.checkpoint(deadline),
+                        check_runner=checks,
+                        path_guard=lambda name: workspace.guard(
+                            work, self.config, name
+                        ),
+                        requirements=requirements,
+                        required_checks=delivery_checks(requirements),
+                    )
                 proposal["execution"] = outcome
                 if outcome["status"] != "applied_unvalidated":
                     raise ValueError(outcome.get("error", "Editor did not finish"))
                 files, patch = workspace.changes(
-                    self.repo, work, sources, outcome["changed_files"]
+                    self.repo, work, sources, outcome["changed_files"], strict=not loop
                 )
                 if not files:
                     raise ValueError("No changed source produced")

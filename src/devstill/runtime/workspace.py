@@ -20,6 +20,12 @@ def sha(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
+# Supporting files (fixtures, empty package markers) copied for the agent loop
+# so repository tests can run; sensitive and Devstill metadata never are.
+SUPPORT_MAX_BYTES = 2_000_000
+NEVER_COPIED = {"sensitive", "metadata"}
+
+
 def guard(repo, config, name):
     path = source_path(repo, name)
     if matches_patterns(name, config.files.exclude) or matches_retrieval_exclude(
@@ -27,15 +33,25 @@ def guard(repo, config, name):
     ):
         raise ValueError(f"Excluded source: {name}")
     raw = path.read_bytes() if path.exists() else b"new source"
-    if classify_content(path, name, raw, config).disposition != "indexed":
+    decision = classify_content(path, name, raw, config)
+    # Empty files (e.g. package __init__.py markers) are valid edit targets.
+    if decision.disposition != "indexed" and decision.category != "empty":
         raise ValueError(f"Unsupported or excluded edit target: {name}")
     return path
 
 
-def snapshot(repo, workspace, config):
+def snapshot(repo, workspace, config, support=False):
+    """Copy eligible sources; with support=True also small non-sensitive files."""
     manifest = {}
-    for item in discover_repository_inventory(repo, config).eligible:
+    inventory = discover_repository_inventory(repo, config)
+    for item in inventory.files if support else inventory.eligible:
         if matches_retrieval_exclude(item.relative, config.retrieval.exclude):
+            continue
+        eligible = item.decision.disposition == "indexed"
+        if not eligible and (
+            item.decision.category in NEVER_COPIED
+            or item.path.stat().st_size > SUPPORT_MAX_BYTES
+        ):
             continue
         path = source_path(repo, item.relative)
         raw = path.read_bytes()
@@ -45,31 +61,52 @@ def snapshot(repo, workspace, config):
         mode = stat.S_IMODE(path.stat().st_mode)
         target.chmod(mode)
         manifest[item.relative] = {"sha256": sha(raw), "mode": mode}
+        if not eligible:
+            manifest[item.relative]["support"] = True
     return manifest
 
 
-def changes(repo, workspace, before, allowed):
-    """Reject check-side mutations, deletions, and unreported source writes."""
+def changes(repo, workspace, before, allowed, strict=True):
+    """Collect proposed file contents and their unified diff.
+
+    strict (structured editor): reject check-side mutations, deletions and
+    unreported source writes. Lenient (agent loop): scratch files and caches
+    created by commands are ignored, deletions are not proposed, and eligible
+    tracked files changed by a command (e.g. sed -i) are proposed as edits.
+    """
     observed = {}
+    allowed = set(allowed)
     for path in workspace.rglob("*"):
-        if path.is_symlink():
-            raise ValueError("A check created a symlink")
-        if not path.is_file() or any(
-            p in {"__pycache__", ".pytest_cache"}
-            for p in path.relative_to(workspace).parts
+        relative = path.relative_to(workspace)
+        if any(
+            p in {"__pycache__", ".pytest_cache", ".git", ".devstill"}
+            for p in relative.parts
         ):
             continue
-        name = path.relative_to(workspace).as_posix()
+        if path.is_symlink():
+            if strict:
+                raise ValueError("A check created a symlink")
+            continue
+        if not path.is_file():
+            continue
+        name = relative.as_posix()
+        if not strict and name not in allowed and name not in before:
+            continue
         raw = path.read_bytes()
         observed[name] = raw
         if name not in allowed and (
             name not in before or sha(raw) != before[name]["sha256"]
         ):
-            raise ValueError(f"Check changed unproposed source: {name}")
-    if set(before) - set(observed):
+            if strict:
+                raise ValueError(f"Check changed unproposed source: {name}")
+            if not before[name].get("support"):
+                allowed.add(name)
+    if strict and set(before) - set(observed):
         raise ValueError("File deletion is unsupported")
     result, patches = {}, []
     for name in sorted(allowed):
+        if name not in observed:
+            continue
         old = source_path(repo, name).read_bytes() if name in before else b""
         if name in before and sha(old) != before[name]["sha256"]:
             raise ValueError(f"Source changed during preparation: {name}")

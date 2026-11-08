@@ -27,7 +27,16 @@ from benchmarks.retrieval.coding_report import completed
 from benchmarks.retrieval.recording_proxy import recording_proxy, transport_metrics
 
 ROOT = Path(__file__).resolve().parents[2]
-VARIANTS = ("pi", "quick", "review", "baseline", "feature", "pi_context", "minimal", "runtime")
+VARIANTS = (
+    "pi",
+    "quick",
+    "review",
+    "baseline",
+    "feature",
+    "pi_context",
+    "minimal",
+    "runtime",
+)
 
 
 def write(path, value):
@@ -111,17 +120,19 @@ def prepared_tool_environment():
     }
 
 
-def check_tool_environment(environment):
+def check_tool_environment(environment, rust=True):
     checks = {}
-    for name, command in {
+    commands = {
         "python": [
             "python",
             "-c",
             "import sys, pytest, ephemeral_port_reserve, markupsafe; print(sys.executable); print(sys.version)",
         ],
-        "cargo": ["cargo", "--version"],
-        "rustc": ["rustc", "--version"],
-    }.items():
+    }
+    if rust:
+        # Only cargo corpora need the Rust toolchain.
+        commands.update(cargo=["cargo", "--version"], rustc=["rustc", "--version"])
+    for name, command in commands.items():
         result = subprocess.run(
             command,
             env=dict(os.environ, **environment),
@@ -381,7 +392,6 @@ def run(args):
     from devstill.credentials import resolve_api_key
 
     tool_environment = prepared_tool_environment()
-    tool_versions = check_tool_environment(tool_environment)
     dataset = campaign.load_cases(args.dataset)
     validate_verification(args.verified, dataset)
     if set(args.case or []) - {c["id"] for c in dataset}:
@@ -392,6 +402,8 @@ def run(args):
         if (not args.case or c["id"] in args.case)
         and (args.workload == "all" or c["workload"] == args.workload)
     ]
+    need_rust = any(c["corpus"] == "cargo" for c in cases)
+    tool_versions = check_tool_environment(tool_environment, need_rust)
     variants = args.variants.split(",")
     if (
         not cases
@@ -687,7 +699,9 @@ def run(args):
                 )
                 == runtime,
                 "pi_unchanged": pi_identity() == identity,
-                "coding_toolchain_unchanged": check_tool_environment(tool_environment)
+                "coding_toolchain_unchanged": check_tool_environment(
+                    tool_environment, need_rust
+                )
                 == tool_versions,
                 "baseline_unchanged": all(
                     digest(output / "baseline" / name) == sha
