@@ -293,7 +293,7 @@ def agent_loop(
     requirements=None,
     required_checks=(),
     check_runner=None,
-    max_turns=10,
+    max_turns=12,
     bash_timeout=30.0,
     report=lambda message: None,
     before_tools=lambda: None,
@@ -329,14 +329,16 @@ def agent_loop(
             "model_calls": calls,
             "changed_files": sorted(set(workspace.changed)),
             "commands": commands,
-            # True when the agent ran checks after its last edit and all passed.
-            "verified": bool(after_edit) and all(c["ok"] for c in after_edit),
+            # True when the agent's latest check after its last edit passed.
+            "verified": bool(after_edit) and after_edit[-1]["ok"],
             "usage": usage,
             **extra,
         }
 
     def verification_failed_since_edit():
-        return any(not c["ok"] for c in commands if c["step"] > last_edit_step)
+        """The latest check after the last edit failed (earlier ones may be fixed checks)."""
+        after_edit = [c for c in commands if c["step"] > last_edit_step]
+        return bool(after_edit) and not after_edit[-1]["ok"]
 
     guard_reports = 0
 

@@ -634,3 +634,13 @@ def test_guard_selects_tests_for_changed_functions_only(tested):
     assert guard_test_files(tested, ["pkg/m.py"], original.get) == ["tests/test_m.py"]
     (tested / "notes.toml").write_text("x = 1\n")
     assert guard_test_files(tested, ["notes.toml", "tests/test_m.py"], original.get) == []
+
+
+def test_turn_limit_judges_the_latest_check_after_the_edit(work):
+    edit = call("edit", 0, path="pkg/m.py", oldText="a - b", newText="a + b")
+    wrong = call("python", 1, code="from pkg.m import add\nassert add(2, 3) == 6\n")
+    right = call("python", 0, code="from pkg.m import add\nassert add(2, 3) == 5\n")
+    chat = scripted(reply(edit, wrong), reply(right))
+    result = agent_loop(tools_for(work), "Fix add", [], chat, work, FAR, max_turns=2)
+    assert result["status"] == "applied_unvalidated" and result["finished"] == "turn_limit"
+    assert result["verified"]
