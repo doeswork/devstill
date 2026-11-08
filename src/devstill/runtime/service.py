@@ -461,13 +461,16 @@ class RuntimeSession:
 
         guard = None
         if cfg.editing.regression_tests:
-            files = guard_test_files(self.repo, records)
 
             def original(name):
                 path = workspace.source_path(self.repo, name)
                 return path.read_bytes() if path.is_file() else None
 
-            guard = TestGuard(tools, files, original) if files else None
+            guard = TestGuard(
+                tools,
+                lambda changed: guard_test_files(work, changed, original),
+                original,
+            )
         state = {}
         with ThreadPoolExecutor(max_workers=1) as pool:
             pending = pool.submit(workspace.snapshot, self.repo, work, cfg, True)

@@ -9,6 +9,7 @@ functions so verification code does not have to guess APIs.
 from __future__ import annotations
 
 import ast
+import difflib
 import re
 from pathlib import Path, PurePosixPath
 
@@ -151,9 +152,52 @@ def primary_symbols(records):
     return names
 
 
-def guard_test_files(work: Path, records, limit=2):
-    """Existing test files worth re-running after a change."""
-    counts, _ = related_tests(work, primary_symbols(records))
+def is_test_path(name: str) -> bool:
+    path = PurePosixPath(name)
+    return (
+        any(part in {"tests", "test"} for part in path.parts[:-1])
+        or path.name.startswith("test_")
+        or path.name.endswith("_test.py")
+    )
+
+
+def changed_symbols(new_text: str, old_text: str) -> set[str]:
+    """Names of functions/classes in new_text whose lines differ from old_text."""
+    old_lines, new_lines = old_text.split("\n"), new_text.split("\n")
+    changed = set()
+    matcher = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
+    for tag, _, _, start, end in matcher.get_opcodes():
+        if tag != "equal":
+            changed.update(range(start + 1, max(end, start + 1) + 1))
+    try:
+        tree = ast.parse(new_text)
+    except SyntaxError:
+        return set()
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            last = node.end_lineno or node.lineno
+            if any(node.lineno <= line <= last for line in changed):
+                names.add(node.name)
+    return {n for n in names if len(n) >= 3 and not n.startswith("__")}
+
+
+def guard_test_files(work: Path, changed, original, limit=2):
+    """Existing test files that exercise the functions/classes just changed."""
+    names = set()
+    for name in changed:
+        if not name.endswith(".py") or is_test_path(name):
+            continue
+        try:
+            new_text = (work / name).read_text()
+        except (OSError, UnicodeDecodeError):
+            continue
+        raw = original(name)
+        old_text = raw.decode("utf-8", errors="replace") if raw else ""
+        names |= changed_symbols(new_text, old_text)
+    if not names:
+        return []
+    counts, _ = related_tests(work, names)
     if not counts:
         return []
     top = counts[0][0]

@@ -24,6 +24,8 @@ from pathlib import Path
 READ_DEFAULT_LINES = 400
 READ_MAX_CHARS = 40_000
 OUTPUT_MAX_CHARS = 6_000
+# write may replace a whole existing file only when it is this small.
+OVERWRITE_MAX_LINES = 40
 
 _TRANSLATE = str.maketrans(
     {
@@ -364,14 +366,25 @@ class Workspace:
             changed=[path],
         )
 
-    def write(self, path: str, content: str) -> ToolResult:
+    def write(self, path: str, content: str, append: bool = False) -> ToolResult:
         self.guard(path)
         target = self.resolve(path)
-        _check_python(path, content)
         existed = target.exists()
         crlf = False
+        original = ""
         if existed:
-            _, crlf = _decode(target.read_bytes(), path)
+            original, crlf = _decode(target.read_bytes(), path)
+        if append:
+            if original and not original.endswith("\n"):
+                original += "\n"
+            content = original + content
+        elif existed and original.count("\n") > OVERWRITE_MAX_LINES:
+            raise ToolError(
+                f"{path} already exists ({original.count(chr(10))} lines); write would "
+                "replace all of it. Use edit to change part of it, or write with "
+                "append=true to add to its end."
+            )
+        _check_python(path, content)
         target.parent.mkdir(parents=True, exist_ok=True)
         output = content.replace("\r\n", "\n")
         if crlf:
@@ -381,8 +394,11 @@ class Workspace:
         lines = content.count("\n") + (
             0 if content.endswith("\n") or not content else 1
         )
-        verb = "Overwrote" if existed else "Created"
-        return ToolResult(f"{verb} {path} ({lines} lines).", changed=[path])
+        if append and existed:
+            verb = "Appended to"
+        else:
+            verb = "Overwrote" if existed else "Created"
+        return ToolResult(f"{verb} {path} (now {lines} lines).", changed=[path])
 
     def python(self, code: str, timeout: float, checkpoint=lambda: None) -> ToolResult:
         """Run a Python script in the repository root with the project interpreter."""
@@ -482,9 +498,11 @@ class TestGuard:
     only tests that passed before count as regressions.
     """
 
-    def __init__(self, workspace: Workspace, files, originals, timeout=60.0):
+    def __init__(self, workspace: Workspace, files, originals, timeout=30.0):
+        """files: test paths, or a callable mapping changed paths to test paths."""
         self.workspace = workspace
-        self.files = list(files)
+        self.select = files if callable(files) else (lambda changed: list(files))
+        self.files = []
         self.originals = originals  # name -> original bytes, or None if new
         self.timeout = timeout
         self._lock = threading.Lock()
@@ -534,8 +552,7 @@ class TestGuard:
 
     def changed(self):
         """Start (or restart) a background run for the current workspace state."""
-        if not self.files:
-            return
+        self.files = list(self.select(list(self.workspace.changed)))
         with self._lock:
             self._generation += 1
             generation = self._generation
@@ -544,6 +561,9 @@ class TestGuard:
                 self._process = None
             self._done.clear()
             self._result = None
+            if not self.files:
+                self._thread = None
+                return
 
         def work():
             result = self._execute(self.files, self.timeout, generation)

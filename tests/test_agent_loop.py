@@ -604,3 +604,33 @@ def test_files_named_in_the_request_are_shown_head_and_tail(tmp_path):
     assert paths[2] == ("pyproject.toml", [1, 2])
     assert records[1]["code"].endswith("assert 199 == 199, 'case 199'")
     assert code_first([], "Add it to the Sphinx API reference") == []
+
+
+def test_write_refuses_to_replace_large_files_but_can_append(work):
+    tools = tools_for(work)
+    big = work / "pkg" / "big.py"
+    big.write_text("".join(f"X{i} = {i}\n" for i in range(60)))
+    with pytest.raises(ToolError, match="append=true"):
+        tools.write("pkg/big.py", "Y = 1\n")
+    assert big.read_text().count("\n") == 60
+    result = tools.write("pkg/big.py", "Y = 1\n", append=True)
+    assert "Appended to pkg/big.py (now 61 lines)" in result.text
+    assert big.read_text().endswith("X59 = 59\nY = 1\n")
+    small = work / "pkg" / "small.py"
+    small.write_text("A = 1")  # no trailing newline; appends on a new line
+    tools.write("pkg/small.py", "B = 2\n", append=True)
+    assert small.read_text() == "A = 1\nB = 2\n"
+    assert tools.write("pkg/small.py", "C = 3\n").ok  # small files may be replaced
+
+
+def test_guard_selects_tests_for_changed_functions_only(tested):
+    from devstill.runtime.loop_context import changed_symbols, guard_test_files
+
+    original = {"pkg/m.py": (tested / "pkg" / "m.py").read_bytes()}
+    (tested / "pkg" / "m.py").write_text(
+        "def add(a, b):\n    return a + b\n\n\ndef neg(a):\n    return 0 - a\n"
+    )
+    assert changed_symbols((tested / "pkg" / "m.py").read_text(), original["pkg/m.py"].decode()) == {"neg"}
+    assert guard_test_files(tested, ["pkg/m.py"], original.get) == ["tests/test_m.py"]
+    (tested / "notes.toml").write_text("x = 1\n")
+    assert guard_test_files(tested, ["notes.toml", "tests/test_m.py"], original.get) == []

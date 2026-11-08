@@ -108,12 +108,16 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "write",
-            "description": "Create a new file (or completely rewrite a small file) with the given content.",
+            "description": "Create a new file, or with append=true add content to the end of an existing file (e.g. a new test). Existing files longer than 40 lines cannot be replaced; use edit.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string"},
                     "content": {"type": "string"},
+                    "append": {
+                        "type": "boolean",
+                        "description": "Add content to the end of the existing file",
+                    },
                 },
                 "required": ["path", "content"],
             },
@@ -352,7 +356,8 @@ def agent_loop(
             )
         if guard is not None and guard_reports < 2:
             report("Running related tests")
-            wait = min(45.0, max(0.0, deadline - time.perf_counter() - 5))
+            # Slow suites must not dominate a quick task: wait briefly at most.
+            wait = min(15.0, max(0.0, deadline - time.perf_counter() - 5))
             found = guard.regressions(wait)
             if found:
                 guard_reports += 1
@@ -501,7 +506,8 @@ def agent_loop(
                         content = arguments.get("content")
                         if not isinstance(content, str):
                             raise ToolError("write needs string content")
-                        result = workspace.write(str(arguments["path"]), content)
+                        append = arguments.get("append") in (True, "true", "True", 1)
+                        result = workspace.write(str(arguments["path"]), content, append)
                         last_edit_step = step
                         changed()
                     elif name == "python":
