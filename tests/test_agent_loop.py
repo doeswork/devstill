@@ -698,3 +698,10 @@ def test_guard_whole_suite_catches_unrelated_meta_tests(tested):
     assert new == ["tests/test_meta.py::test_module_stays_small"]
     assert "test_known_bad" not in output  # pre-existing failure filtered out
     guard.close()
+
+
+def test_request_without_context_tells_the_model_to_search():
+    from devstill.runtime.agent_loop import render_context
+
+    text = render_context("Fix the thing", [])
+    assert "none was found automatically" in text and "grep -rn" in text

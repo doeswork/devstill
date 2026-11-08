@@ -351,6 +351,10 @@ class RuntimeSession:
                     include_tests=query_requests_tests(query),
                     fits=fits,
                 )
+            if lexical_first and not selected and candidates:
+                # Nothing fits whole (e.g. very large class chunks): keep the
+                # best match; the loop's context renderer trims it to budget.
+                selected = candidates[:1]
             for result in selected:
                 path = workspace.guard(self.repo, cfg, result.chunk.path)
                 if (
@@ -361,7 +365,7 @@ class RuntimeSession:
                         f"Stale indexed source: {result.chunk.path}. Run devstill index."
                     )
             named = named_file_records(self.repo, cfg, query) if lexical_first else []
-            if not selected and not named:
+            if not selected and not named and not lexical_first:
                 raise ValueError(
                     "No usable source evidence; index the repository or specify a source symbol."
                 )

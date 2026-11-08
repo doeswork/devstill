@@ -275,6 +275,11 @@ def render_context(query, sections, requirements=None):
     if sections:
         parts.append("Repository context (current file contents):")
         parts.extend(sections)
+    else:
+        parts.append(
+            "Repository context: none was found automatically. Locate the relevant "
+            "code first (e.g. bash: grep -rn 'keyword' src/) and read it before editing."
+        )
     return "\n\n".join(parts)
 
 
