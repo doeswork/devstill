@@ -943,3 +943,25 @@ def test_everyday_change_words_keep_code_first():
 
     assert not DOC_WORDS.search("Make no other changes to the parser.")
     assert DOC_WORDS.search("Add a CHANGES.rst changelog entry")
+
+
+def test_latest_check_is_rerun_when_the_agent_edits_after_it(work):
+    chat = scripted(
+        reply(
+            call("edit", 0, path="pkg/m.py", oldText="a - b", newText="a + b"),
+            call("python", 1, code="from pkg.m import add\nassert add(2, 3) == 5\n"),
+        ),
+        reply(
+            call("edit", 0, path="pkg/m.py", oldText="a + b", newText="helper(a, b)"),
+            call("done", 1, summary="tidied"),
+        ),
+        reply(
+            call("edit", 0, path="pkg/m.py", oldText="helper(a, b)", newText="a + b"),
+            call("done", 1, summary="fixed"),
+        ),
+    )
+    result = agent_loop(tools_for(work), "Fix add", [], chat, work, FAR)
+    assert result["status"] == "applied_unvalidated" and result["model_calls"] == 3
+    rejected = [m for m in chat.seen[2] if m["role"] == "tool"][-1]["content"]
+    assert "fails after your last edit" in rejected and "NameError" in rejected
+    assert result["verified"] and result["commands"][-1]["automatic"]

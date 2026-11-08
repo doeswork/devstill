@@ -499,10 +499,46 @@ def _loop(
         check = latest_check()
         return check is not None and not check["ok"]
 
+    def recheck():
+        """Re-run the agent's latest python check if it edited afterwards.
+
+        Costs no model call: a final edit that breaks what the agent already
+        checked (e.g. deleting a helper it still uses) is caught here.
+        """
+        nonlocal step
+        python_checks = [c for c in commands if c["command"].startswith("python:\n")]
+        if not python_checks or python_checks[-1]["step"] > state["last_edit_step"]:
+            return None
+        code = python_checks[-1]["command"][len("python:\n") :]
+        timeout = min(bash_timeout, max(1.0, deadline - time.perf_counter() - 1))
+        report("Re-running the latest check")
+        result = workspace.python(code, timeout, checkpoint)
+        step += 1
+        commands.append(
+            {
+                "command": "python:\n" + code,
+                "ok": result.ok,
+                "check": not result.changed,
+                "turn": state["calls"],
+                "step": step,
+                "output": result.text[-2000:],
+                "automatic": True,
+            }
+        )
+        if result.ok:
+            return None
+        return (
+            "Your latest check fails after your last edit (re-run automatically):\n"
+            + result.text[-2000:]
+        )
+
     def finish(final=False):
         """None when the change may be accepted; otherwise feedback for the model."""
         nonlocal guard_reports
         before_tools()
+        problem = recheck()
+        if problem:
+            return problem
         failures = []
         for command in required_checks:
             results = (check_runner or (lambda *a: []))(
