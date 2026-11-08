@@ -13,7 +13,7 @@ import httpx
 
 
 @contextmanager
-def recording_proxy(upstream, directory, max_calls=0):
+def recording_proxy(upstream, directory, max_calls=0, *, disable_reasoning=False):
     directory.mkdir(parents=True, exist_ok=False)
     origin = urlsplit(upstream)
     target = f"{origin.scheme}://{origin.netloc}"
@@ -45,6 +45,14 @@ def recording_proxy(upstream, directory, max_calls=0):
                 if generation and not blocked:
                     counts["model_calls"] += 1
             prefix = directory / f"{number:04d}"
+            if generation and disable_reasoning:
+                prefix.with_suffix(".original-request").write_bytes(body)
+                payload = json.loads(body)
+                payload["chat_template_kwargs"] = {
+                    **payload.get("chat_template_kwargs", {}),
+                    "enable_thinking": False,
+                }
+                body = json.dumps(payload).encode()
             prefix.with_suffix(".request").write_bytes(body)
             record = {
                 "id": number,
@@ -52,6 +60,7 @@ def recording_proxy(upstream, directory, max_calls=0):
                 "path": self.path,
                 "generation": generation,
                 "budget_blocked": blocked,
+                "reasoning_explicitly_disabled": bool(generation and disable_reasoning),
             }
             prefix.with_suffix(".json").write_text(json.dumps(record) + "\n")
             # Headers are forwarded in memory, never logged. Drop hop-by-hop headers.
@@ -157,7 +166,16 @@ def transport_metrics(directory):
             ),
             None,
         )
-        rows.append({**record, "usage": usage})
+        reasoning_chars = 0
+        for value in values:
+            for choice in value.get("choices", []) if isinstance(value, dict) else []:
+                message = choice.get("delta", choice.get("message", {}))
+                reasoning_chars += sum(
+                    len(message.get(key) or "")
+                    for key in ("reasoning", "reasoning_content")
+                    if isinstance(message.get(key), str)
+                )
+        rows.append({**record, "usage": usage, "reasoning_chars": reasoning_chars})
     known = [
         r["usage"].get("total_tokens") for r in rows if isinstance(r["usage"], dict)
     ]
@@ -174,6 +192,8 @@ def transport_metrics(directory):
         "usage_complete": complete,
         "total_tokens": sum(known) if complete else None,
         "known_total_tokens": sum(n for n in known if isinstance(n, int)),
+        "responses_with_reasoning": sum(r["reasoning_chars"] > 0 for r in rows),
+        "reasoning_output_characters": sum(r["reasoning_chars"] for r in rows),
         "budget_rejections": sum(
             json.loads(p.read_text())["budget_blocked"]
             for p in directory.glob("*.json")

@@ -27,7 +27,7 @@ from benchmarks.retrieval.coding_report import completed
 from benchmarks.retrieval.recording_proxy import recording_proxy, transport_metrics
 
 ROOT = Path(__file__).resolve().parents[2]
-VARIANTS = ("pi", "quick", "feature")
+VARIANTS = ("pi", "quick", "review", "baseline", "feature", "pi_context", "minimal")
 
 
 def write(path, value):
@@ -101,6 +101,39 @@ def trial_order(variants, case_index, repeat):
     return [*variants[offset:], *variants[:offset]]
 
 
+def prepared_tool_environment():
+    """Give coding shells the same prepared toolchain as the hidden evaluator."""
+    prefixes = os.pathsep.join((str(ROOT / ".venv/bin"), "/tmp/devstill-cargo/bin"))
+    return {
+        **campaign.RUST_ENV,
+        "DEVSTILL_BENCH_TOOL_PATH": prefixes,
+        "PATH": prefixes + os.pathsep + os.environ.get("PATH", ""),
+    }
+
+
+def check_tool_environment(environment):
+    checks = {}
+    for name, command in {
+        "python": [
+            "python",
+            "-c",
+            "import sys, pytest, ephemeral_port_reserve, markupsafe; print(sys.executable); print(sys.version)",
+        ],
+        "cargo": ["cargo", "--version"],
+        "rustc": ["rustc", "--version"],
+    }.items():
+        result = subprocess.run(
+            command,
+            env=dict(os.environ, **environment),
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        checks[name] = result.stdout.strip()
+    return checks
+
+
 def direct_pi(case, repo, output, runtime):
     from devstill.config import DevstillConfig
     from devstill.credentials import resolve_api_key
@@ -126,6 +159,10 @@ def direct_pi(case, repo, output, runtime):
     limits = resolve_pi_limits(cfg.llm, cfg.executor)
     write_provider_config(artifacts / "pi-config", cfg.llm, cfg.executor, limits)
     env = pi_environment()
+    # pi_environment adds user bin directories. Keep the prepared test tools
+    # ahead of user-level pytest/pip shims for this controlled comparison.
+    if prefixes := os.environ.get("DEVSTILL_BENCH_TOOL_PATH"):
+        env["PATH"] = prefixes + os.pathsep + env["PATH"]
     env.update(
         PI_CODING_AGENT_DIR=str(artifacts / "pi-config"),
         PI_OFFLINE="1",
@@ -201,6 +238,14 @@ def direct_pi(case, repo, output, runtime):
 
 
 def worker(args):
+    if args.variant == "pi_context":
+        from benchmarks.retrieval.context_pilot import context_worker
+
+        return context_worker(args)
+    if args.variant == "minimal":
+        from benchmarks.retrieval.minimal_editor import minimal_worker
+
+        return minimal_worker(args)
     runtime = json.loads(args.runtime.read_text())
     case = {
         "id": args.case[0],
@@ -216,7 +261,19 @@ def worker(args):
             llm.model_validate(runtime["llm"]),
             executor.model_validate(runtime["executor"]),
         )
-        campaign.worker(case, args.variant, args.repo, args.output, private_index=True)
+        campaign.worker(
+            case,
+            "old"
+            if args.variant == "baseline"
+            else "quick"
+            if args.variant == "review"
+            else args.variant,
+            args.repo,
+            args.output,
+            private_index=True,
+            baseline_quick=args.variant == "baseline",
+            mode="review" if args.variant == "review" else "yolo",
+        )
 
 
 def summarize(rows, cases, variants, repeats):
@@ -319,6 +376,8 @@ def run(args):
     from devstill.config import load_config
     from devstill.credentials import resolve_api_key
 
+    tool_environment = prepared_tool_environment()
+    tool_versions = check_tool_environment(tool_environment)
     dataset = campaign.load_cases(args.dataset)
     validate_verification(args.verified, dataset)
     if set(args.case or []) - {c["id"] for c in dataset}:
@@ -360,6 +419,25 @@ def run(args):
         path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / name, path)
     write(output / "source-manifest.json", manifest)
+    baseline_manifest = None
+    if "baseline" in variants:
+        baseline_manifest = json.loads((args.baseline / "manifest.json").read_text())
+        if (
+            not baseline_manifest
+            or not (args.baseline / "src/devstill/quick_tasks.py").is_file()
+        ):
+            raise ValueError("A frozen Quick baseline is required")
+        if any(
+            digest(args.baseline / name) != sha
+            for name, sha in baseline_manifest.items()
+        ):
+            raise ValueError("Frozen Quick baseline changed")
+        for name in baseline_manifest:
+            target = output / "baseline" / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(args.baseline / name, target)
+        write(output / "baseline-manifest.json", baseline_manifest)
+
     cfg = load_config(ROOT / "devstill.json")
     if not cfg.llm.enabled or not cfg.llm.model:
         raise ValueError("Configure the model first")
@@ -390,9 +468,19 @@ def run(args):
         write(output / "server-models.json", metadata.json())
     protocol = {
         "schema_version": 1,
+        "pi_disable_reasoning": args.pi_disable_reasoning,
+        "pi_request_override": {"chat_template_kwargs": {"enable_thinking": False}}
+        if args.pi_disable_reasoning
+        else None,
+        "pi_context_mode": "Native Pi plus Quick-selected source excerpts; normal native tools",
+        "minimal_mode": "Benchmark-only exact replacements, Python checks, two generation calls maximum; explicit reasoning off; same selected source excerpts",
         "created_at": datetime.now(UTC).isoformat(),
         "purpose": args.purpose,
         "variants": variants,
+        "baseline": str(args.baseline) if baseline_manifest else None,
+        "review_policy": "Saved review reloaded and accepted unchanged automatically; no human think time or intervention",
+        "coding_tool_environment": tool_environment,
+        "coding_tool_versions": tool_versions,
         "repeats": args.repeats,
         "case_ids": [c["id"] for c in cases],
         "expected_attempts": len(cases) * args.repeats * len(variants),
@@ -449,18 +537,28 @@ def run(args):
                             cfg.llm.base_url,
                             directory / "transport",
                             args.max_model_calls,
+                            disable_reasoning=args.pi_disable_reasoning
+                            and variant in {"pi", "pi_context"},
                         ) as url:
                             trial_runtime = json.loads(json.dumps(runtime))
                             trial_runtime["llm"]["base_url"] = url
                             write(directory / "runtime.json", trial_runtime)
                             env = dict(
                                 os.environ,
-                                PYTHONPATH=str(source / "src")
+                                PYTHONPATH=str(
+                                    (
+                                        output / "baseline"
+                                        if variant == "baseline"
+                                        else source
+                                    )
+                                    / "src"
+                                )
                                 + os.pathsep
                                 + str(source),
                                 PI_OFFLINE="1",
                                 PI_TELEMETRY="0",
                             )
+                            env.update(tool_environment)
                             command = [
                                 sys.executable,
                                 "-P",
@@ -583,6 +681,14 @@ def run(args):
                 )
                 == runtime,
                 "pi_unchanged": pi_identity() == identity,
+                "coding_toolchain_unchanged": check_tool_environment(tool_environment)
+                == tool_versions,
+                "baseline_unchanged": all(
+                    digest(output / "baseline" / name) == sha
+                    for name, sha in baseline_manifest.items()
+                )
+                if baseline_manifest
+                else None,
                 "retrieval_inputs_unchanged": final_inputs == inputs,
                 "working_tree_source_changed": source_manifest(ROOT) != manifest,
                 "complete": len(rows) == protocol["expected_attempts"],
@@ -597,6 +703,9 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--verified", type=Path)
     parser.add_argument("--dataset", type=Path)
+    parser.add_argument(
+        "--baseline", type=Path, default=ROOT / ".devstill/feature-quick-baseline"
+    )
     parser.add_argument("--case", action="append")
     parser.add_argument(
         "--workload", choices=["all", "small", "feature"], default="all"
@@ -605,6 +714,11 @@ def main():
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--timeout", type=float, default=180)
     parser.add_argument("--max-model-calls", type=int, default=0)
+    parser.add_argument(
+        "--pi-disable-reasoning",
+        action="store_true",
+        help="Explicitly disable server reasoning for both native Pi arms; record original and upstream requests",
+    )
     parser.add_argument(
         "--purpose",
         choices=["smoke", "development", "evaluation"],

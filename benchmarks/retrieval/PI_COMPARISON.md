@@ -11,7 +11,16 @@ historical campaigns without replacing their results.
 | --- | --- |
 | `pi` | Original request, stock Pi system prompt and `read,bash,edit,write` tools; one noninteractive session |
 | `quick` | Original request through production Quick retrieval, file-impact review and scoped Pi execution, using YOLO |
+| `review` | Production Quick in Review mode; save and reload the review, then automatically approve it unchanged and execute |
+| `baseline` | Frozen restored Quick implementation from commit `831b199`, rerun with the same current Pi and model as the other arms |
 | `feature` | Small requests use Quick; feature requests use the production coordinator and its Quick children, using YOLO |
+
+The four-way fast-mode comparison uses `pi,quick,review,baseline`, including both
+small edits and feature-sized requests through Quick. It does not invoke the feature
+coordinator. Review timing excludes human reading/decision time and terminal UI
+rendering; it measures the saved-review execution path, not the benefit of human
+feedback. Historical runs remain separate because their runtime and timing
+boundaries differ. The rerun baseline isolates the old code under today's runtime.
 
 “One shot” means one user request with no human intervention. Stock Pi may make
 multiple model/tool calls, read the repository, run tests, and repair its changes.
@@ -25,6 +34,12 @@ caps are 4096 tokens per response, with thinking requested off. Actual serialize
 requests are saved: provider-specific thinking/tool-choice hints can differ between
 stock Pi and Devstill's extension. These differences belong to the compared methods;
 do not silently normalize requests or claim identical prompts/sampling.
+
+Coding shells receive the prepared Python environment (including repository test
+dependencies) and Rust/Cargo toolchain used by acceptance. The runner fails before
+model calls if those tools are missing, records their paths/versions, and checks
+versions again at the end. Pi's normal user-bin prefixes must not shadow these
+prepared tools. A live shell preflight verifies the actual native Pi environment.
 
 The default operating point has a common 180-second outer worker deadline.
 Production Quick retains its 120-second execution limit and 12-tool allowance;
@@ -119,20 +134,20 @@ output directory each time. These commands make real model calls.
 # Four-attempt integration smoke; not a quality/speed conclusion.
 PYTHONPATH=src:. "$HOME/.local/share/devstill/venv/bin/python" \
   -m benchmarks.retrieval.pi_comparison run \
-  --variants pi,quick --case w_repr --case w_salt --repeats 1 --purpose smoke \
+  --variants pi,quick,review,baseline --case w_repr --repeats 1 --purpose smoke \
   --verified .devstill/task-v2-case-verification-c \
-  --output .devstill/pi-quick-smoke-NEW
+  --output .devstill/pi-four-way-smoke-NEW
 
-# 216 attempts: 24 existing development cases × 3 repeats × 3 arms.
+# 288 attempts: 24 existing development cases × 3 repeats × 4 arms.
 PYTHONPATH=src:. "$HOME/.local/share/devstill/venv/bin/python" \
   -m benchmarks.retrieval.pi_comparison run \
-  --variants pi,quick,feature --repeats 3 --purpose development \
+  --variants pi,quick,review,baseline --repeats 3 --purpose development \
   --verified .devstill/task-v2-case-verification-c \
-  --output .devstill/pi-three-way-dev-NEW
+  --output .devstill/pi-four-way-dev-NEW
 
 # Read/recompute a summary without changing saved artifacts or making model calls.
 PYTHONPATH=src:. .venv/bin/python -m benchmarks.retrieval.pi_comparison report \
-  --output .devstill/pi-three-way-dev-NEW
+  --output .devstill/pi-four-way-dev-NEW
 
 # Compare saved experiment summaries and integrity audits over time.
 PYTHONPATH=src:. .venv/bin/python -m benchmarks.retrieval.pi_comparison history \

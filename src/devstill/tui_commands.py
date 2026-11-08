@@ -45,10 +45,9 @@ from devstill.feature_planning import (
     FeatureBudget,
     FeatureClient,
     FeatureDraft,
-    create_feature_draft,
     load_feature,
+    prepare_feature_draft,
     render_feature_review,
-    retrieve_feature_candidates,
     save_feature,
 )
 from devstill.feature_runs import render_feature_run, run_feature
@@ -115,8 +114,8 @@ class CommandSpec:
 COMMAND_SPECS = (
     CommandSpec("/task ", "Task Review", "Review file impacts before running Quick", TuiCommandKind.TASK),
     CommandSpec("/yolo ", "YOLO", "Retrieve, edit and check without review", TuiCommandKind.YOLO),
-    CommandSpec("/feature ", "Feature Review", "Coordinate several Quick tasks", TuiCommandKind.FEATURE),
-    CommandSpec("/feature-yolo ", "Feature YOLO", "Coordinate and run without review", TuiCommandKind.FEATURE_YOLO),
+    CommandSpec("/feature ", "Feature Review", "Quick first; coordinate when needed", TuiCommandKind.FEATURE),
+    CommandSpec("/feature-yolo ", "Feature YOLO", "Quick first; run without review", TuiCommandKind.FEATURE_YOLO),
     CommandSpec(
         "/search ", "Search", "Find relevant code locally", TuiCommandKind.SEARCH
     ),
@@ -341,7 +340,7 @@ def help_markdown() -> str:
             "Plain text uses the selected Task Review, YOLO or Search mode. Task Review is the startup default.",
             "`/task` reviews file impacts before one Run action; `/yolo` edits without review. Both use the configured model and the same scope checks.",
             "Both modes use compact file-impact review followed by the existing bounded Quick executor. No task decomposition is generated.",
-            "Choose Feature explicitly for one coordinating plan followed by serial Quick tasks. Review/YOLO is a separate choice. `/feature` reviews; `/feature-yolo` runs immediately.",
+            "Feature uses Quick directly when its review is ready; an unresolved review can coordinate multiple tasks. Review/YOLO is a separate choice. `/feature` reviews; `/feature-yolo` runs immediately.",
             "`/search` stays local. Legacy `/plan`, `/deep-plan`, `/execute`, and `/agent test` use the configured model.",
             "Advanced flags, rebuilds, configuration, and removal remain available in the CLI.",
             "",
@@ -948,24 +947,25 @@ class TuiWorkflow:
                 raise ValueError("Agent is disabled. Configure its endpoint and model first.")
             from uuid import uuid4
             budget = FeatureBudget(self.config.feature.timeout_seconds, cancelled=self.tasks_cancelled)
-            report("Discovering feature context")
+            report("Retrieving compact feature evidence")
             engine = self._open_search(report)
             try:
-                candidates = retrieve_feature_candidates(engine, command.query)
+                candidates = engine.query(command.query, limit=planning_retrieval_limit(PLAN_MAX_CHUNKS))
             finally:
                 engine.close()
             budget.remaining()
             log_path = self.artifact_root / "logs" / f"feature-discovery-{uuid4().hex}.jsonl"
             with FeatureClient(self.config.llm, budget=budget, log_path=log_path) as client:
-                draft = create_feature_draft(client, query=command.query, repo=self.repo_root,
+                draft = prepare_feature_draft(client, query=command.query, repo=self.repo_root,
                     candidates=candidates, mode="yolo" if command.kind == TuiCommandKind.FEATURE_YOLO else "review", config=self.config)
             budget.remaining()
-            draft.discovery_seconds = budget.spent
+            if isinstance(draft, FeatureDraft):
+                draft.discovery_seconds = budget.spent
             directory = save_feature(self.artifact_root, draft)
             (directory / "discovery-log.txt").write_text(str(log_path) + "\n")
             if command.kind == TuiCommandKind.FEATURE_YOLO:
                 return self.run_feature(draft, report)
-            return TuiResult("Feature Review", render_feature_review(draft), task_review=draft)
+            return TuiResult("Feature Review" if isinstance(draft, FeatureDraft) else "Task Review", render_feature_review(draft), task_review=draft)
 
         if command.kind == TuiCommandKind.FEATURE_RUN:
             return self.run_feature(load_feature(self.artifact_root, command.query), report)
@@ -1342,7 +1342,7 @@ class TuiWorkflow:
 
         raise ValueError(f"{command.kind.value} is handled by the interface")
 
-    def run_feature(self, draft: FeatureDraft, progress: ProgressCallback | None = None) -> TuiResult:
+    def run_feature(self, draft: FeatureDraft | TaskDraft, progress: ProgressCallback | None = None) -> TuiResult:
         report = progress or (lambda message: None)
         def retrieve(query):
             engine = self._open_search(report)

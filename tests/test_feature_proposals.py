@@ -47,7 +47,6 @@ def test_compiler_infers_shared_write_and_read_order_without_serializing_indepen
                 brief("read", ["a.py"], ["shared.py"]),
                 brief("write", ["shared.py"]),
                 brief("independent", ["b.py"]),
-                brief("consume new", ["c.py"], ["a.py"]),
             ]
         },
         repo=tmp_path,
@@ -57,12 +56,12 @@ def test_compiler_infers_shared_write_and_read_order_without_serializing_indepen
     tasks = {t.outcome: t for t in plan.tasks}
     assert tasks["write"].depends_on == [1]
     assert tasks["independent"].depends_on == []
-    assert tasks["consume new"].inputs[0].producer == 1
 
 
 @pytest.mark.parametrize(
     "tasks",
     [
+        [brief(str(n), [f"f{n}.py"]) for n in range(4)],
         [],
         [brief("one", ["x.py"], after=["missing"])],
         [brief("one", ["x.py"], after=["two"]), brief("two", ["y.py"], after=["one"])],

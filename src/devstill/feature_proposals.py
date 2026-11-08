@@ -29,7 +29,7 @@ class TaskBrief(TaskModel):
 
 
 class FeatureProposal(TaskModel):
-    tasks: list[TaskBrief] = Field(default_factory=list, max_length=6)
+    tasks: list[TaskBrief] = Field(default_factory=list, max_length=3)
     interfaces: list[Text] = Field(default_factory=list, max_length=8)
     blockers: list[Text] = Field(default_factory=list, max_length=8)
 

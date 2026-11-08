@@ -287,7 +287,16 @@ def runtime_settings(llm_type, executor_type):
     )
 
 
-def worker(case, variant, repo, output, *, baseline_quick=False, private_index=False):
+def worker(
+    case,
+    variant,
+    repo,
+    output,
+    *,
+    baseline_quick=False,
+    private_index=False,
+    mode="yolo",
+):
     # Imports occur after the coordinator chooses the frozen or candidate source
     # via PYTHONPATH. Never import both implementations into one interpreter.
     from devstill.agent import AgentClient
@@ -347,13 +356,13 @@ def worker(case, variant, repo, output, *, baseline_quick=False, private_index=F
             from devstill.feature_planning import (
                 FeatureBudget,
                 FeatureClient,
-                create_feature_draft,
-                retrieve_feature_candidates,
+                FeatureDraft,
+                prepare_feature_draft,
                 save_feature,
             )
 
             budget = FeatureBudget(cfg.feature.timeout_seconds)
-            pool = retrieve_feature_candidates(engine, case["query"])
+            pool = engine.query(case["query"], limit=12)
         elif variant in {"old", "compact", "quick", "feature"}:
             pool = engine.query(case["query"], limit=12)
         else:
@@ -371,7 +380,7 @@ def worker(case, variant, repo, output, *, baseline_quick=False, private_index=F
         )
         with client_context as client:
             if composed:
-                draft = create_feature_draft(
+                draft = prepare_feature_draft(
                     client,
                     query=case["query"],
                     repo=repo,
@@ -380,7 +389,11 @@ def worker(case, variant, repo, output, *, baseline_quick=False, private_index=F
                     config=cfg,
                 )
                 budget.remaining()
-                draft.discovery_seconds = budget.spent
+                if isinstance(draft, FeatureDraft):
+                    draft.discovery_seconds = budget.spent
+                row["feature_route"] = (
+                    "coordinated" if isinstance(draft, FeatureDraft) else "quick"
+                )
                 save_feature(artifacts, draft)
                 row["task_count"] = len(draft.plan.tasks)
                 row["dependency_edges"] = sum(
@@ -412,10 +425,21 @@ def worker(case, variant, repo, output, *, baseline_quick=False, private_index=F
                     query=case["query"],
                     repo=repo,
                     candidates=pool,
-                    mode="yolo",
+                    mode=mode,
                     excluded=cfg.retrieval.exclude,
                 )
                 save_task_draft(artifacts, draft)
+                if mode == "review":
+                    from devstill.tasks import load_task_draft
+
+                    reviewed = load_task_draft(artifacts, draft.id)
+                    if reviewed != draft:
+                        raise ValueError("Saved review changed before approval")
+                    draft = reviewed
+                    row["approval"] = (
+                        "automatic, unedited saved review; human time excluded"
+                    )
+                row["mode"] = mode
                 row["task_count"] = len(draft.plan.tasks)
         row["review_seconds"] = time.perf_counter() - start
         if composed:

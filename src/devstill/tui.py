@@ -1787,7 +1787,8 @@ class DevstillApp(App[None]):
             self._copy_selected_text()
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        if event.text_area.id != "command-input":
+        # Queued edits can arrive while shutdown is removing the composer.
+        if not self.is_running or event.text_area.id != "command-input":
             return
         prompt = event.text_area
         prompt.styles.height = max(1, min(6, prompt.text.count("\n") + 1))
@@ -2877,8 +2878,8 @@ class DevstillApp(App[None]):
         selected = self.query_one("#task-mode", Select).value
         feature = self.query_one("#request-type", Select).value == "feature"
         self.query_one("#task-mode-help", Static).update({
-            "review": "Review feature tasks and scope" if feature else "Review file impacts before running",
-            "yolo": "Feature runs serially without review" if feature else "Runs immediately · no review · same scope and checks",
+            "review": "Quick first; review before running" if feature else "Review file impacts before running",
+            "yolo": "Quick first; coordinate only when needed" if feature else "Runs immediately · no review · same scope and checks",
             "search": "Local lookup · no edits",
         }[selected])
         if self._composer_mode is ComposerMode.NORMAL:

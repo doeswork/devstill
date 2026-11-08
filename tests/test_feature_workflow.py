@@ -187,7 +187,23 @@ def test_real_workflow_saves_feature_review_then_runs_quick_children(
 
     repo = setup_repo(tmp_path)
     cfg = config(context_window=12288)
-    client = FakeClient(json.dumps(proposal_data()))
+    client = FakeClient(
+        json.dumps(
+            {
+                "items": [
+                    {"label": "Read", "target": "seed.py", "reason": "Convention"},
+                    {"label": "Read", "target": "ui.txt", "reason": "UI"},
+                    {"label": "Read", "target": "endpoint.py", "reason": "Endpoint"},
+                    {
+                        "label": "Search",
+                        "target": "service implementation",
+                        "reason": "Needs service context",
+                    },
+                ]
+            }
+        ),
+        json.dumps(proposal_data()),
+    )
     client.config = cfg.llm
     monkeypatch.setattr(
         "devstill.tui_commands.FeatureClient", lambda *a, **kw: nullcontext(client)
@@ -212,7 +228,7 @@ def test_real_workflow_saves_feature_review_then_runs_quick_children(
             )
         )
         assert result.task_review is not None and runner.calls == 0
-        assert len(client.calls) == 1
+        assert len(client.calls) == 2
         result = workflow.execute(
             TuiCommand(TuiCommandKind.FEATURE_RUN, "run", result.task_review.id)
         )

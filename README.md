@@ -1,7 +1,7 @@
 devstill
 `devstill` is a standalone, local-first repository-intelligence TUI for developers and AI coding agents.
 Run `devstill` from any directory inside a configured codebase. It searches upward through parent directories until it finds a `devstill.json`, then opens the TUI for that repository.
-The goal is fast local retrieval followed by compact coding tasks. Indexing and embeddings stay local; Task Review and YOLO send selected source only to the configured model endpoint. Task Review and YOLO use the existing Quick retrieval, file-impact review and Pi executor. Explicit Feature mode coordinates serial Quick tasks; feature quality remains experimental ([comparison results](benchmarks/retrieval/FEATURE_COORDINATION_RESULTS.md)).
+The goal is fast local retrieval followed by compact coding tasks. Indexing and embeddings stay local; Task Review and YOLO send selected source only to the configured model endpoint. Task Review and YOLO use the existing Quick retrieval, file-impact review and Pi executor. Explicit Feature mode tries Quick first and coordinates only unresolved reviews; feature quality remains experimental ([comparison results](benchmarks/retrieval/FEATURE_COORDINATION_RESULTS.md)).
 Project goals
 `devstill` should provide several complementary search modes:
 Exact symbol lookup for known functions, classes, methods, fields, and paths
@@ -1015,8 +1015,9 @@ the default. See
 and [the historical failed Task comparison](benchmarks/retrieval/TASK_V2_RESULTS.md).
 
 Choose **Feature** beside the Review/YOLO selector for multiple Quick tasks.
-`/feature` reviews a coordinating plan; `/feature-yolo` runs it without a review
-stop. CLI equivalents are `devstill feature "request" [--yolo]` and
+`/feature` tries the original request through Quick first; `/feature-yolo` runs
+without a review stop. A runnable review goes straight to Quick execution. Only an
+unresolved review invokes coordination, capped at three tasks. CLI equivalents are `devstill feature "request" [--yolo]` and
 `devstill feature --run FEATURE_ID --yolo`. Quick remains the startup default.
 Features run serially, refresh context between children, and stop on failed
 checks, stale inputs or scope conflicts. **Stop feature** prevents further work;

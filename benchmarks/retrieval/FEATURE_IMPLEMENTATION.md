@@ -1,7 +1,8 @@
 # Feature coordination over Quick: implementation and benchmark handoff
 
-Feature mode is implemented as an explicit, opt-in workflow. Quick task remains
-the default. Live comparisons and the subsequent coordinator revision are recorded in
+Feature is an explicit, opt-in workflow that tries the original request through
+Quick first. A runnable Quick review goes directly to coding. Only an unresolved
+review invokes coordination, with at most three tasks. Quick task remains the default. Live comparisons and the subsequent coordinator revision are recorded in
 [FEATURE_COORDINATION_RESULTS.md](FEATURE_COORDINATION_RESULTS.md). Feature quality
 is experimental; passing implementation tests does not establish benchmark parity.
 
@@ -25,17 +26,18 @@ devstill feature "Add the profile endpoint and UI" --yolo
 devstill feature --run FEATURE_ID --yolo
 ```
 
-A Feature Review shows requirements, shared interfaces, task dependencies,
+A direct Quick review shows the usual file impacts. When coordination is needed,
+Feature Review shows requirements, shared interfaces, task dependencies,
 proposed read/write paths and configured checks. One Run feature action authorizes
 that scope. Ready tasks run serially; the prototype records independence without
 running children concurrently. Stop feature prevents further application and
 scheduling; already applied changes remain. After stopping, a new request can run
 normally. Closing the application retains the same cancellation protection.
 
-The coordinator makes one bounded structured generation, with at most one
+When needed, the coordinator makes one bounded structured generation, with at most one
 schema/reference repair. The model supplies named task briefs, acceptance criteria,
 file paths and named prerequisites. Code assigns IDs, resolves prerequisite names,
-infers file operations and orders conflicting access. It supplies up to six
+infers file operations and orders conflicting access. It supplies up to three
 cohesive task briefs; it does not implement code. Each child calls the existing
 `create_quick_draft` and `run_quick_task`, retaining ordinary Quick classification
 and bounded Pi execution. There is no recursive planning or alternative edit
@@ -61,7 +63,8 @@ dependencies; reads conflicting with an unfinished writer still block.
 
 ## Validation and limits
 
-By default, configured `executor.validation_commands` run after each child and
+Direct Quick uses `executor.validation_commands` and its normal execution budget.
+For coordinated features, configured `executor.validation_commands` run after each child and
 again after the feature. A feature-specific policy can distinguish local and
 final checks:
 
@@ -109,7 +112,7 @@ run. Automatic resume, rollback and parallel application are not implemented.
 
 ## Verification performed without the model server
 
-The full suite passed: **491 passed, 1 skipped**. Ruff and `git diff --check`
+The full suite passed: **507 passed, 1 skipped**. Ruff and `git diff --check`
 also passed. These checks establish implementation behavior, not model quality.
 The private local installation was refreshed with `./update-local.sh`; all 53
 installed package files match the checkout and `devstill feature --help` passes.
@@ -149,8 +152,8 @@ The working Quick baseline is frozen from commit
 benchmark model/executor configuration load successfully. Current candidate source
 is fingerprinted when a campaign starts and checked between attempts.
 
-The `feature` candidate routes small requests directly to Quick and feature
-requests through generated coordination. Its `old` control runs the frozen Quick
+The `feature` candidate routes small requests directly to Quick. Feature requests
+try Quick first and invoke coordination only for unresolved reviews. Its `old` control runs the frozen Quick
 wrapper for every request. Feature workers receive private copies of the source
 indexes and index their disposable edited repository between children; frozen
 corpus indexes are not used as writable successor indexes.

@@ -1,9 +1,12 @@
 # Retrieval benchmark plan and agent handoff
 
-**Direct Pi baseline:** [stock Pi YOLO versus Quick and feature coordination](PI_COMPARISON.md). Includes frozen source/runtime records, full model-call traces, paired correctness/latency reporting, and standards for development and fresh evaluation.
+**Small execution diagnostic:** [four cases, three approaches, bounded run and decision gate](QUICK_DIAGNOSTIC.md). Compare native Pi, Pi with retrieved evidence, and a benchmark-only exact-replacement editor before resuming broad campaigns.
+The [completed diagnostic and corrected-editor recheck](QUICK_DIAGNOSTIC_RESULTS.md) found 4/4 parity and a speed advantage for the revised editor on one known-case repetition; repeated and fresh-case validation remains required.
+
+**Direct Pi baseline:** [stock Pi versus Quick YOLO, Quick Review and frozen Quick](PI_COMPARISON.md). The [four-way campaign](PI_FULL_RESULTS.md) was stopped at 48/288 attempts in favor of a four-case context diagnostic. Includes frozen source/runtime records, full model-call traces, paired correctness/latency reporting, and standards for development and fresh evaluation.
 The [integration smoke results](PI_SMOKE_RESULTS.md) passed coding/acceptance and final integrity checks; they do not establish a speed or quality advantage.
 
-**Current feature implementation:** [serial Quick composition, verification and benchmark commands](FEATURE_IMPLEMENTATION.md). The user selects Quick or Feature explicitly. The [completed comparisons and coordinator revision](FEATURE_COORDINATION_RESULTS.md) show working dependent tasks, but feature parity with Quick has not been achieved. [Design plan](FEATURE_TASK_PLAN.md).
+**Current feature implementation:** [serial Quick composition, verification and benchmark commands](FEATURE_IMPLEMENTATION.md). The user selects Quick or Feature explicitly. Feature now tries Quick first and coordinates only unresolved reviews. The [completed comparisons and coordinator revision](FEATURE_COORDINATION_RESULTS.md) show working dependent tasks, but feature parity with Quick has not been achieved. [Design plan](FEATURE_TASK_PLAN.md).
 
 **Current direction:** [Quick restored underneath Task Review/YOLO](QUICK_RESTORE_RESULTS.md). Small-edit parity comes first; feature decomposition is deferred. The Task v1/v2 results below describe the superseded structured-edit experiments.
 

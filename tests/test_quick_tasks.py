@@ -176,3 +176,88 @@ def test_old_saved_drafts_keep_their_original_engine(repo):
     saved = draft(repo).model_dump()
     saved.pop("engine")
     assert TaskDraft.model_validate(saved).engine == "structured"
+
+
+def test_feature_reuses_exact_quick_review_and_runs_without_replanning(
+    repo, monkeypatch
+):
+    from devstill.feature_planning import (
+        load_feature,
+        prepare_feature_draft,
+        save_feature,
+    )
+    from devstill.feature_runs import run_feature
+
+    query = "Make the submit button blue"
+    candidate = make_result(path="button.css", code=(repo / "button.css").read_text())
+    response = json.dumps(
+        {"items": [{"label": "Modify", "target": "button.css", "reason": "Use blue"}]}
+    )
+    direct, feature = FakeClient(response), FakeClient(response)
+    cfg = config(
+        context_window=12288,
+        validation_commands=[
+            f"{sys.executable} -c \"from pathlib import Path; assert 'blue' in Path('button.css').read_text()\""
+        ],
+    )
+    monkeypatch.setattr(
+        "devstill.feature_planning.create_feature_draft",
+        lambda *a, **kw: pytest.fail("Ready Quick review must bypass coordination"),
+    )
+    expected = create_quick_draft(
+        direct,
+        query=query,
+        repo=repo,
+        candidates=[candidate],
+        mode="review",
+        excluded=cfg.retrieval.exclude,
+    )
+    actual = prepare_feature_draft(
+        feature,
+        query=query,
+        repo=repo,
+        candidates=[candidate],
+        mode="review",
+        config=cfg,
+    )
+    assert direct.calls == feature.calls
+    assert len(feature.calls) == 1
+    assert actual.model_dump(exclude={"id"}) == expected.model_dump(exclude={"id"})
+    root = repo / ".devstill"
+    save_feature(root, actual)
+    assert load_feature(root, actual.id) == actual
+    runner = FakePiRunner(blue)
+    monkeypatch.setattr("devstill.executor.PiRunner", lambda: runner)
+    state = run_feature(
+        actual,
+        repo=repo,
+        artifact_root=root,
+        config=cfg,
+        retrieve=lambda q: pytest.fail("No second retrieval for a ready review"),
+    )
+    assert state["engine"] == "quick" and state["status"] == "validated"
+    assert runner.calls == 1
+
+
+def test_feature_does_not_hide_invalid_quick_output_behind_another_planner(
+    repo, monkeypatch
+):
+    from devstill.feature_planning import prepare_feature_draft
+
+    client = FakeClient("bad", "bad")
+    monkeypatch.setattr(
+        "devstill.feature_planning.create_feature_draft",
+        lambda *a, **kw: pytest.fail("Invalid output must not trigger another planner"),
+    )
+    with pytest.raises(ValueError):
+        prepare_feature_draft(
+            client,
+            query="Change button",
+            repo=repo,
+            candidates=[
+                make_result(path="button.css", code=(repo / "button.css").read_text())
+            ],
+            mode="review",
+            config=config(),
+        )
+    assert len(client.calls) == 2

@@ -22,6 +22,53 @@ def test_order_balances_every_arm_across_repetitions():
         assert {o[position] for o in orders} == set(variants)
 
 
+@pytest.mark.parametrize(
+    "variant,engine,mode,frozen",
+    [
+        ("quick", "quick", "yolo", False),
+        ("review", "quick", "review", False),
+        ("baseline", "old", "yolo", True),
+    ],
+)
+def test_comparison_routes_review_and_frozen_baseline(
+    tmp_path, monkeypatch, variant, engine, mode, frozen
+):
+    from types import SimpleNamespace
+
+    from benchmarks.retrieval.pi_comparison import worker
+
+    runtime = tmp_path / "runtime.json"
+    runtime.write_text('{"llm":{},"executor":{}}')
+    query = tmp_path / "query.txt"
+    query.write_text("Original request")
+    calls = []
+    monkeypatch.setattr(
+        "benchmarks.retrieval.pi_comparison.campaign.worker",
+        lambda *a, **kw: calls.append((a, kw)),
+    )
+    # worker replaces the runtime provider; restore it after this test.
+    from benchmarks.retrieval import coding_campaign
+
+    monkeypatch.setattr(
+        coding_campaign, "runtime_settings", coding_campaign.runtime_settings
+    )
+    worker(
+        SimpleNamespace(
+            runtime=runtime,
+            query=query,
+            case=["case"],
+            workload="small",
+            corpus="werkzeug",
+            variant=variant,
+            repo=tmp_path,
+            output=tmp_path,
+        )
+    )
+    args, kwargs = calls[0]
+    assert args[0]["query"] == "Original request" and args[1] == engine
+    assert kwargs == {"private_index": True, "baseline_quick": frozen, "mode": mode}
+
+
 def trial(variant, passed=True, seconds=10, **kwargs):
     return {
         "id": "a",
@@ -75,8 +122,9 @@ def test_verification_requires_matching_full_dataset(tmp_path):
 
 
 @pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("disable_reasoning", [False, True])
 def test_proxy_preserves_requests_streams_and_secrets_and_enforces_budget(
-    tmp_path, stream
+    tmp_path, stream, disable_reasoning
 ):
     received = []
 
@@ -91,7 +139,10 @@ def test_proxy_preserves_requests_streams_and_secrets_and_enforces_budget(
                     self.rfile.read(int(self.headers["Content-Length"])),
                 )
             )
-            payload = {"choices": [], "usage": {"total_tokens": 42}}
+            payload = {
+                "choices": [{"delta" if stream else "message": {"reasoning": "trace"}}],
+                "usage": {"total_tokens": 42},
+            }
             body = (
                 ("data: " + json.dumps(payload) + "\n\ndata: [DONE]\n\n").encode()
                 if stream
@@ -109,11 +160,14 @@ def test_proxy_preserves_requests_streams_and_secrets_and_enforces_budget(
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     directory = tmp_path / "transport"
-    request = b'{"messages":[{"role":"user","content":"exact original prompt"}]}'
+    request = b'{"messages":[{"role":"user","content":"exact original prompt"}],"tools":[],"chat_template_kwargs":{"enable_thinking":true,"other_setting":42}}'
     try:
         with (
             recording_proxy(
-                f"http://127.0.0.1:{server.server_port}/v1", directory, max_calls=1
+                f"http://127.0.0.1:{server.server_port}/v1",
+                directory,
+                max_calls=1,
+                disable_reasoning=disable_reasoning,
             ) as url,
             httpx.Client() as client,
         ):
@@ -129,8 +183,22 @@ def test_proxy_preserves_requests_streams_and_secrets_and_enforces_budget(
         server.shutdown()
         server.server_close()
         thread.join()
-    assert received == [("Bearer private-test-secret", request)]
-    assert (directory / "0001.request").read_bytes() == request
+    expected = request
+    if disable_reasoning:
+        changed = json.loads(request)
+        changed["chat_template_kwargs"]["enable_thinking"] = False
+        expected = json.dumps(changed).encode()
+        assert (directory / "0001.original-request").read_bytes() == request
+    else:
+        assert not (directory / "0001.original-request").exists()
+    assert received == [("Bearer private-test-secret", expected)]
+    assert (directory / "0001.request").read_bytes() == expected
+    assert (
+        json.loads((directory / "0001.json").read_text())[
+            "reasoning_explicitly_disabled"
+        ]
+        == disable_reasoning
+    )
     assert all(
         b"private-test-secret" not in p.read_bytes() for p in directory.iterdir()
     )
@@ -138,6 +206,9 @@ def test_proxy_preserves_requests_streams_and_secrets_and_enforces_budget(
     assert metrics["model_calls"] == 1
     assert metrics["total_tokens"] == 42
     assert metrics["budget_rejections"] == 1
+    # The recorder verifies actual output, even when a server ignores the flag.
+    assert metrics["responses_with_reasoning"] == 1
+    assert metrics["reasoning_output_characters"] == 5
 
 
 def test_missing_stream_usage_stays_unknown(tmp_path):
@@ -174,6 +245,7 @@ def test_direct_pi_requires_normal_completion_and_uses_stock_tools(
     output.mkdir()
     cfg = DevstillConfig()
     cfg.llm.model = "test-model"
+    monkeypatch.setenv("DEVSTILL_BENCH_TOOL_PATH", "/prepared/python:/prepared/rust")
     monkeypatch.setattr(
         "devstill.pi_runtime.resolve_pi_limits",
         lambda *args: PiResolvedLimits("auto", 8192, 4096, "test"),
@@ -184,6 +256,7 @@ def test_direct_pi_requires_normal_completion_and_uses_stock_tools(
         assert "--extension" not in command
         assert command[-1] == "the original request"
         assert kwargs["cwd"] == repo
+        assert kwargs["env"]["PATH"].startswith("/prepared/python:/prepared/rust:")
         events = [
             {
                 "type": "message_end",

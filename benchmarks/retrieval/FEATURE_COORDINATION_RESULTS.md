@@ -1,5 +1,41 @@
 # Feature coordinator revision: measured progress, parity not achieved
 
+## Current default: Quick first
+
+Feature now submits the original request to the ordinary Quick review. A runnable
+review is saved and executed directly: no coordinator call, rewritten instruction,
+second classification or second retrieval. Only a review containing unresolved
+Search items invokes coordination, capped at three cohesive tasks. Invalid output,
+stale source and coding failures do not silently start another planner.
+
+`.devstill/feature-quick-first-v1` completed all **24 attempts**: 12 existing feature
+cases, one draw per method. Whole-feature success was **5/12 candidate versus 6/12
+frozen Quick**. Behavioral acceptance was 6/12 each; one candidate passed behavior
+but left a later task unfinished and is counted as a workflow failure.
+
+Six requests used Quick directly and six entered coordination. The candidate's
+successful cases were context iterator, digest, bulk environment, platform batch
+and text module. Digest and platform batch completed dependent tasks. On the three
+shared successes, median retrieval-through-acceptance time was **14.00 s candidate
+versus 14.06 s baseline**; review medians were 3.70 s versus 3.61 s. Logged model calls
+across all attempts totaled 108 candidate versus 83 baseline. The fallback still
+has a cost. This one development pass does not prove quality parity or superiority.
+
+The candidate source snapshot and audit are saved in that run directory. Candidate
+and baseline source audits passed. A subsequent UI-only shutdown guard and type
+annotation fix do not change the evaluated retrieval/planning/execution behavior.
+The final suite passed **507 tests, with 1 skipped**; lint and diff checks passed.
+Tests verify identical Quick prompts/plans, saved-review loading via `feature --run`,
+one execution without reclassification, configured checks, and coordinated fallback.
+
+Use `executor.validation_commands` for checks shared by both routes. Direct Quick
+retains its normal execution budget and validation policy; the `feature` policy and
+shared deadline apply when coordination is used. Previously saved feature reviews
+still execute their recorded plan.
+
+## Earlier coordinator-first revision
+
+
 The numeric-reference coordinator failed all 36 feature attempts in the completed
 144-attempt comparison. The revised coordinator completed **4 of 12** feature
 attempts against **6 of 12** for frozen Quick in a new comparison. Three of its

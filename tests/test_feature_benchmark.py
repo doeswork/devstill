@@ -79,7 +79,23 @@ def test_feature_worker_routes_through_coordinator_quick_and_refreshes_private_i
         return results(repo, ["ui.txt"])
 
     retrieve = candidate_query
-    client = FakeClient(json.dumps(proposal_data()))
+    client = FakeClient(
+        json.dumps(
+            {
+                "items": [
+                    {"label": "Read", "target": "seed.py", "reason": "Convention"},
+                    {"label": "Read", "target": "ui.txt", "reason": "UI"},
+                    {"label": "Read", "target": "endpoint.py", "reason": "Endpoint"},
+                    {
+                        "label": "Search",
+                        "target": "service implementation",
+                        "reason": "Needs service context",
+                    },
+                ]
+            }
+        ),
+        json.dumps(proposal_data()),
+    )
     client.config = cfg.llm
     monkeypatch.setattr(
         "devstill.feature_planning.FeatureClient",

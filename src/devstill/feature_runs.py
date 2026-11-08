@@ -23,7 +23,7 @@ from devstill.feature_planning import (
 from devstill.pi_runtime import PiRunner
 from devstill.planning import PlanLabel
 from devstill.quick_tasks import create_quick_draft, run_quick_task
-from devstill.tasks import digest_file, save_task_draft
+from devstill.tasks import TaskDraft, digest_file, save_task_draft
 
 
 class FeaturePiRunner(PiRunner):
@@ -108,6 +108,10 @@ def commands(config, ids):
 
 
 def render_feature_run(state):
+    if state.get("engine") == "quick":
+        from devstill.task_runs import render_task_run
+
+        return render_task_run(state)
     lines = [
         f"# Feature · {state['status']}",
         "",
@@ -149,6 +153,15 @@ def render_feature_run(state):
 def run_feature(
     draft, *, repo, artifact_root, config, retrieve, progress=None, cancelled=None
 ):
+    if isinstance(draft, TaskDraft):
+        return run_quick_task(
+            draft,
+            repo=repo,
+            artifact_root=artifact_root,
+            config=config,
+            progress=progress,
+            cancelled=cancelled,
+        )
     report = progress or (lambda message: None)
     cancelled = cancelled or (lambda: False)
     if not config.llm.enabled or not config.llm.model or not config.executor.enabled:
