@@ -3,7 +3,9 @@
 The goal is native Devstill Quick with at least Pi's coding correctness and lower
 end-to-end task time. Keep comparisons small, frozen and independently checked.
 
-- [Active test plan](TEST_PLAN.md): ten fresh requests, 20 attempts, two short batches;
+- [Active repair diagnostic](QUICK_REPAIR_PLAN.md): bounded protocol/context fixes,
+  a 12-attempt gate, and at most 12 follow-up attempts before any broader run.
+- [Original fresh test plan](TEST_PLAN.md): ten fresh requests, 20 attempts, two short batches;
   fixture preparation, interface tests, correctness/scope/speed gates, and handoff.
 - [Previous diagnostic and fixes](QUICK_CONTEXT_REPAIR_RESULTS.md): constructors, retained checks,
   explicit deliveries; Quick and Pi 4/6 completed on six development cases.
@@ -12,9 +14,13 @@ end-to-end task time. Keep comparisons small, frozen and independently checked.
 - [Runtime usage and limitations](../../MINIMAL_RUNTIME.md): current TUI/headless behavior.
 - [Historical archive](../../archive/README.md): superseded plans, experiments and reports.
 
-Latest run: [focused-context results and failure notes](QUICK_FOCUSED_RESULTS.md):
-Quick and Pi 4/6, Quick 39% lower median paired time on four shared successes.
-Two failures remain; continue small diagnostics.
+Latest: [repair results and schema compatibility finding](QUICK_REPAIR_RESULTS.md).
+The paired gate failed; the final schema fix passed one live format probe and
+offline patch replay. It has not passed a paired coding comparison and was not
+installed. The 24-attempt/probe budget is exhausted; no broad run was started.
+
+Previous: [focused-context results](QUICK_FOCUSED_RESULTS.md): Quick and Pi 4/6
+on six cases, one draw each. Do not pool that run with the new diagnostic.
 
 ## Tools and naming
 

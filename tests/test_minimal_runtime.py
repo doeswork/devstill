@@ -169,8 +169,14 @@ def test_generated_schema_and_prompt_match_hardened_reference():
     assert "python_lines" in editor.SYSTEM
     schema = editor.EditResponse.model_json_schema()
     baseline = reference.EditResponse.model_json_schema()
-    for field in ("edits", "reads", "checks"):
+    for field in ("edits", "reads"):
         assert schema["properties"][field] == baseline["properties"][field]
+    # Read-only requests can omit checks; edit/completion still validates 1..3.
+    assert (
+        schema["properties"]["checks"]["items"]
+        == baseline["properties"]["checks"]["items"]
+    )
+    assert schema["properties"]["checks"]["maxItems"] == 3
     assert "check_repairs" in editor.WireResponse.model_json_schema()["required"]
 
 

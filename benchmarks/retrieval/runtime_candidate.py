@@ -43,4 +43,7 @@ def runtime_worker(args):
         }
         if proposal.get("error"):
             row["error"] = proposal["error"]
+        if proposal.get("execution", {}).get("failure_stage"):
+            row["failure_stage"] = proposal["execution"]["failure_stage"]
+            row["last_error"] = proposal["execution"].get("last_error")
         write(args.output / "result.json", row)

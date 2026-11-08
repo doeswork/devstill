@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import time
+from copy import deepcopy
 from pathlib import Path
 from typing import Annotated
 
@@ -40,9 +41,7 @@ class EditResponse(BaseModel):
     check_repairs: list[CheckRepair] = Field(default_factory=list, max_length=3)
     edits: list[Edit] = Field(max_length=20)
     reads: list[Read] = Field(max_length=4)
-    checks: list[Annotated[list[str], Field(min_length=3)]] = Field(
-        min_length=1, max_length=3
-    )
+    checks: list[Annotated[list[str], Field(min_length=3)]] = Field(max_length=3)
 
 
 class PythonCheck(BaseModel):
@@ -55,20 +54,20 @@ class WireResponse(BaseModel):
     check_repairs: list[CheckRepair] = Field(max_length=3)
     edits: list[Edit] = Field(max_length=20)
     reads: list[Read] = Field(max_length=4)
-    checks: list[PythonCheck] = Field(min_length=1, max_length=3)
+    checks: list[PythonCheck] = Field(max_length=3)
 
 
 def decode_response(raw):
+    if raw.get("reads") and raw.get("edits") == []:
+        # A source request is not a check submission. Draft checks may depend on
+        # the requested source; do not retain, validate or execute them.
+        raw = {**raw, "checks": []}
     if raw.get("checks") and isinstance(raw["checks"][0], dict):
         # Preserve old replay/client inputs; new generations require this field.
         wire = WireResponse.model_validate({"check_repairs": [], **raw}).model_dump()
         commands = []
         for check in wire["checks"]:
             lines = check["python_lines"]
-            if any("\n" in line or "\r" in line for line in lines):
-                raise ValueError(
-                    "Each python_lines entry must contain exactly one source line"
-                )
             commands.append(["python", "-c", "\n".join(lines)])
         wire["checks"] = commands
         raw = wire
@@ -82,7 +81,10 @@ Use old="" only for a nonexistent file. Preserve unrelated behavior and source.
 Reads: {"path":"relative/file.py","start":1,"end":120}; up to 400 lines per read.
 Use the supplied code when sufficient. Request a read only for missing information.
 Checks: {"python_lines":["from package import function", "assert function() == expected"]}.
-Write 1..3 short checks. Each array element is one Python source line, with indentation.
+With edits or completion, write 1..3 short checks. Join python_lines with newlines;
+entries may contain multiple lines. Keep indentation and Python string escapes.
+For reads without edits, use checks=[]; draft checks are ignored. A read consumes
+one response and cannot complete the task.
 Each check must execute assertions or pytest.raises. Test the changed behavior and
 requested preservation. Avoid invented framework setup: call the affected API directly
 using the shown constructor. Prefer simple values and computed expectations over
@@ -110,6 +112,10 @@ def editor_messages(query, records, requirements=None):
             record["code"],
             fence,
         ]
+        if record.get("import_hint"):
+            parts.append(
+                "Local import resolved from package layout: " + record["import_hint"]
+            )
     return [
         {"role": "system", "content": SYSTEM},
         {"role": "user", "content": "\n\n".join(parts)},
@@ -122,7 +128,45 @@ def response_schema(messages):
         # There are no earlier checks to repair on the first response.
         del schema["properties"]["check_repairs"]
         schema["required"].remove("check_repairs")
+    else:
+        # The feedback and schema describe the very same retained check state.
+        # Missing/old feedback never grants permission to retire a check.
+        indices = []
+        if messages[-1]["role"] == "user":
+            try:
+                feedback, _ = json.JSONDecoder().raw_decode(messages[-1]["content"])
+                indices = feedback.get("check_state", {}).get("repairable_indices", [])
+            except (ValueError, TypeError):
+                pass
+        if indices:
+            schema["$defs"]["CheckRepair"]["properties"]["index"]["enum"] = indices
+        else:
+            schema["properties"]["check_repairs"]["maxItems"] = 0
+    # Some generation backends do not combine anyOf alternatives with sibling
+    # constraints. Give each branch the full object shape, not partial property
+    # overrides. Root definitions remain shared to avoid duplicating check types.
+    read_only, completion = [
+        {
+            key: deepcopy(schema[key])
+            for key in ("type", "properties", "required", "additionalProperties")
+        }
+        for _ in range(2)
+    ]
+    read_only["properties"]["edits"]["maxItems"] = 0
+    read_only["properties"]["reads"]["minItems"] = 1
+    read_only["properties"]["checks"]["maxItems"] = 0
+    if "check_repairs" in read_only["properties"]:
+        read_only["properties"]["check_repairs"]["maxItems"] = 0
+    completion["properties"]["checks"]["minItems"] = 1
+    schema["anyOf"] = [read_only, completion]
     return schema
+
+
+def check_state(retained, passed):
+    return {
+        "repairable_indices": [i for i, c in enumerate(retained) if c not in passed],
+        "passing_indices": [i for i, c in enumerate(retained) if c in passed],
+    }
 
 
 def source_path(repo, name):
@@ -235,6 +279,10 @@ def validate_checks(commands):
         ):
             raise ValueError("Use python -c CODE or python -m pytest ARGS")
         if command[:2] == ["python", "-c"]:
+            if len(command[2]) > 24000 or len(command[2].splitlines()) > 120:
+                raise ValueError(
+                    "Each check is limited to 120 source lines and 24000 characters"
+                )
             compile(command[2], "<model-check>", "exec")
             tree = ast.parse(command[2])
             if not has_behavior_check(tree):
@@ -243,7 +291,7 @@ def validate_checks(commands):
                 )
             if any(
                 isinstance(node, ast.Assert) and always_truthy(node.test)
-                for node in ast.walk(ast.parse(command[2]))
+                for node in ast.walk(tree)
             ):
                 raise ValueError(
                     "Check contains an always-true assertion (for example 'or True'). "
@@ -303,53 +351,71 @@ def edit_loop(
         checkpoint()
         messages.append({"role": "assistant", "content": content})
         feedback = {}
+        phase = "response_decoding"
+        response_checks = "rejected"
         try:
             from devstill.agent import extract_json_object
 
             raw = extract_json_object(content)
-            if not raw.get("checks"):
-                raise ValueError(
-                    "Missing behavior checks. Return 1..3 checks using python -c "
-                    "CODE or python -m pytest. No edits from this response were applied."
-                )
             action = decode_response(raw)
+            phase = "check_validation"
+            reading_only = bool(action["reads"]) and not action["edits"]
             # Check command shape and Python syntax before applying any edits.
-            validate_checks(action["checks"])
+            if not reading_only:
+                validate_checks(action["checks"])
             repairs = action["check_repairs"]
             indices = {r["index"] for r in repairs}
-            if any(i >= len(retained_checks) for i in indices):
-                raise ValueError(
-                    "check_repairs index does not refer to a retained check"
-                )
-            if repairs and not attempt:
-                raise ValueError("There are no earlier checks to repair")
-            if any(retained_checks[i] in passed_checks for i in indices):
+            state = check_state(retained_checks, passed_checks)
+            if indices.intersection(state["passing_indices"]):
                 raise ValueError("A previously passing check must be preserved")
-            # Replacements are explicit and recorded, never inferred from omission.
-            retained_checks = [
-                c for i, c in enumerate(retained_checks) if i not in indices
-            ]
-            for command in action["checks"]:
-                if command not in retained_checks:
-                    retained_checks.append(command)
+            if not indices.issubset(state["repairable_indices"]):
+                raise ValueError(
+                    "check_repairs index does not refer to a retained, nonpassing check"
+                )
+            if reading_only and repairs:
+                raise ValueError("A read-only response cannot replace retained checks")
+            if reading_only:
+                response_checks = "ignored_draft"
+            else:
+                # Replacements are explicit, never inferred from omission.
+                retained_checks = [
+                    c for i, c in enumerate(retained_checks) if i not in indices
+                ]
+                for command in action["checks"]:
+                    if command not in retained_checks:
+                        retained_checks.append(command)
+                response_checks = "retained"
+            phase = "source_application"
             for item in action["reads"] + action["edits"]:
                 path_guard(item["path"])
             if action.get("edits"):
                 changed.extend(apply_edits(repo, action["edits"]))
             if action.get("reads"):
+                phase = "source_reads"
                 # Repair must see the current source after this response's edits.
                 feedback["reads"] = read_sources(repo, action["reads"])
-            if changed:
+            if reading_only:
+                # Even after earlier edits, a request for information is not a
+                # completion claim and must not succeed on previously run checks.
+                feedback["failure_stage"] = "source_reads"
+            elif changed:
                 feedback["checks"] = []
-                for command in [*retained_checks, *required_checks]:
-                    results = (check_runner or run_checks)(repo, [command], deadline)
-                    feedback["checks"].extend(results)
-                    if (
-                        results
-                        and all(r["returncode"] == 0 for r in results)
-                        and command not in passed_checks
-                    ):
-                        passed_checks.append(command)
+                for phase, commands in (
+                    ("check_execution", retained_checks),
+                    ("delivery_verification", required_checks),
+                ):
+                    for command in commands:
+                        results = (check_runner or run_checks)(
+                            repo, [command], deadline
+                        )
+                        if not results:
+                            raise ValueError("Check runner returned no result")
+                        feedback["checks"].extend(results)
+                        if all(r["returncode"] == 0 for r in results):
+                            if command not in passed_checks:
+                                passed_checks.append(command)
+                        else:
+                            feedback.setdefault("failure_stage", phase)
                 if all(c["returncode"] == 0 for c in feedback["checks"]):
                     write(
                         output / "editor-trace.json",
@@ -377,34 +443,56 @@ def edit_loop(
         ) as exc:
             feedback["error"] = str(exc)
             feedback["error_type"] = type(exc).__name__
+            feedback["failure_stage"] = phase
         feedback["retained_checks"] = retained_checks
-        feedback["check_repair_instruction"] = (
-            "Omitted earlier checks will run again. If an earlier check is incorrect, "
-            'include check_repairs: [{"index":0,"reason":"Explain the incorrect API or expectation"}]. '
-            "Indices refer to retained_checks. Passing checks cannot be retired. "
-            "Never retire a check for missing requested behavior."
-        )
+        feedback["check_state"] = check_state(retained_checks, passed_checks)
+        feedback["response_checks"] = response_checks
+        if feedback["check_state"]["repairable_indices"]:
+            feedback["check_repair_instruction"] = (
+                "Omitted earlier checks will run again. Only repairable_indices may "
+                "be replaced via check_repairs, with a reason explaining the incorrect "
+                "API or expectation. Indices refer to retained_checks. Never retire a "
+                "check for missing requested behavior. Passing and runtime delivery "
+                "checks cannot be retired."
+            )
+        else:
+            feedback["check_repair_instruction"] = (
+                "Use check_repairs: []. There are no retained nonpassing checks to "
+                "replace. Passing and runtime delivery checks cannot be retired."
+            )
         feedback["required_deliveries"] = requirements or {}
+        feedback["original_request"] = query
         feedback["changed_files"] = sorted(set(changed))
         feedback["edits_applied"] = bool(changed)
         if changed:
             feedback["next_action"] = (
-                "The listed edits are already applied. Return checks-only (edits=[], "
-                "reads=[]) if the check is missing or wrong. Include needed imports "
-                "and test public behavior. A missing requested export or behavior requires "
-                "an implementation edit, not removal of its check. Preserve every "
-                "original requirement. Edit current source if behavior is wrong."
+                "The listed edits are already applied. If a failing assertion tests "
+                "the original request or preserved behavior, fix the implementation, "
+                "not the assertion. Only replace a check whose setup or expectation "
+                "is incorrect for that request. For a check-only repair use edits=[], "
+                "reads=[] and keep the same test inputs and working assertions. "
+                "Do not expand the check suite with unrelated APIs or new cases. "
+                "Preserve every original requirement and edit current source."
             )
         else:
             feedback["next_action"] = (
-                "No edits have been applied. Use the feedback or returned source to "
-                "return exact edits plus at least one executable behavior check."
+                (
+                    "No checks or edits were accepted. "
+                    if not retained_checks
+                    else "No edits have been applied. "
+                )
+                + "Submit a corrected response using the feedback or returned source: "
+                "exact edits plus at least one executable behavior check."
             )
+        feedback["remaining_responses"] = 1 - attempt
+        feedback["completion_instruction"] = (
+            "To complete, include 1..3 checks as python_lines arrays and any needed "
+            "edits. Another read-only response cannot complete the task."
+        )
         messages.append(
             {
                 "role": "user",
-                "content": json.dumps(feedback)
-                + "\nYou must include 1..3 checks as python_lines arrays, one source line per item. This is your final attempt.",
+                "content": json.dumps(feedback),
             }
         )
         write(output / "editor-trace.json", messages)
@@ -413,4 +501,6 @@ def edit_loop(
         "model_calls": 2,
         "changed_files": sorted(set(changed)),
         "error": "No checked edit completed within two generation calls",
+        "failure_stage": feedback.get("failure_stage"),
+        "last_error": feedback.get("error"),
     }

@@ -638,6 +638,8 @@ def run(args):
                             total_seconds=row["coding_seconds"] + validation,
                             end_to_end_seconds=elapsed + validation,
                         )
+                        if not passed and not row.get("error"):
+                            row.setdefault("failure_stage", "independent_acceptance")
                         subprocess.run(
                             ["git", "add", "-N", "--", ".", ":!.devstill"],
                             cwd=repo,

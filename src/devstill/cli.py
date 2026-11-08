@@ -12,7 +12,7 @@ from rich.progress import (
     SpinnerColumn,
     TaskProgressColumn,
     TextColumn,
-    TimeRemainingColumn,
+    TimeElapsedColumn,
 )
 
 from devstill import __version__
@@ -811,7 +811,8 @@ def index_command(rebuild: bool, verbose: bool, as_json: bool) -> int:
         TextColumn("{task.description}"),
         BarColumn(),
         TaskProgressColumn(),
-        TimeRemainingColumn(),
+        TextColumn("[dim]stage time[/dim]"),
+        TimeElapsedColumn(),
         TextColumn("[dim]{task.fields[files]}[/dim]"),
         console=diagnostic_console,
         transient=True,
@@ -823,7 +824,10 @@ def index_command(rebuild: bool, verbose: bool, as_json: bool) -> int:
         files="",
     )
 
+    previous_phase = None
+
     def report(event: IndexProgress) -> None:
+        nonlocal previous_phase
         total = event.total if event.total is not None and event.total > 0 else None
         completed = event.current or 0
         if total is not None:
@@ -836,19 +840,37 @@ def index_command(rebuild: bool, verbose: bool, as_json: bool) -> int:
                 f"{event.files.unchanged} unchanged · "
                 f"{event.files.parsed} parsed"
             )
-        progress.update(
-            task,
-            description=event.message,
-            total=total,
-            completed=completed,
-            stage=event.stage.upper(),
-            files=files,
-        )
+        fields = {
+            "description": event.message,
+            "stage": "SAVING" if event.stage == "persistence" else event.stage.upper(),
+            "files": files,
+        }
+        phase = (event.stage, total)
+        if phase != previous_phase:
+            # reset() clears a previous numeric total for indeterminate work;
+            # update(total=None) would keep the old total and show a false %.
+            # It also refreshes immediately before a blocking database call.
+            progress.reset(task, total=total, completed=completed, **fields)
+        else:
+            progress.update(
+                task,
+                completed=completed,
+                refresh=(
+                    event.current in {None, 0}
+                    or (event.total is not None and event.current == event.total)
+                ),
+                **fields,
+            )
+        previous_phase = phase
 
     try:
         embedder = getattr(indexer, "embedder", None)
         device = getattr(embedder, "device", config.embedding.device)
         diagnostic_console.print(f"Embedding device: [bold]{device}[/bold]")
+        diagnostic_console.print(
+            "[dim]Stages: scan → parse → embed → save → finalize. "
+            "Percentages apply to the current stage.[/dim]"
+        )
         with progress:
             summary = indexer.run(
                 rebuild=rebuild,

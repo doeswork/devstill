@@ -1,16 +1,17 @@
 # Minimal runtime: implementation and current status
 
-**Next validation:** [active test plan](benchmarks/retrieval/TEST_PLAN.md). Historical designs and reports are in the [archive](archive/README.md).
+**Validation:** [bounded repair plan](benchmarks/retrieval/QUICK_REPAIR_PLAN.md). Historical designs and reports are in the [archive](archive/README.md).
 
-**Latest:** [constructor context and delivery repairs](benchmarks/retrieval/QUICK_CONTEXT_REPAIR_RESULTS.md).
-The short diagnostic completed 4/6 correctly for both Quick and Pi. Quick recovered
-three known failures, but generated checks still fail on two converter requests.
+**Latest:** [repair results and schema compatibility](benchmarks/retrieval/QUICK_REPAIR_RESULTS.md).
+The paired diagnostic failed the correctness gate. The final schema correction
+passed one live format probe and offline patch replay, not a paired comparison.
+The installed copy was not updated; no broader campaign was started.
 The earlier [fresh comparison](benchmarks/retrieval/NATIVE_QUICK_FRESH_RESULTS.md)
 failed the correctness gate; the original 10/10 known-case result is historical evidence.
 
 Devstill now has a shared native Quick coding runtime for CLI/headless and TUI.
 It retains mandatory checks, syntax/tautology guards and the two-generation limit.
-Checks now use source-line arrays, and retrieval includes complete small files. It does not generate a
+Checks use arrays of Python source strings, and retrieval includes complete small files. It does not generate a
 Task Plan or run Pi. Quick defaults to this runtime. The separate legacy feature path remains available.
 Default selection is not a claim of general benchmark superiority.
 
@@ -60,10 +61,13 @@ Ctrl+C stops the process. JSON stdout is separate from library progress on stder
 
 - `src/devstill/runtime/editor.py`: extracted hardened algorithm; strict local
   schema validation, checks required before any write, exact replacements and
-  create, bounded reads, checks-only repair, two responses maximum.
+  create, bounded reads, checks-only repair, two responses maximum. Read-only
+  responses may omit checks; multiline check strings preserve literal escapes.
+  Repair indices are limited to retained nonpassing checks.
 - `service.py`: UI-independent warm session, incremental index reconciliation,
   context packing against editor messages, source verification, prepare/load/apply.
-- `context.py`: bounded imports and constructor/inheritance context for Python.
+- `context.py`: bounded imports and constructor/inheritance context for Python,
+  including relevant type-checking imports and verified local dependency signatures.
 - `requirements.py`: conservative explicit-file/module/export recognition and
   immutable delivery checks. Checks are retained across repair unless explicitly
   replaced with a reason; previously passing checks cannot be retired.
@@ -116,8 +120,9 @@ This is an experimental usable runtime, not completion of every package in
 
 ## Validation and live comparison
 
-The final full suite passed **550 tests, 1 skipped**. Ruff, diff whitespace checks
-and wheel packaging/console-entry-point verification also passed. Coverage includes
+The latest full suite passed **596 tests, 1 skipped**. Ruff and diff whitespace
+checks passed. Wheel packaging/console-entry-point verification passed during the
+original cutover; this repair did not reinstall the package. Coverage includes
 create/CRLF, real subprocess deadlines, saved review/restart/application, stale
 source/digest rejection, check mutation rejection, checks-only repair, two-call
 limit, simulated partial-write rollback, cancellation, TUI patch approval and

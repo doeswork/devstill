@@ -3,7 +3,7 @@ devstill
 Native Quick runtime: [usage, implementation status and measured limits](MINIMAL_RUNTIME.md). Quick now uses Devstill’s own editor in TUI and headless mode; Pi is a comparison baseline and explicit legacy option.
 
 Evaluation: [active native Quick test plan](benchmarks/retrieval/TEST_PLAN.md) and
-[latest measured results](benchmarks/retrieval/QUICK_CONTEXT_REPAIR_RESULTS.md). Superseded
+[latest measured results](benchmarks/retrieval/QUICK_REPAIR_RESULTS.md). Superseded
 plans and reports are preserved in the [historical archive](archive/README.md).
 
 `devstill` is a standalone, local-first repository-intelligence TUI for developers and AI coding agents.
