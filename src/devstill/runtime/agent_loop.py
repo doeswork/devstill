@@ -366,7 +366,7 @@ def agent_loop(
     requirements=None,
     required_checks=(),
     check_runner=None,
-    max_turns=12,
+    max_turns=20,
     bash_timeout=30.0,
     report=lambda message: None,
     before_tools=lambda: None,
