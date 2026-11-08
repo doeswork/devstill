@@ -36,7 +36,8 @@ from devstill.search import HybridSearch
 
 DOC_SUFFIXES = {".rst", ".md", ".markdown", ".txt", ".adoc"}
 DOC_WORDS = re.compile(
-    r"\b(docs?|documentation|readme|changelog|changes|release notes|\.rst|\.md)\b",
+    r"\b(docs?|documentation|readme|changelog|changes|release notes|sphinx|autodoc"
+    r"|api reference|\.rst|\.md)\b",
     re.IGNORECASE,
 )
 
@@ -53,6 +54,49 @@ def code_first(results, query):
         )
 
     return [r for r in results if not prose(r)] + [r for r in results if prose(r)]
+
+
+PATH_TOKEN = re.compile(r"(?<![\w./-])((?:[\w.-]+/)+[\w.-]+\.\w+|[\w-]+\.(?:py|toml|cfg|ini|rst|md|txt|json|yaml|yml))(?![\w/])")
+
+
+def named_file_records(repo, config, query, edge_lines=40):
+    """Records for repository files the request names explicitly.
+
+    Small files are shown whole; larger ones show their head (imports, setup)
+    and their end, where new tests or entries are usually appended.
+    """
+    records = []
+    for name in dict.fromkeys(PATH_TOKEN.findall(query)):
+        name = name.strip("`'\".,")
+        try:
+            path = workspace.guard(repo, config, name)
+        except (ValueError, OSError):
+            continue
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text()
+        except (OSError, UnicodeDecodeError):
+            continue
+        lines = text.split("\n")
+        if lines and lines[-1] == "":
+            lines = lines[:-1]
+        total = len(lines)
+        if len(text) <= 6000 or total <= edge_lines * 2:
+            spans = [(1, total)]
+        else:
+            spans = [(1, edge_lines), (total - edge_lines + 1, total)]
+        for start, end in spans:
+            records.append(
+                {
+                    "path": name,
+                    "lines": [start, end],
+                    "symbol": name,
+                    "kind": "named_file",
+                    "code": "\n".join(lines[start - 1 : end]),
+                }
+            )
+    return records
 
 
 def alternates(ranked, chosen, query, files=2):
@@ -316,11 +360,14 @@ class RuntimeSession:
                     raise ValueError(
                         f"Stale indexed source: {result.chunk.path}. Run devstill index."
                     )
-            if not selected:
+            named = named_file_records(self.repo, cfg, query) if lexical_first else []
+            if not selected and not named:
                 raise ValueError(
                     "No usable source evidence; index the repository or specify a source symbol."
                 )
-            return records_for(selected)
+            records = records_for(selected) if selected else []
+            shown = {r["path"] for r in records}
+            return [r for r in named if r["path"] not in shown] + records
         finally:
             search.close()
 

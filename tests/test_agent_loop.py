@@ -582,3 +582,25 @@ def test_loop_feeds_regressions_back_before_accepting_done(tested):
         and "test_neg" in feedback
         and "test_known_bad" not in feedback
     )
+
+
+def test_files_named_in_the_request_are_shown_head_and_tail(tmp_path):
+    from devstill.runtime.service import code_first, named_file_records
+
+    (tmp_path / "tests").mkdir()
+    body = "import pytest\n" + "".join(
+        f"\n\ndef test_case_number_{i}():\n    assert {i} == {i}, 'case {i}'\n" for i in range(200)
+    )
+    (tmp_path / "tests" / "test_big.py").write_text(body)
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    config = DevstillConfig()
+    records = named_file_records(
+        tmp_path, config, "Add test_new to tests/test_big.py and bump pyproject.toml; os.path.join stays"
+    )
+    paths = [(r["path"], r["lines"]) for r in records]
+    total = len(body.split("\n")) - 1
+    assert paths[0] == ("tests/test_big.py", [1, 40])
+    assert paths[1] == ("tests/test_big.py", [total - 39, total])
+    assert paths[2] == ("pyproject.toml", [1, 2])
+    assert records[1]["code"].endswith("assert 199 == 199, 'case 199'")
+    assert code_first([], "Add it to the Sphinx API reference") == []
