@@ -1,0 +1,339 @@
+[
+  {
+    "id": "xc02",
+    "corpus": "click",
+    "workload": "small",
+    "category": "parser error suggestions",
+    "family": "src/click/parser.py",
+    "query": "When someone mistypes a long option, the 'No such option' error suggests similar option names, but it also suggests options declared with hidden=True (typing --verbatim offers a hidden --verbatim-dump), which exposes options we deliberately keep out of --help. Never suggest hidden options, including either switch of a hidden boolean flag such as --debug/--no-debug. Visible options must still be suggested as before, and hidden options must keep working when typed correctly.",
+    "checks": "import click\nfrom click.testing import CliRunner\n\n\n@click.command()\n@click.option(\"--verbose\", is_flag=True)\n@click.option(\"--verbatim-dump\", is_flag=True, hidden=True)\n@click.option(\"--debug/--no-debug\", hidden=True)\n@click.option(\"--color\")\n@click.option(\"--token\", hidden=True)\ndef cli(verbose, verbatim_dump, debug, color, token):\n    click.echo(f\"v={verbose} d={verbatim_dump} g={debug} c={color} t={token}\")\n\n\nrunner = CliRunner()\n\n\ndef unknown(args):\n    result = runner.invoke(cli, args)\n    assert result.exit_code == 2, (args, result.output)\n    echoed = f\"No such option: {args[0]}\"\n    assert echoed in result.output, (args, result.output)\n    # Drop the echoed typo itself so only suggestions are inspected.\n    return result.output.replace(echoed, \"\")\n\n\nout = unknown([\"--verbatim\"])\nassert \"--verbose\" in out, out\nassert \"--verbatim-dump\" not in out, out\n\nfor typo in (\"--debu\", \"--no-debu\", \"--debugg\"):\n    out = unknown([typo])\n    assert \"--debug\" not in out and \"--no-debug\" not in out, out\n\n# Hidden options that take a value must not be suggested either.\nout = unknown([\"--tokn\", \"abc\"])\nassert \"--token\" not in out, out\n\nout = unknown([\"--colr\", \"red\"])\nassert \"--color\" in out, out\n\n# Hidden options keep working when typed correctly.\nresult = runner.invoke(\n    cli, [\"--verbatim-dump\", \"--no-debug\", \"--color\", \"red\", \"--token\", \"abc\"]\n)\nassert result.exit_code == 0, result.output\nassert result.output == \"v=False d=True g=False c=red t=abc\\n\", result.output\nresult = runner.invoke(cli, [\"--debug\"])\nassert result.exit_code == 0, result.output\nassert result.output == \"v=False d=False g=True c=None t=None\\n\", result.output",
+    "edits": [
+      {
+        "path": "src/click/parser.py",
+        "old": "            possibilities = get_close_matches(opt, self._long_opt)\n",
+        "new": "            # Never reveal hidden options through suggestions.\n            visible = [\n                name\n                for name, option in self._long_opt.items()\n                if not getattr(option.obj, \"hidden\", False)\n            ]\n            possibilities = get_close_matches(opt, visible)\n"
+      }
+    ],
+    "allowed_change_areas": [
+      "src/click/parser.py",
+      "src/click/core.py",
+      "src/click/exceptions.py"
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh holdout case authored and adversarially reviewed by independent subagents on 2026-11-08; held out until the final evaluation."
+  },
+  {
+    "id": "xc04",
+    "corpus": "click",
+    "workload": "small",
+    "category": "usage error help hint",
+    "family": "src/click/exceptions.py",
+    "query": "UsageError.show builds its \"Try '<command> <help option>' for help.\" hint from the first configured help option name even when the command defines its own option with that name. With help_option_names=['-h', '--help'] on a group and a subcommand serve that declares -h/--host, errors in serve say \"Try 'cli serve -h' for help.\" although -h is the host option there. Use the first configured help option name that still works as the help option for that command (--help in this example); only that command's own options shadow a name, not a parent group's. When no name is shadowed the hint must stay exactly as it is today, and when no help name is left the hint must still be omitted.",
+    "checks": "import os\nimport subprocess\nimport sys\n\nSCENARIOS = r'''\nimport click\nfrom click.testing import CliRunner\n\n\n@click.group(context_settings={\"help_option_names\": [\"-h\", \"--help\"]})\ndef cli():\n    pass\n\n\n@cli.command()\n@click.option(\"-h\", \"--host\", required=True)\n@click.option(\"--port\", type=int)\ndef serve(host, port):\n    click.echo(f\"{host}:{port}\")\n\n\n@cli.command()\n@click.option(\"--port\", type=int)\ndef status(port):\n    click.echo(f\"status {port}\")\n\n\n@click.command(context_settings={\"help_option_names\": [\"-h\", \"--usage\", \"--help\"]})\n@click.option(\"-h\", \"--host\")\n@click.option(\"--port\", type=int)\ndef three(host, port):\n    pass\n\n\n@click.command(context_settings={\"help_option_names\": [\"-h\"]})\n@click.option(\"-h\", \"--host\")\n@click.option(\"--port\", type=int)\ndef solo(host, port):\n    pass\n\n\n@click.group(context_settings={\"help_option_names\": [\"-h\", \"--help\"]})\n@click.option(\"-h\", \"--host\")\ndef app(host):\n    pass\n\n\n@app.command()\n@click.option(\"--port\", type=int)\ndef sub(port):\n    click.echo(f\"sub {port}\")\n\n\nrunner = CliRunner()\n\n\ndef error_lines(cmd, args):\n    result = runner.invoke(cmd, args)\n    assert result.exit_code == 2, (args, result.exit_code, result.output)\n    return result.output.splitlines()\n\n\ndef hints(out):\n    return [line for line in out if line.startswith(\"Try \")]\n\n\n# The shadowed -h must not be offered; --help is the next configured name.\nfor args in ([\"serve\", \"--port\", \"x\", \"-h\", \"a\"], [\"serve\"]):\n    out = error_lines(cli, args)\n    assert hints(out) == [\"Try 'cli serve --help' for help.\"], out\nresult = runner.invoke(cli, [\"serve\", \"--help\"])\nassert result.exit_code == 0 and \"Usage: cli serve\" in result.output, result.output\n\n# First configured name that still works, in configured order.\nout = error_lines(three, [\"--port\", \"x\"])\nassert hints(out) == [\"Try 'three --usage' for help.\"], out\n\n# Nothing shadowed: hint unchanged (first configured name).\nout = error_lines(cli, [\"status\", \"--port\", \"x\"])\nassert hints(out) == [\"Try 'cli status -h' for help.\"], out\nout = error_lines(cli, [\"nope\"])\nassert hints(out) == [\"Try 'cli -h' for help.\"], out\n\n# A group's own -h/--host shadows -h for the group's errors, but not for its\n# subcommand, where -h is still the help option (hint unchanged there).\nout = error_lines(app, [\"nope\"])\nassert hints(out) == [\"Try 'app --help' for help.\"], out\nout = error_lines(app, [\"sub\", \"--port\", \"x\"])\nassert hints(out) == [\"Try 'app sub -h' for help.\"], out\nresult = runner.invoke(app, [\"sub\", \"-h\"])\nassert result.exit_code == 0 and \"Usage: app sub\" in result.output, result.output\n\n# No help option left at all: the error is shown without any hint.\nout = error_lines(solo, [\"--port\", \"x\"])\nassert hints(out) == [], out\nassert any(line.startswith(\"Error:\") for line in out), out\n'''\n\n# Help option names are kept in sets internally; run under fixed hash seeds so\n# any dependence on set iteration order is caught deterministically.\nfor seed in range(6):\n    proc = subprocess.run(\n        [sys.executable, \"-c\", SCENARIOS],\n        env=dict(os.environ, PYTHONHASHSEED=str(seed)),\n        capture_output=True,\n        text=True,\n        timeout=60,\n    )\n    assert proc.returncode == 0, (seed, proc.stdout, proc.stderr)",
+    "edits": [
+      {
+        "path": "src/click/exceptions.py",
+        "old": "            hint = _(\"Try '{command} {option}' for help.\").format(\n                command=self.ctx.command_path, option=self.ctx.help_option_names[0]\n            )\n",
+        "new": "            # Skip help names shadowed by the command's own options,\n            # keeping the configured order.\n            usable = self.ctx.command.get_help_option_names(self.ctx)\n            option = next(\n                (n for n in self.ctx.help_option_names if n in usable),\n                self.ctx.help_option_names[0],\n            )\n            hint = _(\"Try '{command} {option}' for help.\").format(\n                command=self.ctx.command_path, option=option\n            )\n"
+      }
+    ],
+    "allowed_change_areas": [
+      "src/click/exceptions.py",
+      "src/click/core.py"
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh holdout case authored and adversarially reviewed by independent subagents on 2026-11-08; held out until the final evaluation."
+  },
+  {
+    "id": "xc06",
+    "corpus": "click",
+    "workload": "small",
+    "category": "terminal styling",
+    "family": "src/click/termui.py",
+    "query": "click.style() silently drops 256-color index 0: style('x', fg=0) and style('x', bg=0) return the text with no color code at all, while every other index works. Make 0 behave like any other 256-color index for both fg and bg (secho should follow). Omitting fg/bg or passing None must still add no color code, and named colors, other integer indexes, RGB tuples and the reset handling must produce exactly the same output as now.",
+    "checks": "import io\n\nimport click\n\nE = \"\\x1b[\"\nR = \"\\x1b[0m\"\n\n# New behavior: 256-color index 0 is emitted like any other index.\nassert click.style(\"x\", fg=0) == E + \"38;5;0mx\" + R, repr(click.style(\"x\", fg=0))\nassert click.style(\"x\", bg=0) == E + \"48;5;0mx\" + R, repr(click.style(\"x\", bg=0))\nassert click.style(\"x\", fg=0, bg=0) == E + \"38;5;0m\" + E + \"48;5;0mx\" + R\nassert click.style(\"x\", fg=0, bold=True, reset=False) == E + \"38;5;0m\" + E + \"1mx\"\nassert click.style(\"x\", fg=\"red\", bg=0) == E + \"31m\" + E + \"48;5;0mx\" + R\nassert click.style(\"x\", fg=0, bg=\"white\") == E + \"38;5;0m\" + E + \"47mx\" + R\n\n# secho follows style.\nbuf = io.StringIO()\nclick.secho(\"hi\", file=buf, fg=0, bg=0, color=True)\nassert buf.getvalue() == E + \"38;5;0m\" + E + \"48;5;0mhi\" + R + \"\\n\", repr(buf.getvalue())\n\n# Preserved: None / omitted means no color code at all.\nassert click.style(\"x\") == \"x\" + R\nassert click.style(\"x\", fg=None, bg=None) == \"x\" + R\nassert click.style(\"x\", reset=False) == \"x\"\nassert click.style(\"x\", fg=None, bold=True) == E + \"1mx\" + R\n\n# Preserved: named colors, other indexes, RGB tuples, reset handling.\nassert click.style(\"x\", fg=\"black\") == E + \"30mx\" + R\nassert click.style(\"x\", fg=\"red\", bg=\"green\") == E + \"31m\" + E + \"42mx\" + R\nassert click.style(\"x\", fg=\"bright_white\") == E + \"97mx\" + R\nassert click.style(\"x\", fg=196) == E + \"38;5;196mx\" + R\nassert click.style(\"x\", bg=91) == E + \"48;5;91mx\" + R\nassert click.style(\"x\", fg=(0, 0, 0)) == E + \"38;2;0;0;0mx\" + R\nassert click.style(\"x\", bg=(135, 0, 175)) == E + \"48;2;135;0;175mx\" + R\nassert click.style(\"x\", fg=\"black\", reset=False) == E + \"30mx\"",
+    "edits": [
+      {
+        "path": "src/click/termui.py",
+        "old": "    if fg:\n        try:",
+        "new": "    if fg is not None:\n        try:"
+      },
+      {
+        "path": "src/click/termui.py",
+        "old": "    if bg:\n        try:",
+        "new": "    if bg is not None:\n        try:"
+      }
+    ],
+    "allowed_change_areas": [
+      "src/click/termui.py"
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh holdout case authored and adversarially reviewed by independent subagents on 2026-11-08; held out until the final evaluation."
+  },
+  {
+    "id": "xc08",
+    "corpus": "click",
+    "workload": "small",
+    "category": "utility feature",
+    "family": "src/click/utils.py",
+    "query": "Add an optional create keyword argument to click.get_app_dir, defaulting to False. With create=True it returns the same path as without it, and that directory must exist afterwards whichever branch produced it (Windows, macOS, XDG or force_posix): create it together with any missing parent directories, and if it already exists that's fine and its contents must be left alone. With the default, get_app_dir must return exactly the same paths as now without touching the filesystem, and the existing roaming/force_posix arguments, also when passed positionally, keep working.",
+    "checks": "import os\nimport sys\nimport tempfile\n\nimport click\nimport click._compat\nimport click.utils\n\n\ndef snapshot(root):\n    return sorted(\n        os.path.relpath(os.path.join(d, n), root)\n        for d, dirs, files in os.walk(root)\n        for n in dirs + files\n    )\n\n\nwith tempfile.TemporaryDirectory() as tmp:\n    home = os.path.join(tmp, \"home\")\n    os.mkdir(home)\n    os.environ[\"HOME\"] = home\n    xdg = os.path.join(tmp, \"xdg\", \"config\")  # parents do not exist yet\n    os.environ[\"XDG_CONFIG_HOME\"] = xdg\n\n    before = snapshot(tmp)\n\n    # Preserved: default calls return the same paths and create nothing.\n    xdg_dir = os.path.join(xdg, \"foo-bar\")\n    posix_dir = os.path.join(home, \".foo-bar\")\n    assert click.get_app_dir(\"Foo Bar\") == xdg_dir\n    assert click.get_app_dir(\"Foo Bar\", roaming=False) == xdg_dir\n    assert click.get_app_dir(\"Foo Bar\", force_posix=True) == posix_dir\n    assert click.get_app_dir(\"Foo Bar\", True, True) == posix_dir\n    assert click.get_app_dir(\"Foo Bar\", create=False) == xdg_dir\n    assert snapshot(tmp) == before, snapshot(tmp)\n\n    # New behavior: create=True returns the same path and makes it, with parents.\n    got = click.get_app_dir(\"Foo Bar\", create=True)\n    assert got == xdg_dir, got\n    assert os.path.isdir(xdg_dir)\n\n    # Already existing is fine; existing contents are left alone.\n    marker = os.path.join(xdg_dir, \"config.ini\")\n    with open(marker, \"w\") as f:\n        f.write(\"keep\")\n    assert click.get_app_dir(\"Foo Bar\", create=True) == xdg_dir\n    with open(marker) as f:\n        assert f.read() == \"keep\"\n\n    # force_posix path is created too.\n    got = click.get_app_dir(\"Foo Bar\", force_posix=True, create=True)\n    assert got == posix_dir and os.path.isdir(posix_dir), got\n\n    # Default stays side-effect free even after create=True was used.\n    other = os.path.join(xdg, \"other-app\")\n    assert click.get_app_dir(\"Other App\") == other\n    assert not os.path.exists(other)\n\n    # Without XDG_CONFIG_HOME, ~/.config/<name> is returned and created.\n    del os.environ[\"XDG_CONFIG_HOME\"]\n    third = os.path.join(home, \".config\", \"third-tool\")\n    assert click.get_app_dir(\"Third Tool\") == third\n    assert not os.path.exists(os.path.join(home, \".config\"))\n    assert click.get_app_dir(\"Third Tool\", create=True) == third\n    assert os.path.isdir(third)\n\n    # Windows branch (simulated): roaming still picks APPDATA vs LOCALAPPDATA.\n    roam = os.path.join(tmp, \"win\", \"Roaming\")\n    local = os.path.join(tmp, \"win\", \"Local\")\n    os.environ[\"APPDATA\"] = roam\n    os.environ[\"LOCALAPPDATA\"] = local\n    saved_win = click.utils.WIN, click._compat.WIN\n    click.utils.WIN = click._compat.WIN = True\n    try:\n        before = snapshot(tmp)\n        assert click.get_app_dir(\"Foo Bar\") == os.path.join(roam, \"Foo Bar\")\n        assert click.get_app_dir(\"Foo Bar\", roaming=False) == os.path.join(local, \"Foo Bar\")\n        assert click.get_app_dir(\"Foo Bar\", False) == os.path.join(local, \"Foo Bar\")\n        assert snapshot(tmp) == before, snapshot(tmp)\n        got = click.get_app_dir(\"Foo Bar\", roaming=False, create=True)\n        assert got == os.path.join(local, \"Foo Bar\") and os.path.isdir(got), got\n        got = click.get_app_dir(\"Foo Bar\", create=True)\n        assert got == os.path.join(roam, \"Foo Bar\") and os.path.isdir(got), got\n    finally:\n        click.utils.WIN, click._compat.WIN = saved_win\n\n    # macOS branch (simulated).\n    mac = os.path.join(home, \"Library\", \"Application Support\", \"Foo Bar\")\n    saved_platform = sys.platform\n    sys.platform = \"darwin\"\n    try:\n        before = snapshot(tmp)\n        assert click.get_app_dir(\"Foo Bar\") == mac\n        assert snapshot(tmp) == before, snapshot(tmp)\n        got = click.get_app_dir(\"Foo Bar\", create=True)\n        assert got == mac and os.path.isdir(mac), got\n    finally:\n        sys.platform = saved_platform",
+    "edits": [
+      {
+        "path": "src/click/utils.py",
+        "old": "def get_app_dir(app_name: str, roaming: bool = True, force_posix: bool = False) -> str:\n",
+        "new": "def get_app_dir(\n    app_name: str, roaming: bool = True, force_posix: bool = False, create: bool = False\n) -> str:\n"
+      },
+      {
+        "path": "src/click/utils.py",
+        "old": "                        application support folder.\n    \"\"\"\n",
+        "new": "                        application support folder.\n    :param create: if this is set to `True` the folder and any missing\n                   parent folders are created if they do not exist.\n    \"\"\"\n    path = _get_app_dir(app_name, roaming, force_posix)\n    if create:\n        os.makedirs(path, exist_ok=True)\n    return path\n\n\ndef _get_app_dir(app_name: str, roaming: bool, force_posix: bool) -> str:\n"
+      }
+    ],
+    "allowed_change_areas": [
+      "src/click/utils.py"
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh holdout case authored and adversarially reviewed by independent subagents on 2026-11-08; held out until the final evaluation."
+  },
+  {
+    "id": "xc10",
+    "corpus": "click",
+    "workload": "small",
+    "category": "help-formatting",
+    "family": "src/click/formatting.py",
+    "query": "Help pages cap the option/command name column at 30 characters, so long option names push their help text onto the next line. Make the cap configurable: give click.HelpFormatter a col_max constructor argument (default 30) that write_dl uses whenever it is not passed an explicit col_max, and add a help_col_max context setting (so context_settings={'help_col_max': 40} works) that Context.make_formatter passes to the formatter. Like max_content_width, a subcommand's context inherits the value from its parent unless it sets its own; with nothing configured, help output must stay exactly as it is now, and an explicit col_max passed to write_dl still wins.",
+    "checks": "import click\nfrom click.formatting import HelpFormatter\nfrom click.testing import CliRunner\n\nLONG = \"--a-really-long-option-name TEXT\"  # 32 characters\nROWS = [(LONG, \"Does stuff.\"), (\"-q\", \"Quiet.\")]\nNEXT_LINE_30 = LONG + \"\\n\" + \" \" * 32 + \"Does stuff.\\n\" + \"-q\" + \" \" * 30 + \"Quiet.\\n\"\nSAME_LINE_40 = LONG + \"  Does stuff.\\n\" + \"-q\" + \" \" * 32 + \"Quiet.\\n\"\nNEXT_LINE_10 = LONG + \"\\n\" + \" \" * 12 + \"Does stuff.\\n\" + \"-q\" + \" \" * 10 + \"Quiet.\\n\"\n\n\ndef dl(formatter, **kwargs):\n    formatter.write_dl(ROWS, **kwargs)\n    return formatter.getvalue()\n\n\n# HelpFormatter: default stays 30, constructor col_max is used, explicit write_dl arg wins.\nassert dl(HelpFormatter(width=80)) == NEXT_LINE_30\nassert dl(HelpFormatter(width=80, col_max=40)) == SAME_LINE_40\nassert dl(HelpFormatter(width=80, col_max=40), col_max=10) == NEXT_LINE_10\nassert dl(HelpFormatter(width=80, col_max=40), col_max=30) == NEXT_LINE_30\nassert dl(HelpFormatter(width=80), col_max=40) == SAME_LINE_40\n\n# Context.make_formatter passes the setting through.\ncmd = click.Command(\"x\")\nctx = click.Context(cmd, terminal_width=80, help_col_max=40)\nassert dl(ctx.make_formatter()) == SAME_LINE_40\nassert dl(click.Context(cmd, terminal_width=80).make_formatter()) == NEXT_LINE_30\nchild = click.Context(cmd, parent=ctx, info_name=\"child\")\nassert dl(child.make_formatter()) == SAME_LINE_40\nown = click.Context(cmd, parent=ctx, info_name=\"own\", help_col_max=10)\nassert dl(own.make_formatter()) == NEXT_LINE_10\ngrandchild = click.Context(cmd, parent=own, info_name=\"grandchild\")\nassert dl(grandchild.make_formatter()) == NEXT_LINE_10\n\n\ndef build(settings, sub_settings=None):\n    @click.group(context_settings=settings)\n    @click.option(\"--group-level-longer-option\", help=\"Group option.\")\n    def cli(group_level_longer_option):\n        pass\n\n    @cli.command(context_settings=sub_settings or {})\n    @click.option(\"--a-really-long-option-name\", help=\"Does stuff.\")\n    def sub(a_really_long_option_name):\n        pass\n\n    return cli\n\n\ndef help_lines(cli, args):\n    result = CliRunner().invoke(cli, args)\n    assert result.exit_code == 0, result.output\n    return result.output.splitlines()\n\n\ndef same_line(lines, opt, text):\n    line = next(i for i, l in enumerate(lines) if opt in l)\n    return text in lines[line]\n\n\ndef next_line(lines, opt, text):\n    line = next(i for i, l in enumerate(lines) if opt in l)\n    return text not in lines[line] and lines[line + 1].strip() == text\n\n\nwide = build({\"help_col_max\": 40})\nassert same_line(help_lines(wide, [\"--help\"]), \"--group-level-longer-option\", \"Group option.\")\nassert same_line(help_lines(wide, [\"sub\", \"--help\"]), \"--a-really-long-option-name\", \"Does stuff.\")\nassert \"  --a-really-long-option-name TEXT  Does stuff.\" in help_lines(wide, [\"sub\", \"--help\"])\n\nplain = build({})\nassert next_line(help_lines(plain, [\"--help\"]), \"--group-level-longer-option\", \"Group option.\")\nassert next_line(help_lines(plain, [\"sub\", \"--help\"]), \"--a-really-long-option-name\", \"Does stuff.\")\n\noverride = build({\"help_col_max\": 40}, {\"help_col_max\": 20})\nassert next_line(help_lines(override, [\"sub\", \"--help\"]), \"--a-really-long-option-name\", \"Does stuff.\")\nassert same_line(help_lines(override, [\"--help\"]), \"--group-level-longer-option\", \"Group option.\")\nprint(\"ok\")\n",
+    "edits": [
+      {
+        "path": "src/click/formatting.py",
+        "old": "        max_width: t.Optional[int] = None,\n    ) -> None:\n        import shutil\n\n        self.indent_increment = indent_increment\n",
+        "new": "        max_width: t.Optional[int] = None,\n        col_max: int = 30,\n    ) -> None:\n        import shutil\n\n        self.indent_increment = indent_increment\n        self.col_max = col_max\n"
+      },
+      {
+        "path": "src/click/formatting.py",
+        "old": "        col_max: int = 30,\n        col_spacing: int = 2,\n",
+        "new": "        col_max: t.Optional[int] = None,\n        col_spacing: int = 2,\n"
+      },
+      {
+        "path": "src/click/formatting.py",
+        "old": "        rows = list(rows)\n",
+        "new": "        if col_max is None:\n            col_max = self.col_max\n\n        rows = list(rows)\n"
+      },
+      {
+        "path": "src/click/core.py",
+        "old": "        show_default: t.Optional[bool] = None,\n    ) -> None:\n",
+        "new": "        show_default: t.Optional[bool] = None,\n        help_col_max: t.Optional[int] = None,\n    ) -> None:\n"
+      },
+      {
+        "path": "src/click/core.py",
+        "old": "        self.show_default: t.Optional[bool] = show_default\n",
+        "new": "        self.show_default: t.Optional[bool] = show_default\n\n        if help_col_max is None and parent is not None:\n            help_col_max = parent.help_col_max\n        self.help_col_max: t.Optional[int] = help_col_max\n"
+      },
+      {
+        "path": "src/click/core.py",
+        "old": "        return self.formatter_class(\n            width=self.terminal_width, max_width=self.max_content_width\n        )\n",
+        "new": "        extra: t.Dict[str, t.Any] = {}\n        if self.help_col_max is not None:\n            extra[\"col_max\"] = self.help_col_max\n        return self.formatter_class(\n            width=self.terminal_width, max_width=self.max_content_width, **extra\n        )\n"
+      }
+    ],
+    "allowed_change_areas": [
+      "src/click/formatting.py",
+      "src/click/core.py"
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh holdout case authored and adversarially reviewed by independent subagents on 2026-11-08; held out until the final evaluation."
+  },
+  {
+    "id": "xc12",
+    "corpus": "click",
+    "workload": "small",
+    "category": "decorators",
+    "family": "src/click/decorators.py",
+    "query": "Reusing one decorator object, e.g. deco = click.command(params=[...]) or click.group(...), on several functions is broken: the second command loses the parameters passed via params=, picks up the first function's docstring as its help, and the params list the caller passed in gets modified. Make every application independent: each resulting command gets the params= parameters followed by its own decorated options, takes its help from its own docstring unless help= was given (an explicit help= still applies to every command), and the caller's params list is never mutated.",
+    "checks": "import click\nfrom click.testing import CliRunner\n\nshared = click.Option([\"--x\"])\ngiven = [shared]\ndeco = click.command(params=given)\n\n\n@click.option(\"--a\")\ndef one(x, a):\n    \"\"\"First command.\"\"\"\n    click.echo(f\"one {x} {a}\")\n\n\n@click.option(\"--b\")\ndef two(x, b):\n    \"\"\"Second command.\"\"\"\n    click.echo(f\"two {x} {b}\")\n\n\nfirst = deco(one)\nsecond = deco(two)\nassert given == [shared] and len(given) == 1, given\nassert [p.name for p in first.params] == [\"x\", \"a\"], first.params\nassert [p.name for p in second.params] == [\"x\", \"b\"], second.params\nassert first.help == \"First command.\" and second.help == \"Second command.\"\nrunner = CliRunner()\nresult = runner.invoke(second, [\"--x\", \"1\", \"--b\", \"2\"])\nassert result.exit_code == 0 and result.output == \"two 1 2\\n\", result.output\nresult = runner.invoke(first, [\"--x\", \"3\", \"--a\", \"4\"])\nassert result.exit_code == 0 and result.output == \"one 3 4\\n\", result.output\n\n# A docstring-less function does not inherit an earlier function's docstring.\nplain = click.command()\n\n\ndef documented():\n    \"\"\"Has a docstring.\"\"\"\n\n\ndef undocumented():\n    pass\n\n\nassert plain(documented).help == \"Has a docstring.\"\nassert not plain(undocumented).help\n\n# An explicit help= applies to every command made by the decorator.\nexplicit = click.command(help=\"Explicit help.\")\n\n\ndef h1():\n    \"\"\"Doc one.\"\"\"\n\n\ndef h2():\n    \"\"\"Doc two.\"\"\"\n\n\nassert explicit(h1).help == \"Explicit help.\" and explicit(h2).help == \"Explicit help.\"\n\n# Same for click.group.\nverbose = click.Option([\"--verbose\"], is_flag=True)\ngroup_params = [verbose]\ngdeco = click.group(params=group_params)\n\n\ndef g1(verbose):\n    \"\"\"Group one.\"\"\"\n\n\n@click.option(\"--level\")\ndef g2(verbose, level):\n    \"\"\"Group two.\"\"\"\n\n\nG1 = gdeco(g1)\nG2 = gdeco(g2)\nassert isinstance(G1, click.Group) and isinstance(G2, click.Group)\nassert group_params == [verbose]\nassert [p.name for p in G1.params] == [\"verbose\"]\nassert [p.name for p in G2.params] == [\"verbose\", \"level\"]\nassert G1.help == \"Group one.\" and G2.help == \"Group two.\"\nprint(\"ok\")\n",
+    "edits": [
+      {
+        "path": "src/click/decorators.py",
+        "old": "        attr_params = attrs.pop(\"params\", None)\n        params = attr_params if attr_params is not None else []\n",
+        "new": "        cmd_attrs = dict(attrs)\n        attr_params = cmd_attrs.pop(\"params\", None)\n        params = list(attr_params) if attr_params is not None else []\n"
+      },
+      {
+        "path": "src/click/decorators.py",
+        "old": "        if attrs.get(\"help\") is None:\n            attrs[\"help\"] = f.__doc__\n",
+        "new": "        if cmd_attrs.get(\"help\") is None:\n            cmd_attrs[\"help\"] = f.__doc__\n"
+      },
+      {
+        "path": "src/click/decorators.py",
+        "old": "            params=params,\n            **attrs,\n",
+        "new": "            params=params,\n            **cmd_attrs,\n"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "allowed_change_areas": [
+      "src/click/decorators.py"
+    ],
+    "exposure": "Fresh holdout case authored and adversarially reviewed by independent subagents on 2026-11-08; held out until the final evaluation."
+  },
+  {
+    "id": "xw02",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "docstring",
+    "family": "src/werkzeug/http.py",
+    "query": "The dump_cookie docstring still documents a charset parameter that was removed in 3.0, and it has no entries for key or value. Remove the stale :param charset: entry and add :param key: and :param value: entries describing the cookie's name and value. Leave the rest of the docstring (other parameters, version notes) and the function's behavior unchanged.",
+    "checks": "import hashlib, inspect, re\nfrom werkzeug.http import dump_cookie\n\ndoc = inspect.getdoc(dump_cookie)\nassert \":param charset:\" not in doc, \"stale charset parameter still documented\"\nassert \"encoding for string values\" not in doc.lower(), \"stale charset description still present\"\n\n\ndef field(name):\n    return re.compile(r\"^:param (?:[^:\\n]+ )?%s:\" % name, re.M)\n\n\nfor name in (\"key\", \"value\"):\n    match = field(name).search(doc)\n    assert match, f\"{name} is not documented with a :param entry\"\n    lines = doc[match.end():].split(\"\\n\")\n    text, i = lines[0], 1\n    while i < len(lines) and lines[i][:1] in (\" \", \"\\t\") and lines[i].strip():\n        text += lines[i]\n        i += 1\n    assert re.search(r\"[A-Za-z]\", text), f\"{name} entry has no description\"\n\n\ndef strip_fields(text, names):\n    # a :type line for the same name counts as part of that parameter entry\n    pattern = re.compile(r\"^:(?:param (?:[^:\\n]+ )?|type )(?:%s):\" % \"|\".join(names))\n    out, skipping = [], False\n    for line in text.splitlines():\n        if pattern.match(line):\n            skipping = True\n            continue\n        if skipping and line[:1] in (\" \", \"\\t\") and line.strip():\n            continue\n        skipping = False\n        if line.strip():\n            out.append(\" \".join(line.split()))\n    return \"\\n\".join(out)\n\n\n# Hash of the original docstring minus the charset entry (blank lines dropped,\n# whitespace collapsed), i.e. everything the request says to leave unchanged.\nrest = strip_fields(doc, [\"key\", \"value\"])\nassert hashlib.sha256(rest.encode()).hexdigest() == \"eb7ebf8325bf0fcc7545f2976bdc0f92716ef98cf86d53a16da59f02c875d824\", \"rest of the dump_cookie docstring changed\"\nassert dump_cookie(\"a\", \"b\") == \"a=b; Path=/\"\nassert dump_cookie(\"k\", \"v\", max_age=60, path=None, httponly=True, samesite=\"Lax\", sync_expires=False) == \"k=v; Max-Age=60; HttpOnly; SameSite=Lax\"\n",
+    "edits": [
+      {
+        "path": "src/werkzeug/http.py",
+        "old": "    non-ASCII values for the keys.\n\n    :param max_age:",
+        "new": "    non-ASCII values for the keys.\n\n    :param key: The name of the cookie.\n    :param value: The value of the cookie.\n    :param max_age:"
+      },
+      {
+        "path": "src/werkzeug/http.py",
+        "old": "    :param charset: the encoding for string values.\n",
+        "new": ""
+      }
+    ],
+    "allowed_change_areas": [
+      "src/werkzeug/http.py"
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh holdout case authored and adversarially reviewed by independent subagents on 2026-11-08; held out until the final evaluation."
+  },
+  {
+    "id": "xw04",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "test client multipart",
+    "family": "src/werkzeug/test.py",
+    "query": "werkzeug.test's encode_multipart and stream_encode_multipart crash with AttributeError ('_io.BytesIO' object has no attribute 'headers') when a value is a plain binary file object such as io.BytesIO instead of a FileStorage. Make plain file objects work (filename from their name attribute and content type guessed from it, as the code already intends), and stop the encoder from modifying the headers of a FileStorage passed in: a FileStorage's extra headers must still be sent, and the encoded output for FileStorage and string values must stay the same.",
+    "checks": "from io import BytesIO\nfrom werkzeug.datastructures import FileStorage, Headers, MultiDict\nfrom werkzeug.formparser import parse_form_data\nfrom werkzeug.test import encode_multipart, stream_encode_multipart\n\n\ndef parse(boundary, body):\n    environ = {\n        \"REQUEST_METHOD\": \"POST\",\n        \"wsgi.input\": BytesIO(body),\n        \"CONTENT_LENGTH\": str(len(body)),\n        \"CONTENT_TYPE\": f'multipart/form-data; boundary=\"{boundary}\"',\n    }\n    _, form, files = parse_form_data(environ)\n    return form, files\n\n\n# Plain binary file object with a name: sent as a file part.\ndoc = BytesIO(b\"hello world\")\ndoc.name = \"notes.txt\"\nboundary, body = encode_multipart({\"doc\": doc, \"s\": \"v\"}, boundary=\"XB1\")\nform, files = parse(boundary, body)\nassert files[\"doc\"].filename == \"notes.txt\", files[\"doc\"].filename\nassert files[\"doc\"].content_type == \"text/plain\", files[\"doc\"].content_type\nassert files[\"doc\"].read() == b\"hello world\"\nassert form[\"s\"] == \"v\"\n\n# stream_encode_multipart, in-memory and spooled-to-tempfile.\nfor use_tempfile in (False, True):\n    f = BytesIO(b\"x\" * 64)\n    f.name = \"payload\"\n    stream, length, boundary = stream_encode_multipart(\n        {\"f\": f}, use_tempfile=use_tempfile, threshold=16, boundary=\"XB2\"\n    )\n    body = stream.read()\n    stream.close()\n    assert len(body) == length\n    form, files = parse(boundary, body)\n    assert files[\"f\"].filename == \"payload\"\n    assert files[\"f\"].content_type == \"application/octet-stream\"\n    assert files[\"f\"].read() == b\"x\" * 64\n\n# A plain file object without a name must not crash either.\nboundary, body = encode_multipart({\"raw\": BytesIO(b\"\\x00payload\")}, boundary=\"XB3\")\nassert b\"\\x00payload\" in body\n\n# FileStorage: headers object left untouched, extra headers still sent.\nheaders = Headers([(\"X-Custom\", \"1\")])\nfs = FileStorage(BytesIO(b\"abc\"), filename=\"a.txt\", headers=headers)\nboundary, body = encode_multipart({\"f\": fs}, boundary=\"XB4\")\nassert list(fs.headers) == [(\"X-Custom\", \"1\")], list(fs.headers)\nassert b\"X-Custom: 1\\r\\n\" in body and b\"Content-Type: text/plain\\r\\n\" in body\nform, files = parse(boundary, body)\nassert files[\"f\"].filename == \"a.txt\" and files[\"f\"].read() == b\"abc\"\n\ntyped = FileStorage(BytesIO(b\"{}\"), filename=\"a.bin\", content_type=\"application/json\")\nboundary, body = encode_multipart({\"j\": typed}, boundary=\"XB5\")\nassert list(typed.headers) == [(\"Content-Type\", \"application/json\")]\nassert body.count(b\"Content-Type: application/json\\r\\n\") == 1\n\n# Existing output for FileStorage and string values is unchanged.\nplain = FileStorage(BytesIO(b\"abc\"), filename=\"a.txt\")\nassert encode_multipart(MultiDict([(\"f\", plain), (\"s\", \"x\")]), boundary=\"B\") == (\n    \"B\",\n    b'\\r\\n--B\\r\\nContent-Disposition: form-data; name=\"f\"; filename=\"a.txt\"\\r\\n'\n    b\"Content-Type: text/plain\\r\\n\\r\\nabc\\r\\n\"\n    b'--B\\r\\nContent-Disposition: form-data; name=\"s\"\\r\\n\\r\\nx\\r\\n--B--\\r\\n',\n)\nassert list(plain.headers) == []\n",
+    "edits": [
+      {
+        "path": "src/werkzeug/test.py",
+        "old": "            headers = value.headers\n",
+        "new": "            headers = Headers(getattr(value, \"headers\", None))\n"
+      }
+    ],
+    "allowed_change_areas": [
+      "src/werkzeug/test.py"
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh holdout case authored and adversarially reviewed by independent subagents on 2026-11-08; held out until the final evaluation."
+  },
+  {
+    "id": "xw06",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "keyword-only parameter",
+    "family": "src/werkzeug/utils.py",
+    "query": "Add a keyword-only response_class parameter (default None) to werkzeug.utils.append_slash_redirect and pass it through to the redirect() call it makes, so callers get back an instance of their own Response subclass. Without it the result must be unchanged: a plain werkzeug Response with status 308 unless another code is given, and the same relative Location including the query string.",
+    "checks": "import inspect\n\nfrom werkzeug.test import create_environ\nfrom werkzeug.utils import append_slash_redirect\nfrom werkzeug.wrappers import Response\n\n\nclass MyResponse(Response):\n    pass\n\n\nparam = inspect.signature(append_slash_redirect).parameters.get(\"response_class\")\nassert param is not None, \"missing response_class parameter\"\nassert param.kind is inspect.Parameter.KEYWORD_ONLY, param.kind\nassert param.default is None, param.default\n\nenv = create_environ(\"/user/42\", query_string=\"a=1&b=2\")\nr = append_slash_redirect(env, response_class=MyResponse)\nassert isinstance(r, MyResponse), type(r)\nassert r.status_code == 308 and r.headers[\"Location\"] == \"42/?a=1&b=2\"\nr = append_slash_redirect(env, 301, response_class=MyResponse)\nassert isinstance(r, MyResponse) and r.status_code == 301\nassert r.headers[\"Location\"] == \"42/?a=1&b=2\"\nr = append_slash_redirect(env, code=307, response_class=MyResponse)\nassert isinstance(r, MyResponse) and r.status_code == 307\n\nfor d in (append_slash_redirect(env), append_slash_redirect(env, response_class=None)):\n    assert type(d) is Response, type(d)\n    assert d.status_code == 308 and d.headers[\"Location\"] == \"42/?a=1&b=2\"\nd = append_slash_redirect(create_environ(\"/user/\"), 302)\nassert type(d) is Response and d.status_code == 302 and d.headers[\"Location\"] == \"./\"\n\ntry:\n    append_slash_redirect(env, 308, MyResponse)\nexcept TypeError:\n    pass\nelse:\n    raise AssertionError(\"response_class must be keyword-only\")",
+    "edits": [
+      {
+        "path": "src/werkzeug/utils.py",
+        "old": "def append_slash_redirect(environ: WSGIEnvironment, code: int = 308) -> Response:",
+        "new": "def append_slash_redirect(\n    environ: WSGIEnvironment,\n    code: int = 308,\n    *,\n    response_class: type[Response] | None = None,\n) -> Response:"
+      },
+      {
+        "path": "src/werkzeug/utils.py",
+        "old": "    :param code: the status code for the redirect.\n",
+        "new": "    :param code: the status code for the redirect.\n    :param response_class: The response class to use, passed to\n        :func:`redirect`. Defaults to :class:`werkzeug.wrappers.Response`.\n"
+      },
+      {
+        "path": "src/werkzeug/utils.py",
+        "old": "    return redirect(new_path, code)\n",
+        "new": "    return redirect(new_path, code, Response=response_class)\n"
+      }
+    ],
+    "allowed_change_areas": [
+      "src/werkzeug/utils.py"
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh holdout case authored and adversarially reviewed by independent subagents on 2026-11-08; held out until the final evaluation."
+  },
+  {
+    "id": "xw08",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "default value",
+    "family": "src/werkzeug/wsgi.py",
+    "query": "Werkzeug reads file objects in 8 KiB blocks when streaming them for WSGI without a server file wrapper (e.g. a send_file response for a BytesIO). Raise that default to 64 KiB (65536 bytes) everywhere it applies: the generic file wrapper class, wrap_file (and so send_file), and the block size wrap_file passes to a server-provided wsgi.file_wrapper. Explicitly passed buffer sizes must still be honored.",
+    "checks": "import io\n\nfrom werkzeug.test import create_environ\nfrom werkzeug.utils import send_file\nfrom werkzeug.wsgi import FileWrapper, wrap_file\n\ndata = bytes(range(256)) * 1000\nexpected = [65536, 65536, 65536, len(data) - 3 * 65536]\n\n\ndef sizes(iterable):\n    return [len(chunk) for chunk in iterable]\n\n\nchunks = list(FileWrapper(io.BytesIO(data)))\nassert sizes(chunks) == expected, sizes(chunks)\nassert b\"\".join(chunks) == data\nassert sizes(FileWrapper(io.BytesIO(data), 8192))[:3] == [8192, 8192, 8192]\nassert sizes(FileWrapper(io.BytesIO(b\"x\" * 10), buffer_size=4)) == [4, 4, 2]\n\nenv = create_environ()\nassert sizes(wrap_file(env, io.BytesIO(data))) == expected\nassert sizes(wrap_file(env, io.BytesIO(b\"x\" * 10), 3)) == [3, 3, 3, 1]\nassert sizes(wrap_file(env, io.BytesIO(b\"x\" * 10), buffer_size=4)) == [4, 4, 2]\n\ncalls = []\n\n\ndef server_wrapper(*args, **kwargs):\n    calls.append((args, kwargs))\n    return [\"sentinel\"]\n\n\nserver_env = create_environ()\nserver_env[\"wsgi.file_wrapper\"] = server_wrapper\nf = io.BytesIO(b\"abc\")\nassert wrap_file(server_env, f) == [\"sentinel\"]\nassert len(calls) == 1 and calls[0][0][0] is f, calls\nassert list(calls[0][0][1:]) + list(calls[0][1].values()) == [65536], calls\ncalls.clear()\nwrap_file(server_env, f, 1234)\nassert list(calls[0][0][1:]) + list(calls[0][1].values()) == [1234], calls\n\nrv = send_file(io.BytesIO(data), create_environ(), mimetype=\"application/octet-stream\")\nstreamed = list(rv.response)\nassert sizes(streamed) == expected, sizes(streamed)\nassert b\"\".join(streamed) == data\nrv.close()",
+    "edits": [
+      {
+        "path": "src/werkzeug/wsgi.py",
+        "old": "    environ: WSGIEnvironment, file: t.IO[bytes], buffer_size: int = 8192\n",
+        "new": "    environ: WSGIEnvironment, file: t.IO[bytes], buffer_size: int = 65536\n"
+      },
+      {
+        "path": "src/werkzeug/wsgi.py",
+        "old": "    def __init__(self, file: t.IO[bytes], buffer_size: int = 8192) -> None:",
+        "new": "    def __init__(self, file: t.IO[bytes], buffer_size: int = 65536) -> None:"
+      }
+    ],
+    "allowed_change_areas": [
+      "src/werkzeug/wsgi.py",
+      "src/werkzeug/utils.py"
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh holdout case authored and adversarially reviewed by independent subagents on 2026-11-08; held out until the final evaluation."
+  },
+  {
+    "id": "xw10",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "test authoring: conditional range response",
+    "family": "tests/test_wrappers.py",
+    "query": "Add a regression test named test_range_request_if_range to tests/test_wrappers.py (a single plain module-level test function, not parametrized) covering how Response.make_conditional handles an If-Range header on a GET request whose byte Range asks for only part of the body (call it with accept_ranges=True and complete_length set, on a response that has an ETag). Check both outcomes, asserting the status code and the body each time: when If-Range carries the response's current ETag, the result is 206 with only the requested bytes; when If-Range carries a different ETag, the Range is ignored and the full body is returned with status 200. Only add the test; do not change library code.",
+    "checks": "import hashlib\nimport os\nimport re\nimport shutil\nimport subprocess\nimport sys\nimport tempfile\nfrom pathlib import Path\n\nTEST_FILE = \"tests/test_wrappers.py\"\nNAME = \"test_range_request_if_range\"\nNODE = TEST_FILE + \"::\" + NAME\nTARGET = \"src/werkzeug/wrappers/response.py\"\n# sha256 over every src/**/*.py file (path + content) of pristine Werkzeug 3.1.3.\nLIBRARY_DIGEST = \"c5b7ed1ca9b088b4c417e6b6be65fc525f032e9b18f77b2c24a4cd5023904792\"\n# Each mutation breaks one behavior the requested test must cover.\nMUTATIONS = [\n    (\n        '\"HTTP_IF_RANGE\" not in environ',\n        \"True\",\n        \"a different ETag in If-Range no longer disables the Range\",\n    ),\n    (\n        \"or not is_resource_modified(\",\n        \"or False and not is_resource_modified(\",\n        \"the current ETag in If-Range no longer allows the Range\",\n    ),\n    (\n        \"_RangeWrapper(self.response, start, length)\",\n        \"self.response\",\n        \"a 206 response no longer trims the body to the requested bytes\",\n    ),\n]\n\n\ndef library_digest(root):\n    h = hashlib.sha256()\n    for path in sorted(Path(root).rglob(\"*.py\")):\n        h.update(path.relative_to(root).as_posix().encode() + b\"\\0\")\n        h.update(hashlib.sha256(path.read_bytes()).digest())\n    return h.hexdigest()\n\n\ndef start(argv, pythonpath):\n    env = dict(os.environ, PYTHONPATH=pythonpath, PYTHONDONTWRITEBYTECODE=\"1\")\n    return subprocess.Popen(\n        [sys.executable, *argv],\n        cwd=\".\",\n        env=env,\n        stdout=subprocess.PIPE,\n        stderr=subprocess.STDOUT,\n        text=True,\n    )\n\n\ndef finish(proc):\n    out, _ = proc.communicate(timeout=120)\n    return proc.returncode, out\n\n\nPYTEST = [\"-m\", \"pytest\", \"-q\", \"-p\", \"no:cacheprovider\", NODE]\nPROBE = [\"-c\", \"import werkzeug; print(werkzeug.__file__)\"]\n\nsource = Path(TEST_FILE)\nassert source.is_file(), TEST_FILE + \" is missing\"\nassert re.search(r\"^def \" + NAME + r\"\\(\", source.read_text(), re.M), (\n    \"module-level test function \" + NAME + \" not found in \" + TEST_FILE\n)\nassert library_digest(\"src\") == LIBRARY_DIGEST, (\n    \"library code under src/ was changed; only the test may be added\"\n)\n\nwith tempfile.TemporaryDirectory() as tmp:\n    # Mutated copies of src/, one per mutation; all runs execute concurrently.\n    mutated = []\n    for index, (old, new, broken) in enumerate(MUTATIONS):\n        mutated_src = os.path.join(tmp, str(index), \"src\")\n        shutil.copytree(\"src\", mutated_src)\n        target = Path(tmp, str(index), TARGET)\n        text = target.read_text()\n        assert text.count(old) == 1, \"mutation anchor not found: \" + old\n        target.write_text(text.replace(old, new, 1))\n        mutated.append((broken, mutated_src))\n\n    base = start(PYTEST, os.path.abspath(\"src\"))\n    runs = [\n        (broken, path, start(PYTEST, path), start(PROBE, path))\n        for broken, path in mutated\n    ]\n\n    code, out = finish(base)\n    assert code == 0, out[-4000:]\n    assert re.search(r\"\\b1 passed\\b\", out), out[-4000:]\n    assert not re.search(r\"\\b\\d+ (failed|errors?)\\b\", out), out[-4000:]\n\n    for broken, path, proc, probe in runs:\n        code, out = finish(proc)\n        _, where = finish(probe)\n        assert where.strip().startswith(path), \"mutated copy not imported: \" + where\n        assert code == 1 and re.search(r\"\\b1 failed\\b\", out), (\n            \"the test still passes when \" + broken + \"\\n\" + out[-4000:]\n        )\n\nprint(\"ok\")\n",
+    "edits": [
+      {
+        "path": "tests/test_wrappers.py",
+        "old": null,
+        "new": "\n\ndef test_range_request_if_range():\n    response = wrappers.Response(\"Hello World\")\n    response.add_etag()\n    env = create_environ(\n        headers={\"Range\": \"bytes=0-4\", \"If-Range\": response.headers[\"ETag\"]}\n    )\n    response.make_conditional(env, accept_ranges=True, complete_length=11)\n    assert response.status_code == 206\n    assert response.headers[\"Content-Range\"] == \"bytes 0-4/11\"\n    assert response.data == b\"Hello\"\n\n    response = wrappers.Response(\"Hello World\")\n    response.add_etag()\n    env = create_environ(headers={\"Range\": \"bytes=0-4\", \"If-Range\": '\"outdated\"'})\n    response.make_conditional(env, accept_ranges=True, complete_length=11)\n    assert response.status_code == 200\n    assert \"Content-Range\" not in response.headers\n    assert response.data == b\"Hello World\"\n"
+      }
+    ],
+    "allowed_change_areas": [
+      "tests/test_wrappers.py"
+    ],
+    "keep_test_paths": [
+      "tests/test_wrappers.py"
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh holdout case authored and adversarially reviewed by independent subagents on 2026-11-08; held out until the final evaluation."
+  },
+  {
+    "id": "xw12",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "header serialization feature",
+    "family": "src/werkzeug/datastructures/cache_control.py",
+    "query": "RFC 9111 says senders should use the quoted-string form when the no-cache or private response directives list field names, but ResponseCacheControl.to_header() (werkzeug/datastructures/cache_control.py) emits no-cache=Set-Cookie. Make it (and str(cc)) always quote those two arguments (no-cache=\"Set-Cookie\", private=\"Authorization\"), including in a Response's Cache-Control header. Reading cc.no_cache / cc.private must still return the bare value, bare no-cache/private (set to True) stay unquoted, directives keep their current order and every other directive serializes exactly as before, and neither RequestCacheControl.to_header() (even when it holds no-cache/private values) nor the generic werkzeug.http.dump_header helper may change.",
+    "checks": "from werkzeug.datastructures import RequestCacheControl\nfrom werkzeug.datastructures import ResponseCacheControl\nfrom werkzeug.http import dump_header\nfrom werkzeug.http import parse_cache_control_header\nfrom werkzeug.wrappers import Response\n\ncc = ResponseCacheControl()\ncc.no_cache = \"Set-Cookie\"\nassert cc.to_header() == 'no-cache=\"Set-Cookie\"', cc.to_header()\nassert str(cc) == 'no-cache=\"Set-Cookie\"', str(cc)\nassert cc.no_cache == \"Set-Cookie\", cc.no_cache\n\ncc = ResponseCacheControl()\ncc.private = \"Authorization\"\nassert cc.to_header() == 'private=\"Authorization\"', cc.to_header()\nassert cc.private == \"Authorization\", cc.private\n\ncc = ResponseCacheControl()\ncc.no_cache = \"Set-Cookie, Authorization\"\nassert cc.to_header() == 'no-cache=\"Set-Cookie, Authorization\"', cc.to_header()\n\n# bare directives stay bare\ncc = ResponseCacheControl()\ncc.no_cache = True\ncc.private = True\nassert cc.to_header() == \"no-cache, private\", cc.to_header()\n\n# other directives are unchanged and keep their order\ncc = ResponseCacheControl()\ncc.max_age = 60\ncc.public = True\ncc.no_cache = \"Set-Cookie\"\ncc.s_maxage = 5\nassert cc.to_header() == 'max-age=60, public, no-cache=\"Set-Cookie\", s-maxage=5', cc.to_header()\nassert ResponseCacheControl([(\"community\", \"UCI\")]).to_header() == \"community=UCI\"\n\n# parsed values round-trip\ncc = parse_cache_control_header('no-cache=\"Set-Cookie\", max-age=0', cls=ResponseCacheControl)\nassert cc.no_cache == \"Set-Cookie\" and cc.max_age == 0\nassert cc.to_header() == 'no-cache=\"Set-Cookie\", max-age=0', cc.to_header()\n\n# the response header uses the same serialization\nr = Response()\nr.cache_control.private = \"Set-Cookie\"\nassert r.headers[\"Cache-Control\"] == 'private=\"Set-Cookie\"', r.headers[\"Cache-Control\"]\nr.cache_control.max_age = 30\nassert r.headers[\"Cache-Control\"] == 'private=\"Set-Cookie\", max-age=30', r.headers[\n    \"Cache-Control\"\n]\n\n# request cache control and the generic helper are unchanged\nassert (\n    RequestCacheControl([(\"max-stale\", \"5\"), (\"no-cache\", None)]).to_header()\n    == \"max-stale=5, no-cache\"\n)\nrcc = RequestCacheControl([(\"no-cache\", \"Set-Cookie\"), (\"private\", \"x\")])\nassert rcc.to_header() == \"no-cache=Set-Cookie, private=x\", rcc.to_header()\nrcc = parse_cache_control_header(\"no-cache=Set-Cookie, private=x, max-age=0\")\nassert rcc.to_header() == \"no-cache=Set-Cookie, private=x, max-age=0\", rcc.to_header()\nassert dump_header({\"no-cache\": \"Set-Cookie\", \"private\": \"x\"}) == \"no-cache=Set-Cookie, private=x\"\nprint(\"ok\")\n",
+    "edits": [
+      {
+        "path": "src/werkzeug/datastructures/cache_control.py",
+        "old": "    stale_while_revalidate: int | None = cache_control_property(\n        \"stale-while-revalidate\", None, int\n    )\n",
+        "new": "    stale_while_revalidate: int | None = cache_control_property(\n        \"stale-while-revalidate\", None, int\n    )\n\n    def to_header(self) -> str:\n        \"\"\"Convert the stored values into a cache control header. Field names\n        given to ``no-cache`` and ``private`` always use the quoted-string form\n        required by RFC 9111.\n        \"\"\"\n        return \", \".join(\n            f\"{key}={http.quote_header_value(value, allow_token=False)}\"\n            if value is not None and key in {\"no-cache\", \"private\"}\n            else http.dump_header({key: value})\n            for key, value in self.items()\n        )\n"
+      }
+    ],
+    "allowed_change_areas": [
+      "src/werkzeug/datastructures/cache_control.py"
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh holdout case authored and adversarially reviewed by independent subagents on 2026-11-08; held out until the final evaluation."
+  }
+]
