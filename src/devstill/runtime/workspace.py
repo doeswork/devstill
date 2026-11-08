@@ -208,11 +208,14 @@ def apply(repo, root, run_id, expected_digest, config):
                     raise ValueError(f"Concurrent edit: {name}")
                 replace(path, base64.b64decode(entry["content"]), entry["mode"])
                 written.append(name)
-            state = {
-                **state,
-                "status": "applied",
-                "validation": "generated_checks_passed",
-            }
+            execution = proposal.get("execution") or {}
+            if execution.get("engine") == "loop":
+                label = (
+                    "agent_check_passed" if execution.get("verified") else "unvalidated"
+                )
+            else:
+                label = "generated_checks_passed"
+            state = {**state, "status": "applied", "validation": label}
             write(status_path, state)
             (root.parent / ".tasks-need-index").write_text(run_id)
             journal.unlink()

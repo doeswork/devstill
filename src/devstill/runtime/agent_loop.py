@@ -314,12 +314,15 @@ def agent_loop(
 
     def outcome(status, **extra):
         trace()
+        after_edit = [c for c in commands if c["step"] > last_edit_step]
         return {
             "status": status,
             "engine": "loop",
             "model_calls": calls,
             "changed_files": sorted(set(workspace.changed)),
             "commands": commands,
+            # True when the agent ran checks after its last edit and all passed.
+            "verified": bool(after_edit) and all(c["ok"] for c in after_edit),
             "usage": usage,
             **extra,
         }

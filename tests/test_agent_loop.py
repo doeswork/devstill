@@ -488,3 +488,24 @@ def test_fast_binary_detection_matches_reference_rule():
     ]
     for raw in samples:
         assert is_binary(raw) == reference(raw)
+
+
+def test_review_render_shows_agent_checks_and_summary(loop_session, monkeypatch):
+    from devstill.runtime.service import render
+
+    chat = scripted(
+        reply(
+            call("edit", 0, path="a.py", oldText="return 1", newText="return 2"),
+            call("python", 1, code="import a\nassert a.f() == 2\n"),
+            call("done", 2, summary="f returns 2"),
+        )
+    )
+    monkeypatch.setattr(loop_session, "chat", chat)
+    proposal = loop_session.prepare("Make f return 2")
+    assert proposal["execution"]["verified"]
+    text = render(proposal)
+    assert "- passed: python check (2 lines)" in text
+    assert "Latest passing check:\n```python\nimport a\nassert a.f() == 2" in text
+    assert "Summary: f returns 2" in text
+    state = loop_session.apply(proposal["id"], proposal["digest"])
+    assert state["validation"] == "agent_check_passed"

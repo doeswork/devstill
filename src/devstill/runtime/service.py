@@ -105,17 +105,61 @@ def render_check_changes(execution):
     return "".join(line + "\n\n" for line in lines)
 
 
+def render_agent_checks(execution):
+    """The loop agent's own verification runs, for human review."""
+    commands = execution.get("commands") or []
+    if not commands:
+        return ""
+    rows = []
+    for command in commands[-6:]:
+        text = command["command"]
+        label = (
+            f"python check ({len(text.splitlines()) - 1} lines)"
+            if text.startswith("python:\n")
+            else text.strip().splitlines()[0][:100]
+        )
+        rows.append(f"- {'passed' if command['ok'] else 'failed'}: {label}")
+    shown = "Agent checks (latest last):\n" + "\n".join(rows) + "\n\n"
+    last = next(
+        (
+            c
+            for c in reversed(commands)
+            if c["ok"] and c["command"].startswith("python:\n")
+        ),
+        None,
+    )
+    if last:
+        code = "\n".join(last["command"].splitlines()[1:21])
+        shown += "Latest passing check:\n```python\n" + code + "\n```\n\n"
+    return shown
+
+
 def render(proposal):
     files = ", ".join(f"`{p}`" for p in proposal.get("files", {})) or "none"
     context = ", ".join(
         f"`{p}`" for p in sorted({r["path"] for r in proposal.get("evidence", [])})
     )
+    execution = proposal.get("execution") or {}
+    if execution.get("engine") == "loop":
+        validation = (
+            f"Validation: agent checks below ({execution.get('model_calls', '?')} model "
+            "calls); independent acceptance is not implied.\n\n"
+        )
+        details = render_agent_checks(execution)
+        if execution.get("summary"):
+            details += f"Summary: {execution['summary']}\n\n"
+    else:
+        validation = (
+            "Validation: generated behavior checks; independent acceptance is not "
+            "implied.\n\n"
+        )
+        details = render_check_changes(execution)
     return (
         f"## Task {proposal['id']}\n\n{proposal['query']}\n\n"
         f"Status: **{proposal['status']}**\n\nContext: {context or 'none'}\n\n"
         f"Changed files: {files}\n\n"
-        "Validation: generated behavior checks; independent acceptance is not implied.\n\n"
-        + render_check_changes(proposal.get("execution") or {})
+        + validation
+        + details
         + (f"Error: {proposal['error']}\n\n" if proposal.get("error") else "")
         + "```diff\n"
         + proposal.get("patch", "")
