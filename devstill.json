@@ -96,6 +96,8 @@
     "reasoning": "off",
     "max_output_tokens": 4096,
     "max_tool_calls": 12,
-    "validation_commands": []
+    "validation_commands": [],
+    "task_validation_commands": [],
+    "task_concurrency": 1
   }
 }

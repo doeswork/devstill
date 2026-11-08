@@ -161,7 +161,8 @@ for distribution in importlib.metadata.distributions():
         or normalized.startswith("triton-")
     ):
         packages.append(name)
-print("\n".join(sorted(set(packages), key=str.casefold)))
+if packages:
+    print("\n".join(sorted(set(packages), key=str.casefold)))
 PYCODE
     )
     if [[ ${#cuda_packages[@]} -eq 0 ]]; then

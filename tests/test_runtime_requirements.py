@@ -71,7 +71,12 @@ def test_ambiguous_prose_is_not_a_guessed_delivery(tmp_path):
     ) == {"modules": [], "exports": [], "files": []}
 
 
-def test_repair_cannot_silently_drop_failed_assertion(session, monkeypatch):
+def test_replaced_failing_assertion_is_shown_in_review(session, monkeypatch):
+    # The runtime cannot tell "wrong check" from "wrong patch" here (it mirrors a
+    # correct patch with a wrong expectation). A replacement is therefore allowed
+    # by default, but never silent: the review shows the retired assertion.
+    from devstill.runtime.service import render
+
     actions = iter(
         [
             {
@@ -88,8 +93,14 @@ def test_repair_cannot_silently_drop_failed_assertion(session, monkeypatch):
     )
     monkeypatch.setattr(session, "generate", lambda *a: json.dumps(next(actions)))
     result = session.prepare("Set x to 3")
-    assert result["status"] == "failed"
-    assert (session.repo / "a.py").read_text() == "x = 1\n"
+    assert result["status"] == "ready"
+    assert result["execution"]["replaced_checks"] == [
+        ["python", "-c", "import a; assert a.x == 3"]
+    ]
+    assert "Replaced failing check:\n```python\nimport a; assert a.x == 3" in render(
+        result
+    )
+    assert (session.repo / "a.py").read_text() == "x = 1\n"  # Review, not applied.
 
 
 def test_passing_check_is_rechecked_after_second_edit(session, monkeypatch):

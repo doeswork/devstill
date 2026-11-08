@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import time
+from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 from typing import Annotated
@@ -81,7 +82,7 @@ Use old="" only for a nonexistent file. Preserve unrelated behavior and source.
 Reads: {"path":"relative/file.py","start":1,"end":120}; up to 400 lines per read.
 Use the supplied code when sufficient. Request a read only for missing information.
 Checks: {"python_lines":["from package import function", "assert function() == expected"]}.
-With edits or completion, write 1..3 short checks. Join python_lines with newlines;
+With your first edits, write 1..3 short checks. Join python_lines with newlines;
 entries may contain multiple lines. Keep indentation and Python string escapes.
 For reads without edits, use checks=[]; draft checks are ignored. A read consumes
 one response and cannot complete the task.
@@ -124,6 +125,7 @@ def editor_messages(query, records, requirements=None):
 
 def response_schema(messages):
     schema = WireResponse.model_json_schema()
+    retained = False
     if not any(m["role"] == "assistant" for m in messages):
         # There are no earlier checks to repair on the first response.
         del schema["properties"]["check_repairs"]
@@ -136,7 +138,8 @@ def response_schema(messages):
             try:
                 feedback, _ = json.JSONDecoder().raw_decode(messages[-1]["content"])
                 indices = feedback.get("check_state", {}).get("repairable_indices", [])
-            except (ValueError, TypeError):
+                retained = bool(feedback.get("retained_checks"))
+            except (ValueError, TypeError, AttributeError):
                 pass
         if indices:
             schema["$defs"]["CheckRepair"]["properties"]["index"]["enum"] = indices
@@ -159,6 +162,18 @@ def response_schema(messages):
         read_only["properties"]["check_repairs"]["maxItems"] = 0
     completion["properties"]["checks"]["minItems"] = 1
     schema["anyOf"] = [read_only, completion]
+    if retained:
+        # Implementation-only repair: retained checks run again; no new checks
+        # are forced (forced checks were appended and became new failure points).
+        implementation = deepcopy(completion)
+        implementation["properties"]["edits"]["minItems"] = 1
+        implementation["properties"]["checks"] = {
+            **implementation["properties"]["checks"],
+            "maxItems": 0,
+        }
+        implementation["properties"]["checks"].pop("minItems")
+        implementation["properties"]["check_repairs"]["maxItems"] = 0
+        schema["anyOf"].append(implementation)
     return schema
 
 
@@ -255,6 +270,11 @@ def has_behavior_check(tree):
         return False  # Merely defining an uncalled test is not executing a check.
     if isinstance(tree, ast.Assert):
         return True
+    if isinstance(tree, ast.Raise) and tree.exc is not None:
+        # try: ... except Expected: pass / else: raise AssertionError(...)
+        exc = tree.exc.func if isinstance(tree.exc, ast.Call) else tree.exc
+        if isinstance(exc, ast.Name) and exc.id == "AssertionError":
+            return True
     if isinstance(tree, ast.With) and any(
         isinstance(item.context_expr, ast.Call)
         and isinstance(item.context_expr.func, ast.Attribute)
@@ -303,7 +323,12 @@ def validate_checks(commands):
 def run_checks(repo, commands, deadline):
     validate_checks(commands)
     results = []
-    env = dict(os.environ, PYTHONPATH=str(repo / "src") + os.pathsep + str(repo))
+    env = dict(
+        os.environ,
+        PYTHONPATH=str(repo / "src") + os.pathsep + str(repo),
+        # Baseline runs swap same-size sources within one mtime tick.
+        PYTHONDONTWRITEBYTECODE="1",
+    )
     for command in commands:
         remaining = deadline - time.perf_counter()
         if remaining <= 0:
@@ -327,6 +352,45 @@ def run_checks(repo, commands, deadline):
     return results
 
 
+# A check failing with one of these on both the original and patched source
+# references an API or import that never existed; it says nothing about the patch.
+INVALID_CHECK_ERRORS = {
+    "ImportError",
+    "ModuleNotFoundError",
+    "AttributeError",
+    "NameError",
+}
+
+
+def invalid_check_error(output):
+    """Return the final traceback line when it names a missing-API error."""
+    lines = [line.strip() for line in (output or "").splitlines() if line.strip()]
+    if not lines:
+        return None
+    name = lines[-1].split(":", 1)[0].rsplit(".", 1)[-1]
+    return lines[-1] if name in INVALID_CHECK_ERRORS else None
+
+
+def _put(path, data):
+    if data is None:
+        path.unlink(missing_ok=True)
+    else:
+        path.write_bytes(data)
+
+
+@contextmanager
+def original_sources(originals):
+    """Temporarily restore pre-edit file contents; always reinstate the patch."""
+    current = {p: p.read_bytes() if p.exists() else None for p in originals}
+    try:
+        for path, data in originals.items():
+            _put(path, data)
+        yield
+    finally:
+        for path, data in current.items():
+            _put(path, data)
+
+
 def edit_loop(
     repo,
     query,
@@ -345,6 +409,9 @@ def edit_loop(
     changed = []
     retained_checks = []
     passed_checks = []
+    replaced_checks = []
+    invalid_checks = []
+    originals = {}  # Pre-edit bytes (None = absent) for baseline check runs.
     for attempt in range(2):
         checkpoint()
         content = generate(messages, deadline)
@@ -360,10 +427,15 @@ def edit_loop(
             action = decode_response(raw)
             phase = "check_validation"
             reading_only = bool(action["reads"]) and not action["edits"]
+            repairs = action["check_repairs"]
             # Check command shape and Python syntax before applying any edits.
             if not reading_only:
-                validate_checks(action["checks"])
-            repairs = action["check_repairs"]
+                if action["checks"]:
+                    validate_checks(action["checks"])
+                elif not retained_checks:
+                    raise ValueError("Provide 1..3 behavior checks")
+                elif repairs:
+                    raise ValueError("check_repairs requires replacement checks")
             indices = {r["index"] for r in repairs}
             state = check_state(retained_checks, passed_checks)
             if indices.intersection(state["passing_indices"]):
@@ -376,19 +448,40 @@ def edit_loop(
                 raise ValueError("A read-only response cannot replace retained checks")
             if reading_only:
                 response_checks = "ignored_draft"
-            else:
-                # Replacements are explicit, never inferred from omission.
+            elif action["checks"]:
+                # New checks supersede the nonpassing retained checks when there
+                # is a replacement for each (else only listed indices). Merely
+                # resubmitting passing checks never retires a failing one.
+                new = [c for c in action["checks"] if c not in retained_checks]
+                replace = indices or (
+                    set(state["repairable_indices"])
+                    if len(new) >= len(state["repairable_indices"])
+                    else set()
+                )
+                replaced = [c for i, c in enumerate(retained_checks) if i in replace]
                 retained_checks = [
-                    c for i, c in enumerate(retained_checks) if i not in indices
+                    c for i, c in enumerate(retained_checks) if i not in replace
                 ]
                 for command in action["checks"]:
                     if command not in retained_checks:
                         retained_checks.append(command)
+                replaced = [c for c in replaced if c not in retained_checks]
+                if replaced:
+                    feedback["replaced_checks"] = replaced
+                    replaced_checks.extend(replaced)
                 response_checks = "retained"
+            else:
+                response_checks = "reused_retained"
             phase = "source_application"
             for item in action["reads"] + action["edits"]:
                 path_guard(item["path"])
             if action.get("edits"):
+                for edit in action["edits"]:
+                    target = source_path(repo, edit["path"])
+                    if target not in originals:
+                        originals[target] = (
+                            target.read_bytes() if target.exists() else None
+                        )
                 changed.extend(apply_edits(repo, action["edits"]))
             if action.get("reads"):
                 phase = "source_reads"
@@ -399,24 +492,46 @@ def edit_loop(
                 # completion claim and must not succeed on previously run checks.
                 feedback["failure_stage"] = "source_reads"
             elif changed:
+                runner = check_runner or run_checks
                 feedback["checks"] = []
                 for phase, commands in (
-                    ("check_execution", retained_checks),
+                    ("check_execution", list(retained_checks)),
                     ("delivery_verification", required_checks),
                 ):
                     for command in commands:
-                        results = (check_runner or run_checks)(
-                            repo, [command], deadline
-                        )
+                        results = runner(repo, [command], deadline)
                         if not results:
                             raise ValueError("Check runner returned no result")
-                        feedback["checks"].extend(results)
                         if all(r["returncode"] == 0 for r in results):
+                            feedback["checks"].extend(results)
                             if command not in passed_checks:
                                 passed_checks.append(command)
-                        else:
-                            feedback.setdefault("failure_stage", phase)
-                if all(c["returncode"] == 0 for c in feedback["checks"]):
+                            continue
+                        error = invalid_check_error(results[-1].get("output"))
+                        if phase == "check_execution" and originals and error:
+                            # Same missing-API failure without the patch: the
+                            # check is broken, not the patch. Report, don't gate.
+                            with original_sources(originals):
+                                baseline = runner(repo, [command], deadline)
+                            if (
+                                baseline
+                                and baseline[-1]["returncode"] != 0
+                                and invalid_check_error(baseline[-1].get("output"))
+                                == error
+                            ):
+                                invalid_checks.append(
+                                    {"command": command, "error": error}
+                                )
+                                feedback.setdefault("invalid_checks", []).append(
+                                    {"command": command, "error": error}
+                                )
+                                retained_checks.remove(command)
+                                continue
+                        feedback["checks"].extend(results)
+                        feedback.setdefault("failure_stage", phase)
+                gating_passed = all(c["returncode"] == 0 for c in feedback["checks"])
+                verified = any(c in passed_checks for c in retained_checks)
+                if gating_passed and verified:
                     write(
                         output / "editor-trace.json",
                         messages + [{"feedback": feedback}],
@@ -427,7 +542,16 @@ def edit_loop(
                         "changed_files": sorted(set(changed)),
                         "checks": feedback["checks"],
                         "check_repairs": repairs,
+                        "replaced_checks": replaced_checks,
+                        "invalid_checks": invalid_checks,
                     }
+                if gating_passed:
+                    feedback["failure_stage"] = "check_execution"
+                    feedback["error"] = (
+                        "Every generated check failed the same way on the original "
+                        "source, so none tests this patch. Submit at least one check "
+                        "that uses existing APIs and imports."
+                    )
             elif not action["reads"]:
                 raise ValueError(
                     "No edits have been applied. Return concrete edits and behavior "
@@ -447,18 +571,25 @@ def edit_loop(
         feedback["retained_checks"] = retained_checks
         feedback["check_state"] = check_state(retained_checks, passed_checks)
         feedback["response_checks"] = response_checks
+        if feedback.get("invalid_checks"):
+            feedback["invalid_check_note"] = (
+                "invalid_checks failed identically on the original source (missing "
+                "API or import). They were dropped and do not gate completion."
+            )
         if feedback["check_state"]["repairable_indices"]:
             feedback["check_repair_instruction"] = (
-                "Omitted earlier checks will run again. Only repairable_indices may "
-                "be replaced via check_repairs, with a reason explaining the incorrect "
-                "API or expectation. Indices refer to retained_checks. Never retire a "
-                "check for missing requested behavior. Passing and runtime delivery "
-                "checks cannot be retired."
+                "If the implementation is wrong, send fixing edits with checks=[]; "
+                "retained_checks run again. If a failing check's API or expectation "
+                "is wrong, send one corrected check per failing check: they replace "
+                "all failing retained checks (or only indices listed in "
+                "check_repairs). Resubmitting passing checks retires nothing. Never weaken a "
+                "check that tests the original request. Passing and runtime delivery "
+                "checks always run."
             )
         else:
             feedback["check_repair_instruction"] = (
                 "Use check_repairs: []. There are no retained nonpassing checks to "
-                "replace. Passing and runtime delivery checks cannot be retired."
+                "replace. Passing and runtime delivery checks always run."
             )
         feedback["required_deliveries"] = requirements or {}
         feedback["original_request"] = query
@@ -486,9 +617,12 @@ def edit_loop(
             )
         feedback["remaining_responses"] = 1 - attempt
         feedback["completion_instruction"] = (
-            "To complete, include 1..3 checks as python_lines arrays and any needed "
-            "edits. Another read-only response cannot complete the task."
-        )
+            "To complete, send edits with checks=[] to rerun retained_checks, "
+            "or 1..3 corrected checks as python_lines arrays. "
+            if retained_checks
+            else "To complete, include 1..3 checks as python_lines arrays and "
+            "any needed edits. "
+        ) + "Another read-only response cannot complete the task."
         messages.append(
             {
                 "role": "user",

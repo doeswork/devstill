@@ -29,6 +29,19 @@ from devstill.runtime.requirements import delivery_checks, delivery_requirements
 from devstill.search import HybridSearch
 
 
+def render_check_changes(execution):
+    """Show checks the model replaced or that were dropped, for human review."""
+    lines = []
+    for command in execution.get("replaced_checks") or []:
+        lines.append("Replaced failing check:\n```python\n" + command[-1] + "\n```")
+    for item in execution.get("invalid_checks") or []:
+        lines.append(
+            f"Dropped check (fails on original source too: {item['error']}):\n"
+            "```python\n" + item["command"][-1] + "\n```"
+        )
+    return "".join(line + "\n\n" for line in lines)
+
+
 def render(proposal):
     files = ", ".join(f"`{p}`" for p in proposal.get("files", {})) or "none"
     context = ", ".join(
@@ -39,6 +52,7 @@ def render(proposal):
         f"Status: **{proposal['status']}**\n\nContext: {context or 'none'}\n\n"
         f"Changed files: {files}\n\n"
         "Validation: generated behavior checks; independent acceptance is not implied.\n\n"
+        + render_check_changes(proposal.get("execution") or {})
         + (f"Error: {proposal['error']}\n\n" if proposal.get("error") else "")
         + "```diff\n"
         + proposal.get("patch", "")

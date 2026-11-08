@@ -286,3 +286,165 @@ def test_runtime_delivery_check_has_no_model_repair_index(session, monkeypatch):
     result = session.prepare("Change x to 2 and create b.py")
     assert result["status"] == "failed"
     assert result["execution"]["failure_stage"] == "delivery_verification"
+
+
+def checks_action(*codes, edits=None, repairs=None):
+    response = action(edits=edits, repairs=repairs)
+    response["checks"] = [{"python_lines": [code]} for code in codes]
+    return response
+
+
+def test_corrected_check_replaces_failing_check_without_repair_index(
+    session, monkeypatch
+):
+    # Correct patch, wrong expectation; the fix resubmits the check without an
+    # index. Previously the wrong check was retained and failed the run.
+    actions = iter(
+        [
+            action(code="import a; assert a.x == 3"),
+            action(code="import a; assert a.x == 2", edits=[]),
+        ]
+    )
+    monkeypatch.setattr(session, "generate", lambda *a: json.dumps(next(actions)))
+    proposal = session.prepare("Change x to 2")
+    assert proposal["status"] == "ready", proposal
+    execution = proposal["execution"]
+    assert execution["replaced_checks"] == [
+        ["python", "-c", "import a; assert a.x == 3"]
+    ]
+    feedback = trace_feedback(session, proposal)[0]
+    assert feedback["check_state"]["repairable_indices"] == [0]
+
+
+def test_implementation_only_repair_reruns_retained_checks(session, monkeypatch):
+    calls = []
+
+    def generate(messages, deadline):
+        calls.append(1)
+        if len(calls) == 1:
+            return json.dumps(
+                action(edits=[{"path": "a.py", "old": "x = 1", "new": "x = 3"}])
+            )
+        repair = {
+            "edits": [{"path": "a.py", "old": "x = 3", "new": "x = 2"}],
+            "reads": [],
+            "checks": [],
+            "check_repairs": [],
+        }
+        validator = Draft202012Validator(response_schema(messages))
+        assert validator.is_valid(repair)
+        assert not validator.is_valid({**repair, "edits": []})  # No empty no-op.
+        assert not validator.is_valid(
+            {
+                **repair,
+                "check_repairs": [
+                    {"index": 0, "reason": "Drop it without a replacement"}
+                ],
+            }
+        )
+        return json.dumps(repair)
+
+    monkeypatch.setattr(session, "generate", generate)
+    proposal = session.prepare("Change x to 2")
+    assert proposal["status"] == "ready", proposal
+    assert proposal["model_calls"] == 2
+    assert [c["command"][-1] for c in proposal["execution"]["checks"]] == [
+        "import a\nassert a.x == 2"
+    ]
+    assert proposal["execution"]["replaced_checks"] == []
+
+
+def test_first_edit_without_checks_is_rejected_at_runtime(session, monkeypatch):
+    first = action()
+    first["checks"] = []
+    actions = iter([first, first])
+    monkeypatch.setattr(session, "generate", lambda *a: json.dumps(next(actions)))
+    proposal = session.prepare("Change x to 2")
+    assert proposal["status"] == "failed"
+    assert proposal["execution"]["changed_files"] == []
+    assert "1..3 behavior checks" in proposal["execution"]["last_error"]
+
+
+def test_retiring_a_check_without_replacement_is_rejected(session, monkeypatch):
+    actions = iter(
+        [
+            action(code="import a; assert a.x == 3"),
+            {
+                "edits": [{"path": "a.py", "old": "x = 2", "new": "x = 4"}],
+                "reads": [],
+                "checks": [],
+                "check_repairs": [{"index": 0, "reason": "Expectation was not wanted"}],
+            },
+        ]
+    )
+    monkeypatch.setattr(session, "generate", lambda *a: json.dumps(next(actions)))
+    proposal = session.prepare("Change x")
+    assert proposal["status"] == "failed"
+    assert "requires replacement checks" in proposal["execution"]["last_error"]
+
+
+def test_check_for_missing_api_is_reported_not_gating(session, monkeypatch):
+    actions = iter(
+        [checks_action("import a\nassert a.x == 2", "import a\nassert a.strong(1)")]
+    )
+    monkeypatch.setattr(session, "generate", lambda *a: json.dumps(next(actions)))
+    proposal = session.prepare("Change x to 2")
+    assert proposal["status"] == "ready", proposal
+    assert proposal["model_calls"] == 1
+    (invalid,) = proposal["execution"]["invalid_checks"]
+    assert invalid["error"] == "AttributeError: module 'a' has no attribute 'strong'"
+    assert "x = 2" in proposal["patch"]  # Baseline swap restored the patched source.
+
+
+def test_only_invalid_checks_cannot_complete(session, monkeypatch):
+    invalid = checks_action("from a import missing\nassert missing() == 2")
+    actions = iter([invalid, checks_action("import a\nassert a.nope == 2", edits=[])])
+    monkeypatch.setattr(session, "generate", lambda *a: json.dumps(next(actions)))
+    proposal = session.prepare("Change x to 2")
+    assert proposal["status"] == "failed"
+    assert proposal["execution"]["failure_stage"] == "check_execution"
+    feedback = trace_feedback(session, proposal)[0]
+    assert "none tests this patch" in feedback["error"]
+    assert feedback["retained_checks"] == []
+
+
+def test_missing_api_caused_by_the_patch_still_gates(session, monkeypatch):
+    # The original source has x; only the patch removes it. Not an invalid check.
+    patch = [{"path": "a.py", "old": "x = 1", "new": "y = 2"}]
+    actions = iter(
+        [
+            checks_action(
+                "import a\nassert a.y == 2", "import a\nassert a.x == 1", edits=patch
+            ),
+            checks_action("import a\nassert a.y == 2", edits=[]),
+        ]
+    )
+    monkeypatch.setattr(session, "generate", lambda *a: json.dumps(next(actions)))
+    proposal = session.prepare("Add y without removing x")
+    assert proposal["status"] == "failed"
+    assert proposal["execution"]["failure_stage"] == "check_execution"
+    assert all("invalid_checks" not in f for f in trace_feedback(session, proposal))
+
+
+def test_baseline_run_restores_created_files(session, monkeypatch):
+    edits = [{"path": "b.py", "old": "", "new": "y = 2\n"}]
+    actions = iter(
+        [
+            checks_action(
+                "import b\nassert b.y == 2", "import a\nassert a.gone", edits=edits
+            )
+        ]
+    )
+    monkeypatch.setattr(session, "generate", lambda *a: json.dumps(next(actions)))
+    proposal = session.prepare("Add module with y")
+    assert proposal["status"] == "ready", proposal
+    assert len(proposal["execution"]["invalid_checks"]) == 1
+    assert "+y = 2" in proposal["patch"]  # Created file survived the baseline run.
+
+
+def test_else_raise_assertion_error_counts_as_behavior_check():
+    code = "try:\n    int('a')\nexcept ValueError:\n    pass\nelse:\n    raise AssertionError('accepted')"
+    validate_checks([["python", "-c", code]])
+    validate_checks([["python", "-c", "x = 1\nif x != 1:\n    raise AssertionError"]])
+    with pytest.raises(ValueError, match="behavioral assertion"):
+        validate_checks([["python", "-c", "raise ValueError('not a check')"]])
