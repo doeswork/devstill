@@ -1,4 +1,9 @@
 devstill
+
+Proposed architecture: [minimal runtime rebuild plan](REBUILD_PLAN.md). This is a
+staged replacement of the coding workflow that retains the existing retrieval
+foundation; it is not yet the behavior of the installed application.
+
 `devstill` is a standalone, local-first repository-intelligence TUI for developers and AI coding agents.
 Run `devstill` from any directory inside a configured codebase. It searches upward through parent directories until it finds a `devstill.json`, then opens the TUI for that repository.
 The goal is fast local retrieval followed by compact coding tasks. Indexing and embeddings stay local; Task Review and YOLO send selected source only to the configured model endpoint. Task Review and YOLO use the existing Quick retrieval, file-impact review and Pi executor. Explicit Feature mode tries Quick first and coordinates only unresolved reviews; feature quality remains experimental ([comparison results](benchmarks/retrieval/FEATURE_COORDINATION_RESULTS.md)).

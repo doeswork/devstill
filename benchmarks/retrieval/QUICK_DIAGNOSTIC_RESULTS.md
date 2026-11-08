@@ -1,5 +1,7 @@
 # Small execution diagnostic results
 
+**Later ten-case check:** [20 attempts in 4m22s](QUICK_FAST_V1_RESULTS.md). The unchanged minimal editor passed independent checks on 10/10 patches but completed only 6/10 workflows versus Pi's 8/10. The earlier 4/4 draw below did not establish stable workflow reliability.
+
 The revised minimal editor matched native Pi on four known small edits and was
 faster on all four paired draws. This is a promising development result, **not
 proof of general superiority or permission to resume broad campaigns**. Production

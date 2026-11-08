@@ -1,0 +1,187 @@
+[
+  {
+    "id": "w_repr",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "family": "werkzeug:src/werkzeug/user_agent.py",
+    "query": "When no browser was parsed, repr(UserAgent) should be <UserAgent> (or the subclass name), without None/None. Preserve the existing parsed-browser representation.",
+    "checks": "from werkzeug.user_agent import UserAgent\nu=UserAgent('raw'); assert repr(u)=='<UserAgent>'; u.browser='B'; u.version='1'; assert repr(u)=='<UserAgent B/1>'",
+    "edits": [
+      {
+        "path": "src/werkzeug/user_agent.py",
+        "old": "        return f\"<{type(self).__name__} {self.browser}/{self.version}>\"",
+        "new": "        if self.browser is None:\n            return f\"<{type(self).__name__}>\"\n        return f\"<{type(self).__name__} {self.browser}/{self.version}>\""
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "previous development case; first six Python small edits"
+  },
+  {
+    "id": "w_salt",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "family": "werkzeug:src/werkzeug/security.py",
+    "query": "Make gen_salt reject bool lengths with TypeError, while preserving positive integer lengths and the existing ValueError for zero.",
+    "checks": "from werkzeug.security import gen_salt\nassert len(gen_salt(7))==7\nfor value in (True,False):\n try: gen_salt(value)\n except TypeError: pass\n else: raise AssertionError('bool accepted')\ntry: gen_salt(0)\nexcept ValueError: pass\nelse: raise AssertionError('zero accepted')",
+    "edits": [
+      {
+        "path": "src/werkzeug/security.py",
+        "old": "    if length <= 0:",
+        "new": "    if isinstance(length, bool):\n        raise TypeError(\"length must be an integer, not bool\")\n    if length <= 0:"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "previous development case; first six Python small edits"
+  },
+  {
+    "id": "w_header_lines",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "family": "werkzeug:src/werkzeug/http.py",
+    "query": "quote_header_value must raise ValueError for CR or LF anywhere in the stringified value. Keep quoting and escaping behavior for ordinary values.",
+    "checks": "from werkzeug.http import quote_header_value\nassert quote_header_value('abc')=='abc'; assert quote_header_value('a b')=='\"a b\"'\nfor v in ('a\\nb','a\\rb'):\n try: quote_header_value(v)\n except ValueError: pass\n else: raise AssertionError('newline accepted')",
+    "edits": [
+      {
+        "path": "src/werkzeug/http.py",
+        "old": "    value_str = str(value)\n",
+        "new": "    value_str = str(value)\n    if \"\\r\" in value_str or \"\\n\" in value_str:\n        raise ValueError(\"header value contains newline\")\n"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "previous development case; first six Python small edits"
+  },
+  {
+    "id": "w_close",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "family": "werkzeug:src/werkzeug/wsgi.py",
+    "query": "Make ClosingIterator.close idempotent: its registered cleanup callbacks should run at most once even when close is called twice. Preserve callback order.",
+    "checks": "from werkzeug.wsgi import ClosingIterator\nseen=[]; it=ClosingIterator([], [lambda:seen.append(1),lambda:seen.append(2)]); it.close(); it.close(); assert seen==[1,2]",
+    "edits": [
+      {
+        "path": "src/werkzeug/wsgi.py",
+        "old": "        for callback in self._callbacks:\n            callback()",
+        "new": "        callbacks, self._callbacks = self._callbacks, []\n        for callback in callbacks:\n            callback()"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "previous development case; first six Python small edits"
+  },
+  {
+    "id": "w_age",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "family": "werkzeug:src/werkzeug/http.py",
+    "query": "dump_age should reject bool with TypeError. Preserve None, integers and timedelta handling, including rejection of negative ages.",
+    "checks": "from werkzeug.http import dump_age\nfrom datetime import timedelta\nassert dump_age(None) is None; assert dump_age(2)=='2'; assert dump_age(timedelta(seconds=3))=='3'\nfor v in (True,False):\n try: dump_age(v)\n except TypeError: pass\n else: raise AssertionError('bool accepted')",
+    "edits": [
+      {
+        "path": "src/werkzeug/http.py",
+        "old": "    if age is None:\n        return None\n    if isinstance(age, timedelta):",
+        "new": "    if isinstance(age, bool):\n        raise TypeError(\"age must not be bool\")\n    if age is None:\n        return None\n    if isinstance(age, timedelta):"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "previous development case; first six Python small edits"
+  },
+  {
+    "id": "w_description",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "family": "werkzeug:src/werkzeug/exceptions.py",
+    "query": "Normalize CRLF and lone CR to LF in HTTPException.get_description before HTML escaping and line-break rendering. Keep ordinary HTML escaping.",
+    "checks": "from werkzeug.exceptions import BadRequest\nassert BadRequest('a\\r\\nb\\rc').get_description()=='<p>a<br>b<br>c</p>'; assert BadRequest('<x>').get_description()=='<p>&lt;x&gt;</p>'",
+    "edits": [
+      {
+        "path": "src/werkzeug/exceptions.py",
+        "old": "        description = escape(description).replace(\"\\n\", Markup(\"<br>\"))",
+        "new": "        description = description.replace(\"\\r\\n\", \"\\n\").replace(\"\\r\", \"\\n\")\n        description = escape(description).replace(\"\\n\", Markup(\"<br>\"))"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "previous development case; first six Python small edits"
+  },
+  {
+    "id": "w_storage_truth",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "family": "w_storage_truth",
+    "query": "Make FileStorage.__bool__ false for a missing, empty, or whitespace-only filename. Keep ordinary nonempty filenames truthy. Do not mutate filename or the underlying stream.",
+    "checks": "from io import BytesIO\nfrom werkzeug.datastructures import FileStorage\nfor filename in (None, '', ' ', '\\t\\r\\n', ' \\t '):\n stream=BytesIO(b'payload'); storage=FileStorage(stream=stream, filename=filename)\n original=storage.filename\n assert not storage, repr(filename)\n assert storage.filename == original\n assert storage.stream is stream and storage.read() == b'payload'\nfor filename in ('file.txt', ' file.txt ', '0'):\n assert bool(FileStorage(filename=filename))\n",
+    "edits": [
+      {
+        "path": "src/werkzeug/datastructures/file_storage.py",
+        "old": "        return bool(self.filename)",
+        "new": "        return bool(self.filename and self.filename.strip())"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "new source-authored development case; not independently held out"
+  },
+  {
+    "id": "w_secure_pathlike",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "family": "w_secure_pathlike",
+    "query": "Allow secure_filename to accept os.PathLike[str] inputs through os.fspath, as well as strings. Keep its existing normalization and filename sanitizing behavior. Update the input type annotation accordingly.",
+    "checks": "from pathlib import PurePosixPath\nfrom werkzeug.utils import secure_filename\nclass Named:\n def __fspath__(self): return 'folder/my report.txt'\nassert secure_filename(PurePosixPath('folder/my report.txt')) == 'folder_my_report.txt'\nassert secure_filename(Named()) == 'folder_my_report.txt'\nassert secure_filename('../../../etc/passwd') == 'etc_passwd'\nassert secure_filename('My cool movie.mov') == 'My_cool_movie.mov'\nassert secure_filename('i contain cool ümläuts.txt') == 'i_contain_cool_umlauts.txt'\nassert secure_filename('') == ''\n",
+    "edits": [
+      {
+        "path": "src/werkzeug/utils.py",
+        "old": "    filename = unicodedata.normalize(\"NFKD\", filename)",
+        "new": "    filename = os.fspath(filename)\n    filename = unicodedata.normalize(\"NFKD\", filename)"
+      },
+      {
+        "path": "src/werkzeug/utils.py",
+        "old": "def secure_filename(filename: str) -> str:",
+        "new": "def secure_filename(filename: str | os.PathLike[str]) -> str:"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "new source-authored development case; not independently held out"
+  },
+  {
+    "id": "w_hop_whitespace",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "family": "w_hop_whitespace",
+    "query": "Make is_hop_by_hop_header ignore surrounding ASCII spaces and tabs before its case-insensitive header-name lookup. Preserve ordinary matching and rejection of unknown names. Do not trim CR or LF.",
+    "checks": "from werkzeug.http import is_hop_by_hop_header\nfor value in ('Connection', 'connection', ' Connection ', '\\tTRANSFER-ENCODING \\t', ' keep-alive'):\n assert is_hop_by_hop_header(value), repr(value)\nfor value in ('X-Custom', ' x-custom ', '', ' \\t ', 'Connection\\n', '\\rConnection'):\n assert not is_hop_by_hop_header(value), repr(value)\n",
+    "edits": [
+      {
+        "path": "src/werkzeug/http.py",
+        "old": "    return header.lower() in _hop_by_hop_headers",
+        "new": "    return header.strip(\" \\t\").lower() in _hop_by_hop_headers"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "new source-authored development case; not independently held out"
+  },
+  {
+    "id": "w_parse_age_types",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "family": "w_parse_age_types",
+    "query": "Make parse_age return None for every non-string input, including bool, integers, floats, lists and dictionaries. Preserve its current handling of valid integer strings, whitespace, zero, negative values, malformed strings and overflow.",
+    "checks": "from datetime import timedelta\nfrom werkzeug.http import parse_age\nfor value in (None, True, False, 3, 0, 1.5, [], {}, ['3']):\n assert parse_age(value) is None, repr(value)\nassert parse_age('3') == timedelta(seconds=3)\nassert parse_age(' 4 ') == timedelta(seconds=4)\nassert parse_age('0') == timedelta(0)\nfor value in ('', '-1', 'not-an-age', '9'*100):\n assert parse_age(value) is None\n",
+    "edits": [
+      {
+        "path": "src/werkzeug/http.py",
+        "old": "    if not value:\n        return None\n    try:\n        seconds = int(value)",
+        "new": "    if not isinstance(value, str) or not value:\n        return None\n    try:\n        seconds = int(value)"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "new source-authored development case; not independently held out"
+  }
+]

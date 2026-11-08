@@ -1,5 +1,7 @@
 # Retrieval benchmark plan and agent handoff
 
+**Proposed runtime replacement:** [detailed rebuild and migration plan](../../REBUILD_PLAN.md), covering a shared minimal editor for TUI/headless, production hardening, short Pi comparisons and legacy removal. This is a plan, not an implemented replacement.
+
 **Small execution diagnostic:** [four cases, three approaches, bounded run and decision gate](QUICK_DIAGNOSTIC.md). Compare native Pi, Pi with retrieved evidence, and a benchmark-only exact-replacement editor before resuming broad campaigns.
 The [completed diagnostic and corrected-editor recheck](QUICK_DIAGNOSTIC_RESULTS.md) found 4/4 parity and a speed advantage for the revised editor on one known-case repetition; repeated and fresh-case validation remains required.
 
