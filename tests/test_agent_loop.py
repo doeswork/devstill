@@ -537,9 +537,9 @@ def test_guard_reports_only_tests_broken_by_the_change(tested):
     guard = TestGuard(tools, ["tests/test_m.py"], original.get)
     tools.edit("pkg/m.py", [{"oldText": "return -a", "newText": "return a"}])
     guard.changed()
-    new, output = guard.regressions(30)
-    assert new == ["tests/test_m.py::test_neg"]  # test_known_bad failed before too
-    assert "test_neg" in output
+    found = guard.regressions(30)
+    assert found["regressions"] == ["tests/test_m.py::test_neg"]  # known_bad failed before
+    assert "test_neg" in found["output"]
     assert (tested / "pkg" / "m.py").read_text().endswith("return a\n")  # restored
     tools.edit("pkg/m.py", [{"oldText": "return a\n", "newText": "return -a\n"}])
     guard.changed()
@@ -635,7 +635,11 @@ def test_guard_selects_tests_for_changed_functions_only(tested):
     assert changed_symbols((tested / "pkg" / "m.py").read_text(), original["pkg/m.py"].decode()) == {"neg"}
     assert guard_test_files(tested, ["pkg/m.py"], original.get) == ["tests/test_m.py"]
     (tested / "notes.toml").write_text("x = 1\n")
-    assert guard_test_files(tested, ["notes.toml", "tests/test_m.py"], original.get) == []
+    assert guard_test_files(tested, ["notes.toml"], original.get) == []
+    # Test files the agent edited are always re-run.
+    assert guard_test_files(tested, ["notes.toml", "tests/test_m.py"], original.get) == [
+        "tests/test_m.py"
+    ]
 
 
 def test_turn_limit_judges_the_latest_check_after_the_edit(work):
@@ -694,9 +698,9 @@ def test_guard_whole_suite_catches_unrelated_meta_tests(tested):
     tools.edit("pkg/m.py", [{"oldText": "return -a", "newText": "# negate\n    return -a"}])
     guard.changed()
     time.sleep(0.1)
-    new, output = guard.regressions(30)
-    assert new == ["tests/test_meta.py::test_module_stays_small"]
-    assert "test_known_bad" not in output  # pre-existing failure filtered out
+    found = guard.regressions(30)
+    assert found["regressions"] == ["tests/test_meta.py::test_module_stays_small"]
+    assert "test_known_bad" not in found["output"]  # pre-existing failure filtered out
     guard.close()
 
 
@@ -835,7 +839,9 @@ def test_malformed_tool_text_and_failed_latest_check_do_not_finish(work):
 
 
 def test_persistent_regressions_are_never_accepted(work):
-    guard = FakeGuard(found=(["tests/test_m.py::test_neg"], "boom"))
+    guard = FakeGuard(
+        found={"regressions": ["tests/test_m.py::test_neg"], "added": [], "output": "boom"}
+    )
     edit = call("edit", 0, path="pkg/m.py", oldText="a - b", newText="a + b")
     done = call("done", 1, summary="x")
     chat = scripted(*[reply(edit if i == 0 else call("done", 0, summary="x"), *( [done] if i == 0 else [])) for i in range(4)])
@@ -884,8 +890,9 @@ def test_guard_counts_regressions_even_when_the_agent_added_tests(tested):
     tools.edit("pkg/m.py", [{"oldText": "return -a", "newText": "return a"}])
     tools.write("tests/test_m.py", "\n\ndef test_new_one():\n    assert False\n", append=True)
     guard.changed()
-    new, _output = guard.regressions(30)
-    assert new == ["tests/test_m.py::test_neg"]  # the agent's new test is not a regression
+    found = guard.regressions(30)
+    assert found["regressions"] == ["tests/test_m.py::test_neg"]
+    assert found["added"] == ["tests/test_m.py::test_new_one"]  # failing new test reported
     guard.close()
 
 

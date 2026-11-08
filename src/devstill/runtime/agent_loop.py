@@ -554,22 +554,31 @@ def _loop(
             # Slow suites must not dominate a quick task: wait briefly at most.
             wait = min(15.0, max(0.0, deadline - time.perf_counter() - 5))
             found = guard.regressions(wait, deadline)
-            state["regressions"] = list(found[0]) if found else []
+            failing = (found["regressions"] + found["added"]) if found else []
+            state["regressions"] = failing
             if found and (guard_reports < 2 and not final):
                 guard_reports += 1
-                new, test_output = found
+                parts = []
+                if found["regressions"]:
+                    parts.append(
+                        "Existing tests that passed before your change now fail:\n"
+                        + "\n".join(found["regressions"][:10])
+                    )
+                if found["added"]:
+                    parts.append(
+                        "Tests you added fail:\n" + "\n".join(found["added"][:10])
+                    )
                 diff = guard.diff()
                 return (
-                    "Existing tests that passed before your change now fail:\n"
-                    + "\n".join(new[:10])
+                    "\n\n".join(parts)
                     + "\n\nOutput (tail):\n"
-                    + test_output[-2500:]
+                    + found["output"][-2500:]
                     + (f"\n\nYour changes so far:\n```diff\n{diff}\n```" if diff else "")
-                    + "\nFix the code so they pass again, unless the request explicitly "
-                    "asks to change that behavior."
+                    + "\nFix the code (or a test you added, if it is wrong) so they pass, "
+                    "unless the request explicitly asks to change that behavior."
                 )
             if found:
-                return "Existing tests still fail: " + ", ".join(found[0][:10])
+                return "Tests still fail: " + ", ".join(failing[:10])
         return None
 
     def changed():

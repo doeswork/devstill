@@ -764,9 +764,12 @@ class TestGuard:
         )
 
     def regressions(self, wait, deadline=None):
-        """Return (new_failures, output) for the latest change, or None if unknown.
+        """Failures the change introduced, or None when there are none (or unknown).
 
-        Never runs past `deadline` (a time.perf_counter() value).
+        Returns {"regressions": tests that passed with the original sources and
+        fail now, "added": failing tests the agent added in files it edited,
+        "output": focused pytest output}. Never runs past `deadline`
+        (a time.perf_counter() value).
         """
         runs = dict(self._runs)
         if not runs:
@@ -805,27 +808,42 @@ class TestGuard:
 
         if budget() < 3.0:
             return None
-        passed = self._baseline(sorted(failing), budget())
-        if passed is None:
+        baseline = self._baseline(sorted(failing), budget())
+        if baseline is None:
             return None
+        passed, failed_before = baseline
         new = sorted(
             name
             for name in failing
             if name in passed
             or ("::" not in name and any(p.startswith(name + "::") for p in passed))
         )
-        if not new or budget() < 3.0:
+        edited = set(self.workspace.changed)
+        added = sorted(
+            name
+            for name in failing
+            if name not in passed
+            and name not in failed_before
+            and "::" in name
+            and name.split("::", 1)[0] in edited
+        )
+        if not (new or added) or budget() < 3.0:
             return None
         # Confirm on the current state (filters flakes from concurrent runs)
         # and show only these failures.
-        focused = self._execute(new, budget())
+        focused = self._execute(new + added, budget())
         if not self._usable(focused):
             return None
-        confirmed = [name for name in new if name in set(focused["failed"])]
-        return (confirmed, focused["output"]) if confirmed else None
+        still = set(focused["failed"])
+        result = {
+            "regressions": [name for name in new if name in still],
+            "added": [name for name in added if name in still],
+            "output": focused["output"],
+        }
+        return result if result["regressions"] or result["added"] else None
 
     def _baseline(self, failing, timeout):
-        """Test ids that PASSED with the original sources restored.
+        """(passed, failed) test ids with the original sources restored.
 
         Whole test files are re-run (not node ids), so tests the agent added
         and ids pytest cannot re-select do not hide real regressions.
@@ -846,7 +864,7 @@ class TestGuard:
                     path.write_bytes(original)
             present = [name for name in files if (root / name).exists()]
             if not present:
-                return set()
+                return set(), set()
             result = self._execute(present, max(1.0, timeout), extra=("-rA",))
         finally:
             for name, data in current.items():
@@ -858,7 +876,7 @@ class TestGuard:
                     path.write_bytes(data)
         if not self._usable(result):
             return None
-        return set(result["passed"])
+        return set(result["passed"]), set(result["failed"])
 
 
 def _kill(process):

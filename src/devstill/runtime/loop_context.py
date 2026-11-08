@@ -198,7 +198,11 @@ def changed_symbols(new_text: str, old_text: str) -> set[str]:
 
 
 def guard_test_files(work: Path, changed, original, limit=2, allowed=None):
-    """Existing test files that exercise the functions/classes just changed."""
+    """Test files to re-run: tests the agent edited, plus existing test files
+    that exercise the functions/classes it changed."""
+    edited_tests = [
+        name for name in changed if name.endswith(".py") and is_test_path(name)
+    ]
     names = set()
     for name in changed:
         if not name.endswith(".py") or is_test_path(name):
@@ -211,12 +215,13 @@ def guard_test_files(work: Path, changed, original, limit=2, allowed=None):
         old_text = raw.decode("utf-8", errors="replace") if raw else ""
         names |= changed_symbols(new_text, old_text)
     if not names:
-        return []
+        return edited_tests
     counts, _ = related_tests(work, names, allowed=allowed)
     if not counts:
-        return []
+        return edited_tests
     top = counts[0][0]
-    return [name for hits, name in counts[:limit] if hits * 2 >= top]
+    related = [name for hits, name in counts[:limit] if hits * 2 >= top]
+    return list(dict.fromkeys(edited_tests + related))
 
 
 def _render_section(path, lines, intervals, complete, header, preface, cap):
