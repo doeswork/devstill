@@ -6,8 +6,6 @@ from devstill.runtime.context import support_records
 from devstill.runtime.editor import source_path
 from devstill.runtime.requirements import delivery_checks, delivery_requirements
 
-pytest_plugins = ("tests.test_minimal_runtime",)
-
 
 def package(repo):
     root = repo / "src" / "sample"

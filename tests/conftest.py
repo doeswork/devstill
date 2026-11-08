@@ -137,3 +137,39 @@ def configured_repo(tmp_path: Path) -> tuple[Path, Path, Any]:
         encoding="utf-8",
     )
     return repo, config_path, load_config(config_path)
+
+
+# Shared by the structured-editor runtime tests (minimal runtime, repair,
+# requirements); defined here so every pytest version can find it.
+@pytest.fixture
+def session(tmp_path, monkeypatch):
+    from devstill.config import DevstillConfig
+    from devstill.runtime.service import RuntimeSession
+
+    (tmp_path / "a.py").write_text("x = 1\n")
+    config = DevstillConfig()
+    config.llm.enabled = True
+    config.llm.model = "test"
+    config.repo.root = str(tmp_path)
+    config.index.path = str(tmp_path / ".devstill/chroma")
+    # These tests exercise the structured two-response editor explicitly.
+    config.editing.engine = "structured"
+    runtime = RuntimeSession(tmp_path / "devstill.json", config)
+    monkeypatch.setattr(
+        runtime,
+        "evidence",
+        lambda query: [{"path": "a.py", "code": "x = 1", "lines": [1, 1]}],
+    )
+    monkeypatch.setattr(
+        runtime,
+        "generate",
+        lambda *a: json.dumps(
+            {
+                "edits": [{"path": "a.py", "old": "x = 1", "new": "x = 2"}],
+                "reads": [],
+                "checks": [["python", "-c", "import a; assert a.x == 2"]],
+            }
+        ),
+    )
+    yield runtime
+    runtime.close()

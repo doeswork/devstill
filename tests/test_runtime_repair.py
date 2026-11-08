@@ -7,8 +7,6 @@ from jsonschema import Draft202012Validator
 
 from devstill.runtime.editor import decode_response, response_schema, validate_checks
 
-pytest_plugins = ("tests.test_minimal_runtime",)
-
 
 def action(*, code="import a\nassert a.x == 2", edits=None, reads=None, repairs=None):
     return {
