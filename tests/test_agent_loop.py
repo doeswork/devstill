@@ -965,3 +965,9 @@ def test_latest_check_is_rerun_when_the_agent_edits_after_it(work):
     rejected = [m for m in chat.seen[2] if m["role"] == "tool"][-1]["content"]
     assert "fails after your last edit" in rejected and "NameError" in rejected
     assert result["verified"] and result["commands"][-1]["automatic"]
+
+
+def test_commands_that_create_files_tell_the_model_to_use_write(work):
+    result = tools_for(work).bash("printf 'X = 1\\n' > pkg/helper.py", 10)
+    assert "NOT part of the change: pkg/helper.py" in result.text
+    assert "pkg/helper.py" not in tools_for(work).changed

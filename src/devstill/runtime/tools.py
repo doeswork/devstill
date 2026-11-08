@@ -377,6 +377,20 @@ class Workspace:
                 states[name] = None
         return states
 
+    def _files(self) -> set[str]:
+        """Relative paths of regular files (caches and VCS data excluded)."""
+        found = set()
+        for current, directories, names in os.walk(self.root):
+            directories[:] = [
+                d
+                for d in directories
+                if d not in {"__pycache__", ".pytest_cache", ".git", ".devstill"}
+            ]
+            base = Path(current).relative_to(self.root)
+            for name in names:
+                found.add((base / name).as_posix())
+        return found
+
     def _note(self, name: str) -> None:
         if name not in self.changed:
             self.changed.append(name)
@@ -515,6 +529,7 @@ class Workspace:
 
     def _run(self, argv, timeout: float, checkpoint=lambda: None) -> ToolResult:
         before = self._stat_tracked()
+        existing = self._files()
         started = time.perf_counter()
         with tempfile.TemporaryFile() as output:
             try:
@@ -559,6 +574,19 @@ class Workspace:
             if modified
             else ""
         )
+        created = []
+        for name in sorted(self._files() - existing):
+            try:
+                self.guard(name)
+            except ValueError:
+                continue  # scratch output the agent could not propose anyway
+            created.append(name)
+        if created:
+            note += (
+                "\n[new files created by this command are NOT part of the change: "
+                + ", ".join(created[:8])
+                + "; create them with write if they are needed]"
+            )
         if timed_out:
             return ToolResult(
                 (text + "\n" if text else "")
