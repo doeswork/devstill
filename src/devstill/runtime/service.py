@@ -466,10 +466,14 @@ class RuntimeSession:
                 path = workspace.source_path(self.repo, name)
                 return path.read_bytes() if path.is_file() else None
 
+            suite = [
+                name for name in ("tests", "test") if (self.repo / name).is_dir()
+            ]
             guard = TestGuard(
                 tools,
                 lambda changed: guard_test_files(work, changed, original),
                 original,
+                suite=suite,
             )
         state = {}
         with ThreadPoolExecutor(max_workers=1) as pool:

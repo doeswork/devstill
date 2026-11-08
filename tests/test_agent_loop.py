@@ -679,3 +679,22 @@ def test_loop_warns_when_a_check_is_bent_to_match_wrong_code(work):
     assert "left:  -1" in first and "right: 5" in first
     second = [m for m in chat.seen[2] if m["role"] == "tool"][-1]["content"]
     assert "now expects that actual value" in second
+
+
+def test_guard_whole_suite_catches_unrelated_meta_tests(tested):
+    from devstill.runtime.tools import TestGuard
+
+    (tested / "tests" / "test_meta.py").write_text(
+        "import pkg.m\n\n\ndef test_module_stays_small():\n"
+        "    assert len(open(pkg.m.__file__).read().splitlines()) < 7\n"
+    )
+    original = {"pkg/m.py": (tested / "pkg" / "m.py").read_bytes()}
+    tools = tools_for(tested)
+    guard = TestGuard(tools, [], original.get, suite=["tests"])  # no related files
+    tools.edit("pkg/m.py", [{"oldText": "return -a", "newText": "# negate\n    return -a"}])
+    guard.changed()
+    time.sleep(0.1)
+    new, output = guard.regressions(30)
+    assert new == ["tests/test_meta.py::test_module_stays_small"]
+    assert "test_known_bad" not in output  # pre-existing failure filtered out
+    guard.close()

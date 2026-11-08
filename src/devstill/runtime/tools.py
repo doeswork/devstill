@@ -515,31 +515,36 @@ _FAILURE = re.compile(r"^(FAILED|ERROR) (\S+)", re.MULTILINE)
 
 
 class TestGuard:
-    """Run related existing tests in the background after each change.
+    """Run existing tests in the background after each change.
 
-    The latest run is awaited when the agent finishes. Tests that fail after
-    the change are re-run against the original sources (restored briefly);
-    only tests that passed before count as regressions.
+    Two runs start after every edit: the test files related to the changed
+    functions (awaited briefly when the agent finishes) and, when Python code
+    changed, the project's whole test directory (used only if it finishes in
+    time; a suite that times out or fails to collect is not started again).
+    Tests that fail after the change are re-run with the original sources
+    restored; only tests that passed before count as regressions.
     """
 
-    def __init__(self, workspace: Workspace, files, originals, timeout=30.0):
+    SUITE_EXTRA_WAIT = 3.0
+    MAX_SUITE_FAILURES = 20
+
+    def __init__(self, workspace: Workspace, files, originals, timeout=30.0, suite=()):
         """files: test paths, or a callable mapping changed paths to test paths."""
         self.workspace = workspace
         self.select = files if callable(files) else (lambda changed: list(files))
-        self.files = []
-        self.originals = originals  # name -> original bytes, or None if new
+        self.suite = list(suite)
+        self.originals = originals
         self.timeout = timeout
+        self.files = []
+        self._suite_ok = True
         self._lock = threading.Lock()
         self._generation = 0
-        self._result = None
-        self._done = threading.Event()
-        self._process = None
-        self._thread = None
+        self._runs = {}
 
     def _argv(self, targets):
         return ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider", *targets]
 
-    def _execute(self, targets, timeout, generation=None):
+    def _execute(self, targets, timeout, generation=None, run=None):
         started = time.perf_counter()
         with tempfile.TemporaryFile() as output:
             process = subprocess.Popen(
@@ -556,7 +561,7 @@ class TestGuard:
                     if generation != self._generation:
                         _kill(process)
                         return None
-                    self._process = process
+                    run["process"] = process
             timed_out = False
             try:
                 process.wait(timeout=timeout)
@@ -574,36 +579,42 @@ class TestGuard:
             "seconds": time.perf_counter() - started,
         }
 
+    def _start(self, name, targets, generation):
+        run = {"done": threading.Event(), "result": None, "process": None}
+        self._runs[name] = run
+
+        def work():
+            result = self._execute(targets, self.timeout, generation, run)
+            with self._lock:
+                if generation == self._generation and result is not None:
+                    run["result"] = result
+                    run["done"].set()
+
+        threading.Thread(target=work, daemon=True).start()
+
     def changed(self):
-        """Start (or restart) a background run for the current workspace state."""
-        self.files = list(self.select(list(self.workspace.changed)))
+        """Start (or restart) background runs for the current workspace state."""
+        changed = list(self.workspace.changed)
+        self.files = list(self.select(changed))
+        python = any(name.endswith(".py") for name in changed)
         with self._lock:
             self._generation += 1
             generation = self._generation
-            if self._process is not None:
-                _kill(self._process)
-                self._process = None
-            self._done.clear()
-            self._result = None
-            if not self.files:
-                self._thread = None
-                return
-
-        def work():
-            result = self._execute(self.files, self.timeout, generation)
-            with self._lock:
-                if generation == self._generation and result is not None:
-                    self._result = result
-                    self._done.set()
-
-        self._thread = threading.Thread(target=work, daemon=True)
-        self._thread.start()
+            for run in self._runs.values():
+                if run["process"] is not None:
+                    _kill(run["process"])
+            self._runs = {}
+            if self.files:
+                self._start("related", self.files, generation)
+            if self.suite and self._suite_ok and python:
+                self._start("suite", self.suite, generation)
 
     def close(self):
         with self._lock:
             self._generation += 1
-            if self._process is not None:
-                _kill(self._process)
+            for run in self._runs.values():
+                if run["process"] is not None:
+                    _kill(run["process"])
 
     def diff(self, limit=1500):
         """Unified diff of the agent's changes so far, for regression feedback."""
@@ -624,28 +635,49 @@ class TestGuard:
         text = "".join(chunks)
         return text if len(text) <= limit else text[:limit] + "\n[diff truncated]"
 
+    @staticmethod
+    def _usable(result):
+        return (
+            result is not None
+            and not result["timed_out"]
+            and result["code"] in (0, 1)
+        )
+
     def regressions(self, wait):
         """Return (new_failures, output) for the latest change, or None if unknown."""
-        if not self.files or self._thread is None:
+        runs = dict(self._runs)
+        if not runs:
             return None
-        if not self._done.wait(timeout=max(0.0, wait)):
+        started = time.perf_counter()
+        failing = set()
+        related = runs.get("related")
+        if (
+            related is not None
+            and related["done"].wait(timeout=max(0.0, wait))
+            and self._usable(related["result"])
+        ):
+            failing.update(related["result"]["failed"])
+        suite = runs.get("suite")
+        if suite is not None:
+            remaining = max(0.0, wait - (time.perf_counter() - started))
+            suite["done"].wait(timeout=min(self.SUITE_EXTRA_WAIT, remaining))
+            result = suite["result"] if suite["done"].is_set() else None
+            if result is not None and not self._usable(result):
+                self._suite_ok = False  # slow or broken suite: stop starting it
+            elif self._usable(result) and len(result["failed"]) <= self.MAX_SUITE_FAILURES:
+                failing.update(result["failed"])
+        if not failing:
             return None
-        result = self._result
-        if result is None or result["timed_out"] or not result["failed"]:
-            return None
-        if result["code"] not in (0, 1):
-            # Collection or usage errors say nothing about this change.
-            return None
-        failing = result["failed"]
+        failing = sorted(failing)
         baseline = self._baseline(failing, wait)
         if baseline is None:
             return None
         new = [name for name in failing if name not in baseline]
         if not new:
             return None
-        # Show only the new failures (the full run also lists old ones).
+        # Show only the new failures (the full runs also list old ones).
         focused = self._execute(new, max(5.0, min(self.timeout, wait)))
-        output = focused["output"] if focused else result["output"]
+        output = focused["output"] if focused else ""
         return new, output
 
     def _baseline(self, failing, wait):
@@ -671,7 +703,7 @@ class TestGuard:
                     path.unlink(missing_ok=True)
                 else:
                     path.write_bytes(data)
-        if result is None or result["timed_out"] or result["code"] not in (0, 1):
+        if not self._usable(result):
             return None
         return set(result["failed"])
 
