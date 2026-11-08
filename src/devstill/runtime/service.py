@@ -7,6 +7,7 @@ import os
 import re
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 from threading import Event
 from uuid import uuid4
@@ -371,19 +372,21 @@ class RuntimeSession:
         return choice["message"]["content"]
 
     def run_loop(
-        self,
-        work,
-        query,
-        records,
-        requirements,
-        chat,
-        directory,
-        deadline,
-        emit,
-        sources,
+        self, work, query, records, requirements, chat, directory, deadline, emit
     ):
-        """Run the tool loop in the prepared workspace copy."""
+        """Run the tool loop; the workspace copy is made while the model reads.
+
+        Returns (outcome, sources). The snapshot copies the very bytes the
+        evidence was checked against, so the first model call does not wait
+        for it; the first tool call (or delivery check) does.
+        """
         cfg = self.config
+        for record in records:
+            path = workspace.source_path(self.repo, record["path"])
+            if not path.is_file() or record["code"].replace("\r\n", "\n") not in (
+                path.read_text()
+            ):
+                raise ValueError(f"Evidence no longer matches source: {record['path']}")
         env = dict(os.environ)
         if cfg.editing.python:
             # The configured project interpreter answers to `python` in commands.
@@ -397,11 +400,8 @@ class RuntimeSession:
             guard=lambda name: workspace.guard(work, cfg, name),
             resolve=lambda name: workspace.source_path(work, name),
             env=env,
-            tracked=[
-                name for name, entry in sources.items() if not entry.get("support")
-            ],
         )
-        sections = build_sections(work, records, cfg.editing.loop_context_chars)
+        sections = build_sections(self.repo, records, cfg.editing.loop_context_chars)
 
         def checks(repo, commands, limit):
             return run_checks(
@@ -412,21 +412,37 @@ class RuntimeSession:
                 cfg.editing.python,
             )
 
-        return agent_loop(
-            tools,
-            query,
-            sections,
-            chat,
-            directory,
-            deadline,
-            checkpoint=lambda: self.checkpoint(deadline),
-            requirements=requirements,
-            required_checks=delivery_checks(requirements),
-            check_runner=checks,
-            max_turns=cfg.editing.max_turns,
-            bash_timeout=cfg.editing.bash_timeout_seconds,
-            report=emit,
-        )
+        state = {}
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(workspace.snapshot, self.repo, work, cfg, True)
+
+            def ready():
+                if "sources" not in state:
+                    state["sources"] = pending.result()
+                    tools.tracked = [
+                        name
+                        for name, entry in state["sources"].items()
+                        if not entry.get("support")
+                    ]
+
+            outcome = agent_loop(
+                tools,
+                query,
+                sections,
+                chat,
+                directory,
+                deadline,
+                checkpoint=lambda: self.checkpoint(deadline),
+                requirements=requirements,
+                required_checks=delivery_checks(requirements),
+                check_runner=checks,
+                max_turns=cfg.editing.max_turns,
+                bash_timeout=cfg.editing.bash_timeout_seconds,
+                report=emit,
+                before_tools=ready,
+            )
+            ready()
+        return outcome, state["sources"]
 
     def chat(self, messages, tools, deadline):
         """One tool-calling completion; the deadline bounds the whole request."""
@@ -523,16 +539,17 @@ class RuntimeSession:
             self.checkpoint(deadline)
             with tempfile.TemporaryDirectory(prefix="devstill-task-") as temporary:
                 work = Path(temporary)
-                sources = workspace.snapshot(self.repo, work, self.config, support=loop)
-                proposal["sources"] = sources
-                for record in records:
-                    if (
-                        record["path"] not in sources
-                        or record["code"] not in (work / record["path"]).read_text()
-                    ):
-                        raise ValueError(
-                            f"Evidence no longer matches source: {record['path']}"
-                        )
+                if not loop:
+                    sources = workspace.snapshot(self.repo, work, self.config)
+                    proposal["sources"] = sources
+                    for record in records:
+                        if (
+                            record["path"] not in sources
+                            or record["code"] not in (work / record["path"]).read_text()
+                        ):
+                            raise ValueError(
+                                f"Evidence no longer matches source: {record['path']}"
+                            )
 
                 def generate(messages, limit):
                     nonlocal calls
@@ -578,7 +595,7 @@ class RuntimeSession:
                         write(directory / f"response-{calls}.json", reply)
                         return reply
 
-                    outcome = self.run_loop(
+                    outcome, sources = self.run_loop(
                         work,
                         query,
                         records,
@@ -587,8 +604,8 @@ class RuntimeSession:
                         directory,
                         deadline,
                         emit,
-                        sources,
                     )
+                    proposal["sources"] = sources
                 else:
                     outcome = edit_loop(
                         work,

@@ -292,6 +292,7 @@ def agent_loop(
     max_turns=10,
     bash_timeout=30.0,
     report=lambda message: None,
+    before_tools=lambda: None,
 ):
     """Run the tool loop; return an outcome compatible with the structured editor."""
     messages = [
@@ -331,6 +332,7 @@ def agent_loop(
         return any(not c["ok"] for c in commands if c["step"] > last_edit_step)
 
     def finish(summary):
+        before_tools()
         failures = []
         for command in required_checks:
             results = (check_runner or (lambda *a: []))(
@@ -438,6 +440,7 @@ def agent_loop(
                 )
             return outcome("applied_unvalidated", summary=assistant["content"][:500])
 
+        before_tools()  # the workspace copy must exist before any tool runs
         blocked = False
         batch_failed = False
         done_summary = None
