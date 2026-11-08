@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
+import sys
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -35,11 +38,19 @@ from devstill.runtime.tools import TestGuard, Workspace
 from devstill.search import HybridSearch
 
 DOC_SUFFIXES = {".rst", ".md", ".markdown", ".txt", ".adoc"}
+SECRET_ENV = re.compile(r"KEY|TOKEN|SECRET|PASSW|CREDENTIAL|AUTH", re.IGNORECASE)
 DOC_WORDS = re.compile(
-    r"\b(docs?|documentation|readme|changelog|changes|release notes|sphinx|autodoc"
+    r"\b(docs?|documentation|readme|change ?log|release notes|sphinx|autodoc"
     r"|api reference|\.rst|\.md)\b",
     re.IGNORECASE,
 )
+
+
+def is_prose(chunk):
+    path = PurePosixPath(chunk.path)
+    return path.suffix.lower() in DOC_SUFFIXES or (
+        bool(path.parts) and path.parts[0] in {"docs", "doc"}
+    )
 
 
 def code_first(results, query):
@@ -67,12 +78,13 @@ def named_file_records(repo, config, query, edge_lines=40):
     """
     records = []
     for name in dict.fromkeys(PATH_TOKEN.findall(query)):
-        name = name.strip("`'\".,")
+        name = name.strip("`'\",").rstrip(".").replace("\\", "/")
+        name = name.removeprefix("./")
         try:
             path = workspace.guard(repo, config, name)
         except (ValueError, OSError):
             continue
-        if not path.is_file():
+        if not path.is_file() or git_ignored(repo, name):
             continue
         try:
             text = path.read_text()
@@ -97,6 +109,49 @@ def named_file_records(repo, config, query, edge_lines=40):
                 }
             )
     return records
+
+
+def git_ignored(repo, name):
+    """True when git ignores the path (ignored files never reach the model)."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), "check-ignore", "-q", "--", name],
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+QUALIFIED = re.compile(r"\b[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+\b")
+
+
+def qualified_targets(ranked, chosen, query):
+    """Code chunks named by a module-qualified reference (e.g. pkg.mod.func)."""
+    from devstill.context import is_test_chunk
+
+    names = set()
+    for match in QUALIFIED.findall(query):
+        parts = match.split(".")
+        names.update(p for p in parts[1:] if len(p) >= 4)
+    if not names:
+        return []
+    seen = {id(r) for r in chosen}
+    found = []
+    for result in ranked:
+        chunk = result.chunk
+        last = (chunk.qualname or chunk.name or "").split(".")[-1]
+        if (
+            id(result) not in seen
+            and last in names
+            and not is_prose(chunk)
+            and not is_test_chunk(chunk)
+        ):
+            found.append(result)
+            seen.add(id(result))
+    return found[:2]
 
 
 def alternates(ranked, chosen, query, files=2):
@@ -124,17 +179,17 @@ def alternates(ranked, chosen, query, files=2):
     return extra
 
 
-def needs_token_count(config, chars):
+def needs_token_count(config, size):
     """Ask the server's tokenizer only when a prompt could plausibly overflow.
 
-    A token never covers less than one character in practice, so a prompt
-    whose character count plus the output reserve fits the window cannot
-    overflow; skipping /tokenize saves one HTTP round trip per check.
+    `size` is the prompt's UTF-8 byte length. Byte-level tokenizers never emit
+    more tokens than bytes, so a prompt whose byte size plus the output reserve
+    fits the window cannot overflow; skipping /tokenize saves a round trip.
     """
     window = config.llm.context_window
     if not window:
         return False
-    return chars + config.editing.max_output_tokens + 1024 >= window
+    return size + config.editing.max_output_tokens + 1024 >= window
 
 
 def render_check_changes(execution):
@@ -282,10 +337,17 @@ class RuntimeSession:
             if lexical_first:
                 # The loop can search on its own, so a cold embedding-model
                 # load (several seconds) is only worth paying when lexical
-                # search finds nothing; a warm session uses hybrid ranking.
+                # search finds no code at all; a warm session uses hybrid.
+                from devstill.context import is_test_chunk
+
                 warm = getattr(self.embedder, "_model", None) is not None
+                code_hit = any(
+                    not is_prose(r.chunk) and not is_test_chunk(r.chunk) for r in lexical
+                )
                 candidates = (
-                    search.query(query, limit=12) if warm or not lexical else lexical
+                    search.query(query, limit=12)
+                    if warm or not code_hit
+                    else lexical
                 )
                 candidates = code_first(candidates, query)
             else:
@@ -295,15 +357,22 @@ class RuntimeSession:
 
             ranked = candidates
             candidates = focused_candidates(candidates, query)
+            alternate_ids = set()
             if lexical_first:
-                # Name the next-best code locations too: a wrong primary file
+                # Module-qualified names (pkg.mod.func) count as named targets;
+                # also name the next-best code locations: a wrong primary file
                 # otherwise costs several exploratory calls.
-                candidates = candidates + alternates(ranked, candidates, query)
+                candidates = candidates + qualified_targets(ranked, candidates, query)
+                extra = alternates(ranked, candidates, query)
+                alternate_ids = {id(r) for r in extra}
+                candidates = candidates + extra
 
             def records_for(results):
                 records, complete_paths = [], set()
                 for result in results:
                     record = context_record(result)
+                    if id(result) in alternate_ids:
+                        record["alternate"] = True
                     path = workspace.guard(self.repo, cfg, record["path"])
                     raw = path.read_bytes()
                     if result.source_hash and workspace.sha(raw) != result.source_hash:
@@ -330,13 +399,21 @@ class RuntimeSession:
             with AgentClient(cfg.llm) as counter:
 
                 def fits(results):
+                    if lexical_first:
+                        # Size of what the loop actually renders, not the
+                        # structured editor's prompt format.
+                        size = len(query) + sum(
+                            len(r["code"]) + 120 for r in records_for(results)
+                        )
+                        return size <= budget_chars
                     messages = editor_messages(
                         query, records_for(results), requirements
                     )
                     chars = sum(len(m["content"]) for m in messages)
                     if chars > budget_chars - 4000:
                         return False
-                    if not needs_token_count(cfg, chars):
+                    size = sum(len(m["content"].encode()) for m in messages)
+                    if not needs_token_count(cfg, size):
                         return True
                     tokens = counter.count_prompt_tokens(messages, reasoning="off")
                     return (
@@ -370,8 +447,9 @@ class RuntimeSession:
                     "No usable source evidence; index the repository or specify a source symbol."
                 )
             records = records_for(selected) if selected else []
-            shown = {r["path"] for r in records}
-            return [r for r in named if r["path"] not in shown] + records
+            # Named files keep their head/tail view; the context renderer merges
+            # overlapping ranges of the same file.
+            return named + records
         finally:
             search.close()
 
@@ -386,7 +464,9 @@ class RuntimeSession:
             raise ValueError(
                 "Editor transcript exceeds the configured character budget"
             )
-        if needs_token_count(self.config, sum(len(m["content"]) for m in messages)):
+        if needs_token_count(
+            self.config, sum(len(m["content"].encode()) for m in messages)
+        ):
             with AgentClient(llm) as counter:
                 count = counter.count_prompt_tokens(messages, reasoning="off")
             if (
@@ -438,21 +518,49 @@ class RuntimeSession:
                 path.read_text()
             ):
                 raise ValueError(f"Evidence no longer matches source: {record['path']}")
-        env = dict(os.environ)
-        if cfg.editing.python:
-            # The configured project interpreter answers to `python` in commands.
-            env["PATH"] = (
-                str(Path(cfg.editing.python).parent) + os.pathsep + env.get("PATH", "")
-            )
-        env["PYTHONPATH"] = os.pathsep.join((str(work / "src"), str(work)))
+        # Commands never see credentials (API keys, tokens) from this process.
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if not SECRET_ENV.search(key) and key != cfg.llm.api_key_env
+        }
+        interpreter = (
+            cfg.editing.python
+            or shutil.which("python")
+            or shutil.which("python3")
+            or sys.executable
+        )
+        shims = Path(tempfile.mkdtemp(prefix="devstill-bin-"))
+        # `python` in commands is the project interpreter (a shell shim keeps
+        # virtualenv detection, unlike a symlink in another directory).
+        (shims / "python").write_text(f'#!/bin/sh\nexec "{interpreter}" "$@"\n')
+        (shims / "python").chmod(0o755)
+        env["PATH"] = os.pathsep.join(
+            (str(shims), str(Path(interpreter).parent), env.get("PATH", ""))
+        )
+        env["PYTHONPATH"] = os.pathsep.join(
+            str(work / part)
+            for part in ("src", "lib", "")
+            if part == "" or (self.repo / part).is_dir()
+        )
         env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+        def allowed(name):
+            try:
+                workspace.guard(self.repo, cfg, name)
+            except (ValueError, OSError):
+                return False
+            return True
         tools = Workspace(
             work,
             guard=lambda name: workspace.guard(work, cfg, name),
             resolve=lambda name: workspace.source_path(work, name),
             env=env,
+            python=interpreter,
         )
-        sections = build_sections(self.repo, records, cfg.editing.loop_context_chars)
+        sections = build_sections(
+            self.repo, records, cfg.editing.loop_context_chars, allowed=allowed
+        )
 
         def checks(repo, commands, limit):
             return run_checks(
@@ -460,7 +568,7 @@ class RuntimeSession:
                 commands,
                 limit,
                 lambda: self.checkpoint(limit),
-                cfg.editing.python,
+                interpreter,
             )
 
         guard = None
@@ -475,11 +583,26 @@ class RuntimeSession:
             ]
             guard = TestGuard(
                 tools,
-                lambda changed: guard_test_files(work, changed, original),
+                lambda changed: guard_test_files(
+                    work, changed, original, allowed=allowed
+                ),
                 original,
                 suite=suite,
             )
         state = {}
+        try:
+            return self._loop_with_snapshot(
+                work, query, sections, requirements, chat, directory, deadline, emit,
+                tools, checks, guard, state,
+            )
+        finally:
+            shutil.rmtree(shims, ignore_errors=True)
+
+    def _loop_with_snapshot(
+        self, work, query, sections, requirements, chat, directory, deadline, emit,
+        tools, checks, guard, state,
+    ):
+        cfg = self.config
         with ThreadPoolExecutor(max_workers=1) as pool:
             pending = pool.submit(workspace.snapshot, self.repo, work, cfg, True)
 
@@ -524,7 +647,8 @@ class RuntimeSession:
             headers={
                 "Authorization": "Bearer " + (resolve_api_key(llm) or "devstill-local")
             },
-            timeout=max(0.01, remaining),
+            # Cancellation is checked between calls; cap a single call's wait.
+            timeout=max(0.01, min(remaining, 120.0)),
             json={
                 "model": llm.model,
                 "messages": messages,
@@ -606,7 +730,8 @@ class RuntimeSession:
             write(directory / "evidence.json", records)
             self.checkpoint(deadline)
             with tempfile.TemporaryDirectory(prefix="devstill-task-") as temporary:
-                work = Path(temporary)
+                # Resolved: path checks refuse symlinked ancestors (e.g. TMPDIR).
+                work = Path(temporary).resolve()
                 if not loop:
                     sources = workspace.snapshot(self.repo, work, self.config)
                     proposal["sources"] = sources

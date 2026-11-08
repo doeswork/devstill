@@ -1,4 +1,4 @@
-"""Workspace tools for the Quick agent loop: read, edit, write and bash.
+"""Workspace tools for the Quick agent loop: read, edit, write, python and bash.
 
 Edit semantics follow the familiar exact-replacement contract (every oldText
 must match one unique, non-overlapping region of the original file), with a
@@ -27,6 +27,7 @@ READ_MAX_CHARS = 40_000
 OUTPUT_MAX_CHARS = 6_000
 # write may replace a whole existing file only when it is this small.
 OVERWRITE_MAX_LINES = 40
+BOM = b"\xef\xbb\xbf"
 
 _TRANSLATE = str.maketrans(
     {
@@ -57,7 +58,8 @@ class ToolError(ValueError):
 
 
 # Runs a check script; a failing `assert left <op> right` also prints both sides
-# so a wrong expectation and a wrong implementation are easy to tell apart.
+# so a wrong expectation and a wrong implementation are easy to tell apart. The
+# comparison is recorded (argv[2]) so the loop can spot a weakened assertion.
 PYTHON_RUNNER = r"""
 import ast, sys, traceback
 path = sys.argv[1]
@@ -84,6 +86,7 @@ except AssertionError as exc:
                         scope.update(frame.f_locals)
                         left = eval(compile(ast.Expression(test.left), path, "eval"), scope)
                         right = eval(compile(ast.Expression(test.comparators[0]), path, "eval"), scope)
+                        # Operands are evaluated again here (stateful expressions may differ).
                         print(f"  left:  {left!r}\n  right: {right!r}", file=sys.stderr)
                         if record:
                             import json
@@ -128,6 +131,16 @@ def _line_number(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + 1
 
 
+def _occurrences(content: str, old: str, limit: int = 50) -> list[int]:
+    """Start offsets of old in content, overlapping matches included."""
+    found = []
+    position = content.find(old)
+    while position != -1 and len(found) < limit:
+        found.append(position)
+        position = content.find(old, position + 1)
+    return found
+
+
 def _fuzzy_spans(content: str, old: str) -> list[tuple[int, int]]:
     """Whole-line matches ignoring trailing whitespace and Unicode punctuation.
 
@@ -168,7 +181,7 @@ def _fuzzy_spans(content: str, old: str) -> list[tuple[int, int]]:
 def _closest(content: str, old: str, limit: int = 12) -> str:
     """Quote the most similar current region so the model can copy it exactly."""
     lines = content.split("\n")
-    old_lines = [line for line in old.strip("\n").split("\n")] or [old]
+    old_lines = old.strip("\n").split("\n") or [old]
     width = max(1, min(len(old_lines), 40))
     best, best_index = 0.0, None
     probe = "\n".join(old_lines)
@@ -210,26 +223,29 @@ def apply_text_edits(content: str, edits: list[dict], name: str) -> str:
             raise ToolError(
                 f"{label}: newText is identical to oldText; nothing to change."
             )
-        count = content.count(old)
-        if count == 1:
-            begin = content.index(old)
+        found = _occurrences(content, old)
+        if len(found) == 1:
+            begin = found[0]
             spans.append((begin, begin + len(old), new, index))
             continue
-        if count > 1:
-            lines = []
-            position = content.find(old)
-            while position != -1 and len(lines) < 6:
-                lines.append(str(_line_number(content, position)))
-                position = content.find(old, position + 1)
+        if len(found) > 1:
+            lines = [str(_line_number(content, position)) for position in found[:6]]
             raise ToolError(
-                f"{label} matches {count} places in {name} (lines {', '.join(lines)}). "
-                "Include more surrounding lines so it is unique."
+                f"{label} matches {len(found)} places in {name} (lines "
+                f"{', '.join(lines)}). Include more surrounding lines so it is unique."
             )
         fuzzy = _fuzzy_spans(content, old)
         if len(fuzzy) == 1:
             begin, end = fuzzy[0]
-            # Fuzzy spans exclude the final newline; keep the file's own.
-            replacement = new[:-1] if old.endswith("\n") and new.endswith("\n") else new
+            if old.endswith("\n") and content[end : end + 1] == "\n":
+                # The whole lines matched: replace their final newline too, so
+                # deleting lines behaves exactly like the exact-match path.
+                end += 1
+                replacement = new
+            else:
+                replacement = (
+                    new[:-1] if old.endswith("\n") and new.endswith("\n") else new
+                )
             spans.append((begin, end, replacement, index))
             continue
         if len(fuzzy) > 1:
@@ -256,7 +272,7 @@ def apply_text_edits(content: str, edits: list[dict], name: str) -> str:
 
 
 def _render_changed(before: str, after: str, limit: int = 24) -> str:
-    """Show the edited region of the new file (with line numbers) for confirmation."""
+    """Show the edited region of the new file for confirmation."""
     old_lines = before.split("\n")
     new_lines = after.split("\n")
     matcher = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
@@ -270,6 +286,16 @@ def _render_changed(before: str, after: str, limit: int = 24) -> str:
     # No per-line numbers: models copy shown text into later oldText values.
     body = "\n".join(new_lines[first:last])
     return f"Lines {first + 1}-{last} now read:\n{body}"
+
+
+def _compiles(name: str, content: str) -> bool:
+    if not name.endswith(".py"):
+        return True
+    try:
+        compile(content, name, "exec")
+    except (SyntaxError, ValueError):
+        return False
+    return True
 
 
 def _check_python(name: str, content: str) -> None:
@@ -299,20 +325,47 @@ def _decode(raw: bytes, name: str) -> tuple[str, bool]:
     return (text.replace("\r\n", "\n") if crlf else text), crlf
 
 
+def _tail(stream, limit: int) -> str:
+    """Decode only the last `limit` characters' worth of a captured stream."""
+    stream.seek(0, os.SEEK_END)
+    size = stream.tell()
+    stream.seek(max(0, size - limit * 4))
+    text = stream.read().decode("utf-8", errors="replace")
+    if size > limit * 4 or len(text) > limit:
+        text = f"[output truncated; last {limit} chars]\n" + text[-limit:]
+    return text
+
+
 class Workspace:
     """File and shell operations confined to one prepared workspace copy."""
 
     def __init__(
-        self, root: Path, *, guard=lambda name: None, resolve=None, env=None, tracked=()
+        self,
+        root: Path,
+        *,
+        guard=lambda name: None,
+        resolve=None,
+        env=None,
+        tracked=(),
+        python="python",
     ):
         self.root = root
         self.guard = guard
         self.resolve = resolve or (lambda name: root / name)
         self.env = env or dict(os.environ)
+        self.python_executable = python
         self.changed: list[str] = []
         # Editable files whose modification by a command (e.g. sed -i) counts
         # as a proposed change, like an edit made with the edit tool.
         self.tracked = list(tracked)
+
+    def name(self, path: str) -> str:
+        """Normalized repository-relative name ('./a//b.py' -> 'a/b.py')."""
+        target = self.resolve(str(path).replace("\\", "/"))
+        try:
+            return target.relative_to(self.root).as_posix()
+        except ValueError:
+            return Path(os.path.relpath(target, self.root)).as_posix()
 
     def _stat_tracked(self) -> dict[str, tuple[int, int] | None]:
         states = {}
@@ -347,11 +400,15 @@ class Workspace:
         count = int(limit) if limit else READ_DEFAULT_LINES
         count = max(1, count)
         end = min(total, start + count - 1)
-        shown = lines[start - 1 : end]
+        shown, size = [], 0
+        for number in range(start, end + 1):
+            line = lines[number - 1]
+            if shown and size + len(line) + 1 > READ_MAX_CHARS:
+                end = number - 1  # stop at a whole line
+                break
+            shown.append(line)
+            size += len(line) + 1
         body = "\n".join(shown)
-        if len(body) > READ_MAX_CHARS:
-            body = body[:READ_MAX_CHARS]
-            end = start + body.count("\n")
         header = f"[{path} lines {start}-{end} of {total}]"
         footer = (
             f"\n[{total - end} more lines; use offset={end + 1} to continue]"
@@ -361,59 +418,73 @@ class Workspace:
         return ToolResult(f"{header}\n{body}{footer}")
 
     def edit(self, path: str, edits: list[dict]) -> ToolResult:
-        self.guard(path)
-        target = self.resolve(path)
+        name = self.name(path)
+        self.guard(name)
+        target = self.resolve(name)
         if not target.is_file():
-            raise ToolError(f"File not found: {path}. Use write to create a new file.")
+            raise ToolError(f"File not found: {name}. Use write to create a new file.")
         raw = target.read_bytes()
-        bom = raw.startswith(b"\xef\xbb\xbf")
-        text, crlf = _decode(raw, path)
-        updated = apply_text_edits(text, edits, path)
-        _check_python(path, updated)
+        bom = raw.startswith(BOM)
+        text, crlf = _decode(raw, name)
+        updated = apply_text_edits(text, edits, name)
+        if _compiles(name, text):
+            # Files that already fail to compile (new syntax, fixtures) are not gated.
+            _check_python(name, updated)
         output = updated.replace("\n", "\r\n") if crlf else updated
-        target.write_bytes((b"\xef\xbb\xbf" if bom else b"") + output.encode("utf-8"))
-        self._note(path)
+        target.write_bytes((BOM if bom else b"") + output.encode("utf-8"))
+        self._note(name)
         shown = _render_changed(text, updated)
         noun = "block" if len(edits) == 1 else "blocks"
         return ToolResult(
-            f"Edited {path}: replaced {len(edits)} {noun}."
+            f"Edited {name}: replaced {len(edits)} {noun}."
             + (f"\n{shown}" if shown else ""),
-            changed=[path],
+            changed=[name],
         )
 
     def write(self, path: str, content: str, append: bool = False) -> ToolResult:
-        self.guard(path)
-        target = self.resolve(path)
+        name = self.name(path)
+        self.guard(name)
+        target = self.resolve(name)
         existed = target.exists()
-        crlf = False
-        original = ""
-        if existed:
-            original, crlf = _decode(target.read_bytes(), path)
-        if append:
-            if original and not original.endswith("\n"):
-                original += "\n"
-            content = original + content
-        elif existed and original.count("\n") > OVERWRITE_MAX_LINES:
+        raw = target.read_bytes() if existed else b""
+        original, crlf = _decode(raw, name) if existed else ("", False)
+        content = content.replace("\r\n", "\n")
+        if append and existed:
+            combined = original
+            if combined and not combined.endswith("\n"):
+                combined += "\n"
+            combined += content
+            if _compiles(name, original):
+                _check_python(name, combined)
+            # Keep the existing bytes (BOM, line endings) untouched; only add.
+            separator = b"" if not raw or raw.endswith(b"\n") else b"\n"
+            addition = content.replace("\n", "\r\n") if crlf else content
+            if separator and crlf:
+                separator = b"\r\n"
+            target.write_bytes(raw + separator + addition.encode("utf-8"))
+            self._note(name)
+            lines = combined.count("\n") + (0 if combined.endswith("\n") else 1)
+            return ToolResult(
+                f"Appended to {name} (now {lines} lines).", changed=[name]
+            )
+        if existed and original.count("\n") > OVERWRITE_MAX_LINES:
             raise ToolError(
-                f"{path} already exists ({original.count(chr(10))} lines); write would "
+                f"{name} already exists ({original.count(chr(10))} lines); write would "
                 "replace all of it. Use edit to change part of it, or write with "
                 "append=true to add to its end."
             )
-        _check_python(path, content)
+        if not existed or _compiles(name, original):
+            _check_python(name, content)
         target.parent.mkdir(parents=True, exist_ok=True)
-        output = content.replace("\r\n", "\n")
-        if crlf:
-            output = output.replace("\n", "\r\n")
-        target.write_bytes(output.encode("utf-8"))
-        self._note(path)
+        output = content.replace("\n", "\r\n") if crlf else content
+        bom = BOM if raw.startswith(BOM) else b""
+        target.write_bytes(bom + output.encode("utf-8"))
+        self._note(name)
         lines = content.count("\n") + (
             0 if content.endswith("\n") or not content else 1
         )
-        if append and existed:
-            verb = "Appended to"
-        else:
-            verb = "Overwrote" if existed else "Created"
-        return ToolResult(f"{verb} {path} (now {lines} lines).", changed=[path])
+        verb = "Overwrote" if existed else "Created"
+        return ToolResult(f"{verb} {name} (now {lines} lines).", changed=[name])
 
     def python(self, code: str, timeout: float, checkpoint=lambda: None) -> ToolResult:
         """Run a Python script in the repository root with the project interpreter."""
@@ -426,7 +497,9 @@ class Workspace:
             runner.write_text(PYTHON_RUNNER)
             script.write_text(code)
             result = self._run(
-                ["python", str(runner), str(script), str(record)], timeout, checkpoint
+                [self.python_executable, str(runner), str(script), str(record)],
+                timeout,
+                checkpoint,
             )
             if record.is_file():
                 try:
@@ -444,15 +517,18 @@ class Workspace:
         before = self._stat_tracked()
         started = time.perf_counter()
         with tempfile.TemporaryFile() as output:
-            process = subprocess.Popen(
-                argv,
-                cwd=self.root,
-                env=self.env,
-                stdin=subprocess.DEVNULL,
-                stdout=output,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
+            try:
+                process = subprocess.Popen(
+                    argv,
+                    cwd=self.root,
+                    env=self.env,
+                    stdin=subprocess.DEVNULL,
+                    stdout=output,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+            except OSError as exc:
+                raise ToolError(f"Could not start {argv[0]}: {exc}") from None
             timed_out = False
             try:
                 while True:
@@ -465,19 +541,8 @@ class Workspace:
                             timed_out = True
                             break
             finally:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    pass
-                process.wait()
-            output.seek(0)
-            raw = output.read()
-        text = raw.decode("utf-8", errors="replace")
-        if len(text) > OUTPUT_MAX_CHARS:
-            text = (
-                f"[output truncated; last {OUTPUT_MAX_CHARS} chars]\n"
-                + text[-OUTPUT_MAX_CHARS:]
-            )
+                _kill(process)
+            text = _tail(output, OUTPUT_MAX_CHARS)
         after = self._stat_tracked()
         modified = []
         for name, state in after.items():
@@ -511,7 +576,9 @@ class Workspace:
         )
 
 
-_FAILURE = re.compile(r"^(FAILED|ERROR) (\S+)", re.MULTILINE)
+# Short test summary lines: "FAILED tests/x.py::t[a b] - msg", "ERROR tests/x.py".
+_FAILURE = re.compile(r"^(FAILED|ERROR) (.+?)(?: - .*)?$", re.MULTILINE)
+_PASSED = re.compile(r"^PASSED (.+?)$", re.MULTILINE)
 
 
 class TestGuard:
@@ -520,9 +587,10 @@ class TestGuard:
     Two runs start after every edit: the test files related to the changed
     functions (awaited briefly when the agent finishes) and, when Python code
     changed, the project's whole test directory (used only if it finishes in
-    time; a suite that times out or fails to collect is not started again).
-    Tests that fail after the change are re-run with the original sources
-    restored; only tests that passed before count as regressions.
+    time; a suite that times out or fails to run is not started again).
+    A failing test counts as a regression only if it passed with the original
+    sources (whole test files re-run with them restored) and fails again in a
+    focused re-run of the current state.
     """
 
     SUITE_EXTRA_WAIT = 3.0
@@ -541,14 +609,23 @@ class TestGuard:
         self._generation = 0
         self._runs = {}
 
-    def _argv(self, targets):
-        return ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider", *targets]
+    def _argv(self, targets, extra=()):
+        return [
+            self.workspace.python_executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            *extra,
+            *targets,
+        ]
 
-    def _execute(self, targets, timeout, generation=None, run=None):
+    def _execute(self, targets, timeout, generation=None, run=None, extra=()):
         started = time.perf_counter()
         with tempfile.TemporaryFile() as output:
             process = subprocess.Popen(
-                self._argv(targets),
+                self._argv(targets, extra),
                 cwd=self.workspace.root,
                 env=self.workspace.env,
                 stdin=subprocess.DEVNULL,
@@ -564,16 +641,19 @@ class TestGuard:
                     run["process"] = process
             timed_out = False
             try:
-                process.wait(timeout=timeout)
+                process.wait(timeout=max(0.1, timeout))
             except subprocess.TimeoutExpired:
                 timed_out = True
             finally:
                 _kill(process)
             output.seek(0)
-            text = output.read().decode("utf-8", errors="replace")
+            # Test ids are parsed from the full summary; pytest output for the
+            # selected files is bounded, unlike arbitrary agent commands.
+            text = output.read(4_000_000).decode("utf-8", errors="replace")
         return {
             "code": process.returncode,
-            "failed": sorted({m.group(2) for m in _FAILURE.finditer(text)}),
+            "failed": sorted({m.group(2).strip() for m in _FAILURE.finditer(text)}),
+            "passed": sorted({m.group(1).strip() for m in _PASSED.finditer(text)}),
             "output": text[-4000:],
             "timed_out": timed_out,
             "seconds": time.perf_counter() - started,
@@ -584,7 +664,17 @@ class TestGuard:
         self._runs[name] = run
 
         def work():
-            result = self._execute(targets, self.timeout, generation, run)
+            try:
+                result = self._execute(targets, self.timeout, generation, run)
+            except Exception as exc:  # noqa: BLE001 - report "unknown", never hang
+                result = {
+                    "code": None,
+                    "failed": [],
+                    "passed": [],
+                    "output": f"could not run tests: {exc}",
+                    "timed_out": False,
+                    "seconds": 0.0,
+                }
             with self._lock:
                 if generation == self._generation and result is not None:
                     run["result"] = result
@@ -615,6 +705,7 @@ class TestGuard:
             for run in self._runs.values():
                 if run["process"] is not None:
                     _kill(run["process"])
+            self._runs = {}
 
     def diff(self, limit=1500):
         """Unified diff of the agent's changes so far, for regression feedback."""
@@ -637,18 +728,24 @@ class TestGuard:
 
     @staticmethod
     def _usable(result):
+        # 0 passed, 1 failures, 2 interrupted by collection errors (still a result).
         return (
             result is not None
             and not result["timed_out"]
-            and result["code"] in (0, 1)
+            and result["code"] in (0, 1, 2)
         )
 
-    def regressions(self, wait):
-        """Return (new_failures, output) for the latest change, or None if unknown."""
+    def regressions(self, wait, deadline=None):
+        """Return (new_failures, output) for the latest change, or None if unknown.
+
+        Never runs past `deadline` (a time.perf_counter() value).
+        """
         runs = dict(self._runs)
         if not runs:
             return None
         started = time.perf_counter()
+        if deadline is not None:
+            wait = min(wait, max(0.0, deadline - started - 2.0))
         failing = set()
         related = runs.get("related")
         if (
@@ -664,24 +761,48 @@ class TestGuard:
             result = suite["result"] if suite["done"].is_set() else None
             if result is not None and not self._usable(result):
                 self._suite_ok = False  # slow or broken suite: stop starting it
-            elif self._usable(result) and len(result["failed"]) <= self.MAX_SUITE_FAILURES:
+            elif (
+                self._usable(result)
+                and len(result["failed"]) <= self.MAX_SUITE_FAILURES
+            ):
                 failing.update(result["failed"])
         if not failing:
             return None
-        failing = sorted(failing)
-        baseline = self._baseline(failing, wait)
-        if baseline is None:
-            return None
-        new = [name for name in failing if name not in baseline]
-        if not new:
-            return None
-        # Show only the new failures (the full runs also list old ones).
-        focused = self._execute(new, max(5.0, min(self.timeout, wait)))
-        output = focused["output"] if focused else ""
-        return new, output
 
-    def _baseline(self, failing, wait):
-        """Failures among `failing` with the original sources restored."""
+        def budget():
+            limit = self.timeout
+            if deadline is not None:
+                limit = min(limit, deadline - time.perf_counter() - 1.0)
+            return limit
+
+        if budget() < 3.0:
+            return None
+        passed = self._baseline(sorted(failing), budget())
+        if passed is None:
+            return None
+        new = sorted(
+            name
+            for name in failing
+            if name in passed
+            or ("::" not in name and any(p.startswith(name + "::") for p in passed))
+        )
+        if not new or budget() < 3.0:
+            return None
+        # Confirm on the current state (filters flakes from concurrent runs)
+        # and show only these failures.
+        focused = self._execute(new, budget())
+        if not self._usable(focused):
+            return None
+        confirmed = [name for name in new if name in set(focused["failed"])]
+        return (confirmed, focused["output"]) if confirmed else None
+
+    def _baseline(self, failing, timeout):
+        """Test ids that PASSED with the original sources restored.
+
+        Whole test files are re-run (not node ids), so tests the agent added
+        and ids pytest cannot re-select do not hide real regressions.
+        """
+        files = sorted({name.split("::", 1)[0] for name in failing})
         current = {}
         root = self.workspace.root
         for name in self.workspace.changed:
@@ -695,17 +816,21 @@ class TestGuard:
                     path.unlink(missing_ok=True)
                 else:
                     path.write_bytes(original)
-            result = self._execute(failing, max(5.0, min(self.timeout, wait)))
+            present = [name for name in files if (root / name).exists()]
+            if not present:
+                return set()
+            result = self._execute(present, max(1.0, timeout), extra=("-rA",))
         finally:
             for name, data in current.items():
                 path = root / name
                 if data is None:
                     path.unlink(missing_ok=True)
                 else:
+                    path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(data)
         if not self._usable(result):
             return None
-        return set(result["failed"])
+        return set(result["passed"])
 
 
 def _kill(process):

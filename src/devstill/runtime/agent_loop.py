@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import time
 
 from devstill.runtime.artifacts import write
@@ -72,7 +73,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "bash",
-            "description": "Run a shell command in the repository root (e.g. grep -rn, python -m pytest -q path). Returns output and exit code.",
+            "description": "Run a shell command in the repository root (e.g. grep -rn, python -m pytest -q path). Returns output and exit code. Files created by commands are not part of the change; create files with write.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -359,6 +360,10 @@ def _call_name(call):
     return (call.get("function") or {}).get("name", "")
 
 
+CHECK_COMMAND = re.compile(r"\b(pytest|python3?|unittest|tox|nox|make\s+test|npm\s+test)\b")
+MALFORMED_CALL = re.compile(r"<tool_call>|<function=|\{\s*\"name\"\s*:")
+
+
 def agent_loop(
     workspace: Workspace,
     query,
@@ -377,51 +382,124 @@ def agent_loop(
     before_tools=lambda: None,
     guard=None,
 ):
-    """Run the tool loop; return an outcome compatible with the structured editor."""
-    messages = [
-        {"role": "system", "content": SYSTEM},
-        *json.loads(json.dumps(EXAMPLE)),
-        {
-            "role": "user",
-            "content": render_context(query, context_sections, requirements),
-        },
-    ]
-    commands = []
-    calls = 0
+    """Run the tool loop; return an outcome compatible with the structured editor.
+
+    Cancellation (InterruptedError) propagates; the task deadline (TimeoutError)
+    ends the loop as a failed outcome; the background test guard is always shut
+    down, whichever way the loop exits.
+    """
+    state = {
+        "messages": [
+            {"role": "system", "content": SYSTEM},
+            *json.loads(json.dumps(EXAMPLE)),
+            {
+                "role": "user",
+                "content": render_context(query, context_sections, requirements),
+            },
+        ],
+        "commands": [],
+        "calls": 0,
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+        "last_edit_step": -1,
+        "regressions": [],
+    }
+
+    def outcome(status, **extra):
+        commands = state["commands"]
+        checks = [
+            c
+            for c in commands
+            if c.get("check", True) and c["step"] > state["last_edit_step"]
+        ]
+        write(
+            output / "agent-trace.json",
+            {"messages": state["messages"], "commands": commands},
+        )
+        return {
+            "status": status,
+            "engine": "loop",
+            "model_calls": state["calls"],
+            "changed_files": sorted(set(workspace.changed)),
+            "commands": commands,
+            # The agent's latest check after its last edit passed, and the
+            # regression guard reported nothing outstanding.
+            "verified": bool(checks) and checks[-1]["ok"] and not state["regressions"],
+            "regressions": state["regressions"],
+            "usage": state["usage"],
+            **extra,
+        }
+
+    try:
+        return _loop(
+            state,
+            outcome,
+            workspace,
+            chat,
+            output,
+            deadline,
+            checkpoint=checkpoint,
+            required_checks=required_checks,
+            check_runner=check_runner,
+            max_turns=max_turns,
+            bash_timeout=bash_timeout,
+            report=report,
+            before_tools=before_tools,
+            guard=guard,
+        )
+    except InterruptedError:
+        raise
+    except TimeoutError as exc:
+        return outcome(
+            "failed",
+            failure_stage="deadline",
+            error=str(exc) or "Editor deadline exhausted",
+        )
+    finally:
+        if guard is not None:
+            guard.close()
+
+
+def _loop(
+    state,
+    outcome,
+    workspace,
+    chat,
+    output,
+    deadline,
+    *,
+    checkpoint,
+    required_checks,
+    check_runner,
+    max_turns,
+    bash_timeout,
+    report,
+    before_tools,
+    guard,
+):
+    messages = state["messages"]
+    commands = state["commands"]
     nudged = False
     step = 0
-    last_edit_step = -1
     failed_assert = None  # the latest failing check comparison, if any
-    usage = {"prompt_tokens": 0, "completion_tokens": 0}
+    guard_reports = 0
+    failed_check_warned = None  # last_edit_step when we last refused a finish
 
     def trace():
         write(output / "agent-trace.json", {"messages": messages, "commands": commands})
 
-    def outcome(status, **extra):
-        if guard is not None:
-            guard.close()
-        trace()
-        after_edit = [c for c in commands if c["step"] > last_edit_step]
-        return {
-            "status": status,
-            "engine": "loop",
-            "model_calls": calls,
-            "changed_files": sorted(set(workspace.changed)),
-            "commands": commands,
-            # True when the agent's latest check after its last edit passed.
-            "verified": bool(after_edit) and after_edit[-1]["ok"],
-            "usage": usage,
-            **extra,
-        }
+    def latest_check():
+        checks = [
+            c
+            for c in commands
+            if c.get("check", True) and c["step"] > state["last_edit_step"]
+        ]
+        return checks[-1] if checks else None
 
-    def verification_failed_since_edit():
-        """The latest check after the last edit failed (earlier ones may be fixed checks)."""
-        after_edit = [c for c in commands if c["step"] > last_edit_step]
-        return bool(after_edit) and not after_edit[-1]["ok"]
+    def check_failed():
+        check = latest_check()
+        return check is not None and not check["ok"]
 
-    guard_reports = 0
-
-    def finish():
+    def finish(final=False):
         """None when the change may be accepted; otherwise feedback for the model."""
         nonlocal guard_reports
         before_tools()
@@ -435,35 +513,53 @@ def agent_loop(
             return "Runtime delivery checks failed:\n" + "\n".join(
                 f["output"][-1500:] for f in failures
             )
-        if guard is not None and guard_reports < 2:
+        if guard is not None:
             report("Running related tests")
             # Slow suites must not dominate a quick task: wait briefly at most.
             wait = min(15.0, max(0.0, deadline - time.perf_counter() - 5))
-            found = guard.regressions(wait)
-            if found:
+            found = guard.regressions(wait, deadline)
+            state["regressions"] = list(found[0]) if found else []
+            if found and (guard_reports < 2 and not final):
                 guard_reports += 1
-                new, output = found
+                new, test_output = found
                 diff = guard.diff()
                 return (
                     "Existing tests that passed before your change now fail:\n"
                     + "\n".join(new[:10])
                     + "\n\nOutput (tail):\n"
-                    + output[-2500:]
+                    + test_output[-2500:]
                     + (f"\n\nYour changes so far:\n```diff\n{diff}\n```" if diff else "")
                     + "\nFix the code so they pass again, unless the request explicitly "
                     "asks to change that behavior."
                 )
+            if found:
+                return "Existing tests still fail: " + ", ".join(found[0][:10])
         return None
 
     def changed():
         if guard is not None:
             guard.changed()
 
+    def refuse_finish():
+        """Refuse one finish while the latest check after the last edit failed."""
+        nonlocal failed_check_warned
+        if check_failed() and failed_check_warned != state["last_edit_step"]:
+            failed_check_warned = state["last_edit_step"]
+            return (
+                "Not finished: your latest check failed. Fix the code (or the check, "
+                "only if it misstates the request) and run it again, then call done."
+            )
+        return None
+
+    last_batch_failed_edit = False
     while True:
         checkpoint()
-        if calls >= max_turns:
-            if workspace.changed and not verification_failed_since_edit():
-                return outcome("applied_unvalidated", finished="turn_limit")
+        if state["calls"] >= max_turns:
+            if workspace.changed and not last_batch_failed_edit and not check_failed():
+                problem = finish(final=True)
+                if problem is None:
+                    return outcome("applied_unvalidated", finished="turn_limit")
+                return outcome("failed", failure_stage="turn_limit", error=problem[:500])
             return outcome(
                 "failed",
                 failure_stage="turn_limit",
@@ -473,11 +569,12 @@ def agent_loop(
             return outcome(
                 "failed", failure_stage="deadline", error="Editor deadline exhausted"
             )
-        report(f"Model call {calls + 1}")
+        report(f"Model call {state['calls'] + 1}")
         reply = chat(messages, TOOLS, deadline)
-        calls += 1
-        for key in usage:
-            usage[key] += int((reply.get("usage") or {}).get(key) or 0)
+        state["calls"] += 1
+        calls = state["calls"]
+        for key in state["usage"]:
+            state["usage"][key] += int((reply.get("usage") or {}).get(key) or 0)
         message = reply.get("message") or {}
         tool_calls = [c for c in (message.get("tool_calls") or []) if c.get("function")]
         assistant = {"role": "assistant", "content": message.get("content") or ""}
@@ -514,10 +611,19 @@ def agent_loop(
                         "content": "Your reply was cut off at the output limit. Continue with concise tool calls.",
                     }
                 )
-            trace()
             continue
 
         if not tool_calls:
+            if MALFORMED_CALL.search(assistant["content"]):
+                # The server could not parse a tool call and returned it as text.
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "Your tool call could not be parsed. Re-issue it as a "
+                        "proper tool call with valid JSON arguments.",
+                    }
+                )
+                continue
             # A plain reply ends the task, as in other coding agents.
             if not workspace.changed:
                 if not nudged:
@@ -528,7 +634,6 @@ def agent_loop(
                             "content": "No file has been changed yet. Make the requested change with edit/write, verify it, then call done.",
                         }
                     )
-                    trace()
                     continue
                 return outcome(
                     "failed",
@@ -536,12 +641,11 @@ def agent_loop(
                     error="The model finished without changing any file",
                     summary=assistant["content"][:500],
                 )
-            problem = finish()
+            problem = refuse_finish() or finish()
             if problem and calls < max_turns:
                 messages.append(
                     {"role": "user", "content": problem + "\nFix this, then call done."}
                 )
-                trace()
                 continue
             if problem:
                 return outcome(
@@ -552,7 +656,9 @@ def agent_loop(
         before_tools()  # the workspace copy must exist before any tool runs
         blocked = False
         batch_failed = False
+        last_batch_failed_edit = False
         done_summary = None
+        done_index = None
         for call in assistant["tool_calls"]:
             name = call["function"]["name"]
             step += 1
@@ -583,7 +689,7 @@ def agent_loop(
                         result = workspace.edit(
                             str(arguments["path"]), normalize_edits(arguments)
                         )
-                        last_edit_step = step
+                        state["last_edit_step"] = step
                         changed()
                     elif name == "write":
                         content = arguments.get("content")
@@ -591,53 +697,42 @@ def agent_loop(
                             raise ToolError("write needs string content")
                         append = arguments.get("append") in (True, "true", "True", 1)
                         result = workspace.write(str(arguments["path"]), content, append)
-                        last_edit_step = step
+                        state["last_edit_step"] = step
                         changed()
-                    elif name == "python":
-                        code = arguments.get("code")
-                        if not isinstance(code, str):
-                            raise ToolError("python needs string code")
+                    elif name in ("python", "bash"):
+                        text = arguments.get("code" if name == "python" else "command")
+                        if not isinstance(text, str):
+                            raise ToolError(
+                                "python needs string code"
+                                if name == "python"
+                                else "bash needs a string command"
+                            )
                         timeout = min(
                             float(arguments.get("timeout") or bash_timeout),
                             bash_timeout * 2,
                             max(1.0, deadline - time.perf_counter()),
                         )
-                        report("Running check")
-                        note = weakening_note(failed_assert, code)
-                        result = workspace.python(code, timeout, checkpoint)
-                        failed_assert = result.meta.get("failed_assert")
-                        if note:
-                            result.text += note
+                        if name == "python":
+                            report("Running check")
+                            note = weakening_note(failed_assert, text)
+                            result = workspace.python(text, timeout, checkpoint)
+                            failed_assert = result.meta.get("failed_assert")
+                            if note:
+                                result.text += note
+                        else:
+                            report("Running command")
+                            result = workspace.bash(text, timeout, checkpoint)
                         if result.changed:
-                            last_edit_step = step - 0.5
+                            # The command edited files itself: that is an edit,
+                            # not a check of the edited state.
+                            state["last_edit_step"] = step
                             changed()
                         commands.append(
                             {
-                                "command": "python:\n" + code,
+                                "command": ("python:\n" + text) if name == "python" else text,
                                 "ok": result.ok,
-                                "turn": calls,
-                                "step": step,
-                                "output": result.text[-2000:],
-                            }
-                        )
-                    elif name == "bash":
-                        command = str(arguments.get("command", ""))
-                        timeout = min(
-                            float(arguments.get("timeout") or bash_timeout),
-                            bash_timeout * 2,
-                            max(1.0, deadline - time.perf_counter()),
-                        )
-                        report("Running command")
-                        result = workspace.bash(command, timeout, checkpoint)
-                        if result.changed:
-                            # The command edited files itself; its own exit
-                            # status already reflects the edited state.
-                            last_edit_step = step - 0.5
-                            changed()
-                        commands.append(
-                            {
-                                "command": command,
-                                "ok": result.ok,
+                                "check": not result.changed
+                                and (name == "python" or bool(CHECK_COMMAND.search(text))),
                                 "turn": calls,
                                 "step": step,
                                 "output": result.text[-2000:],
@@ -652,6 +747,8 @@ def agent_loop(
                         raise ToolError(
                             f"Unknown tool {name!r}. Available: read, python, bash, edit, write, done."
                         )
+                except (InterruptedError, TimeoutError):
+                    raise  # cancellation and the task deadline are not tool errors
                 except ToolError as exc:
                     result = ToolResult(str(exc), ok=False)
                 except (KeyError, TypeError) as exc:
@@ -667,37 +764,41 @@ def agent_loop(
                     batch_failed = True
                     if name in MUTATING:
                         blocked = True
+                        last_batch_failed_edit = True
             messages.append(
                 {"role": "tool", "tool_call_id": call["id"], "content": result.text}
             )
+            if name == "done":
+                done_index = len(messages) - 1
         trace()
-        if done_summary is not None:
-            if batch_failed:
-                messages[-1]["content"] = (
-                    "Not finished: an edit or command in this response failed. "
-                    "Fix it, or explain why it is expected, then call done."
+        if done_summary is None or done_index is None:
+            continue
+        if batch_failed:
+            messages[done_index]["content"] = (
+                "Not finished: an edit or command in this response failed. "
+                "Fix it, or explain why it is expected, then call done."
+            )
+            continue
+        if not workspace.changed:
+            if not nudged:
+                nudged = True
+                messages[done_index]["content"] = (
+                    "Not finished: no file has been changed yet. Make the "
+                    "requested change with edit/write, then call done."
                 )
                 continue
-            if not workspace.changed:
-                if not nudged:
-                    nudged = True
-                    messages[-1]["content"] = (
-                        "Not finished: no file has been changed yet. Make the "
-                        "requested change with edit/write, then call done."
-                    )
-                    continue
-                return outcome(
-                    "failed",
-                    failure_stage="no_changes",
-                    error="The model finished without changing any file",
-                    summary=done_summary[:500],
-                )
-            problem = finish()
-            if problem and calls < max_turns:
-                messages[-1]["content"] = "Not finished: " + problem
-                continue
-            if problem:
-                return outcome(
-                    "failed", failure_stage="verification", error=problem[:500]
-                )
-            return outcome("applied_unvalidated", summary=done_summary[:500])
+            return outcome(
+                "failed",
+                failure_stage="no_changes",
+                error="The model finished without changing any file",
+                summary=done_summary[:500],
+            )
+        problem = refuse_finish() or finish()
+        if problem and calls < max_turns:
+            messages[done_index]["content"] = (
+                problem if problem.startswith("Not finished") else "Not finished: " + problem
+            )
+            continue
+        if problem:
+            return outcome("failed", failure_stage="verification", error=problem[:500])
+        return outcome("applied_unvalidated", summary=done_summary[:500])

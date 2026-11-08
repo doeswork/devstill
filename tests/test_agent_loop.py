@@ -261,7 +261,7 @@ def test_turn_limit_accepts_only_unfailed_changes(work):
     (work / "pkg" / "m.py").write_text("def add(a, b):\n    return a - b\n")
     failing = reply(
         call("edit", 0, path="pkg/m.py", oldText="a - b", newText="a * b"),
-        call("bash", 1, command="exit 1"),
+        call("python", 1, code="assert False, 'still wrong'"),
     )
     bad = agent_loop(
         tools_for(work), "Fix", [], scripted(failing), work, FAR, max_turns=1
@@ -705,3 +705,241 @@ def test_request_without_context_tells_the_model_to_search():
 
     text = render_context("Fix the thing", [])
     assert "none was found automatically" in text and "grep -rn" in text
+
+
+# --- review fixes ---------------------------------------------------------------
+
+
+class FakeGuard:
+    def __init__(self, found=None):
+        self.closed = 0
+        self.found = found
+        self.changes = 0
+
+    def changed(self):
+        self.changes += 1
+
+    def regressions(self, wait, deadline=None):
+        return self.found
+
+    def diff(self):
+        return ""
+
+    def close(self):
+        self.closed += 1
+
+
+def test_guard_is_closed_and_cancel_propagates_on_exceptions(work):
+    guard = FakeGuard()
+
+    def cancelled(messages, tools, deadline):
+        raise InterruptedError("Task cancelled")
+
+    with pytest.raises(InterruptedError):
+        agent_loop(tools_for(work), "Fix", [], cancelled, work, FAR, guard=guard)
+    assert guard.closed == 1
+
+    def deadline_hit(messages, tools, deadline):
+        raise TimeoutError("Task deadline exhausted")
+
+    result = agent_loop(tools_for(work), "Fix", [], deadline_hit, work, FAR, guard=guard)
+    assert result["status"] == "failed" and result["failure_stage"] == "deadline"
+    assert guard.closed == 2
+
+
+def test_cancel_during_a_command_is_not_a_tool_error(work):
+    calls = []
+
+    def checkpoint():
+        calls.append(1)
+        if len(calls) > 3:
+            raise InterruptedError("Task cancelled")
+
+    chat = scripted(reply(call("bash", 0, command="sleep 2")))
+    with pytest.raises(InterruptedError):
+        agent_loop(tools_for(work), "Fix", [], chat, work, FAR, checkpoint=checkpoint)
+
+
+def test_only_real_checks_verify_a_change(work):
+    chat = scripted(
+        reply(
+            call("edit", 0, path="pkg/m.py", oldText="a - b", newText="a * b"),
+            call("bash", 1, command="grep -n return pkg/m.py"),
+            call("done", 2, summary="x"),
+        )
+    )
+    result = agent_loop(tools_for(work), "Fix", [], chat, work, FAR)
+    assert result["status"] == "applied_unvalidated" and not result["verified"]
+    (work / "pkg" / "m.py").write_text("def add(a, b):\n    return a - b\n")
+    tools = tools_for(work)
+    tools.tracked = ["pkg/m.py"]
+    sed = scripted(
+        reply(call("bash", 0, command="sed -i 's/a - b/a * b/' pkg/m.py"), call("done", 1, summary="x"))
+    )
+    result = agent_loop(tools, "Fix", [], sed, work, FAR)
+    assert result["changed_files"] == ["pkg/m.py"] and not result["verified"]
+
+
+def test_turn_limit_refuses_half_applied_batches_and_runs_delivery_checks(work):
+    half = reply(
+        call("edit", 0, path="pkg/m.py", oldText="a - b", newText="a + b"),
+        call("edit", 1, path="pkg/m.py", oldText="missing text", newText="x"),
+    )
+    result = agent_loop(tools_for(work), "Fix", [], scripted(half), work, FAR, max_turns=1)
+    assert result["status"] == "failed" and result["failure_stage"] == "turn_limit"
+
+    (work / "pkg" / "m.py").write_text("def add(a, b):\n    return a - b\n")
+    runner = lambda root, commands, deadline: [{"returncode": 1, "output": "missing export"}]
+    edit = reply(call("edit", 0, path="pkg/m.py", oldText="a - b", newText="a + b"))
+    result = agent_loop(
+        tools_for(work), "Fix", [], scripted(edit), work, FAR, max_turns=1,
+        required_checks=[["python", "-c", "import x"]], check_runner=runner,
+    )
+    assert result["status"] == "failed" and "missing export" in result["error"]
+
+
+def test_rejected_done_message_replaces_dones_own_result(work):
+    chat = scripted(
+        reply(
+            call("edit", 0, path="pkg/m.py", oldText="a - b", newText="a * b"),
+            call("done", 1, summary="x"),
+            call("python", 2, code="from pkg.m import add\nassert add(2, 3) == 5\n"),
+        ),
+        reply(
+            call("edit", 0, path="pkg/m.py", oldText="a * b", newText="a + b"),
+            call("python", 1, code="from pkg.m import add\nassert add(2, 3) == 5\n"),
+            call("done", 2, summary="fixed"),
+        ),
+    )
+    result = agent_loop(tools_for(work), "Fix", [], chat, work, FAR)
+    assert result["status"] == "applied_unvalidated" and result["verified"]
+    tools_seen = [m for m in chat.seen[1] if m["role"] == "tool" and not m["tool_call_id"].startswith("example")]
+    assert tools_seen[1]["content"].startswith("Not finished")  # done's own message
+    assert "left:  6" in tools_seen[2]["content"]  # the failing check output is kept
+
+
+def test_malformed_tool_text_and_failed_latest_check_do_not_finish(work):
+    chat = scripted(
+        reply(content='<tool_call>{"name": "edit", "arguments": {oops}}</tool_call>'),
+        reply(
+            call("edit", 0, path="pkg/m.py", oldText="a - b", newText="a * b"),
+            call("python", 1, code="from pkg.m import add\nassert add(2, 3) == 5\n"),
+        ),
+        reply(content="All done."),
+        reply(content="Really done."),
+    )
+    result = agent_loop(tools_for(work), "Fix", [], chat, work, FAR)
+    assert "could not be parsed" in chat.seen[1][-1]["content"]
+    assert "your latest check failed" in chat.seen[3][-1]["content"]
+    assert result["status"] == "applied_unvalidated" and not result["verified"]
+
+
+def test_persistent_regressions_are_never_accepted(work):
+    guard = FakeGuard(found=(["tests/test_m.py::test_neg"], "boom"))
+    edit = call("edit", 0, path="pkg/m.py", oldText="a - b", newText="a + b")
+    done = call("done", 1, summary="x")
+    chat = scripted(*[reply(edit if i == 0 else call("done", 0, summary="x"), *( [done] if i == 0 else [])) for i in range(4)])
+    result = agent_loop(tools_for(work), "Fix", [], chat, work, FAR, guard=guard, max_turns=4)
+    assert result["status"] == "failed"
+    assert result["regressions"] == ["tests/test_m.py::test_neg"] and not result["verified"]
+
+
+def test_paths_are_normalized_and_new_files_reach_the_proposal(work):
+    tools = tools_for(work)
+    tools.write("./pkg//new.py", "X = 1\n")
+    tools.edit("pkg/./new.py", [{"oldText": "X = 1", "newText": "X = 2"}])
+    assert tools.changed == ["pkg/new.py"]
+
+
+def test_overlapping_matches_reads_and_compile_gate(work):
+    with pytest.raises(ToolError, match="matches 2 places"):
+        apply_text_edits("aaa\n", [{"oldText": "aa", "newText": "b"}], "f.txt")
+    tools = tools_for(work)
+    (work / "pkg" / "long.txt").write_text("x" * 30_000 + "\n" + "y" * 30_000 + "\n")
+    text = tools.read("pkg/long.txt").text
+    assert "lines 1-1 of 2" in text and "use offset=2" in text
+    (work / "pkg" / "broken.py").write_text("def broken(:\n    pass\nVALUE = 1\n")
+    tools.edit("pkg/broken.py", [{"oldText": "VALUE = 1", "newText": "VALUE = 2"}])
+    assert (work / "pkg" / "broken.py").read_text().endswith("VALUE = 2\n")
+
+
+def test_append_keeps_bom_and_crlf(work):
+    path = work / "pkg" / "crlf_test.py"
+    path.write_bytes(b"\xef\xbb\xbfdef test_a():\r\n    assert True\r\n")
+    tools_for(work).write("pkg/crlf_test.py", "def test_b():\n    assert True\n", append=True)
+    assert path.read_bytes() == (
+        b"\xef\xbb\xbfdef test_a():\r\n    assert True\r\ndef test_b():\r\n    assert True\r\n"
+    )
+
+
+def test_guard_counts_regressions_even_when_the_agent_added_tests(tested):
+    from devstill.runtime.tools import TestGuard
+
+    original = {
+        "pkg/m.py": (tested / "pkg" / "m.py").read_bytes(),
+        "tests/test_m.py": (tested / "tests" / "test_m.py").read_bytes(),
+    }
+    tools = tools_for(tested)
+    guard = TestGuard(tools, ["tests/test_m.py"], original.get)
+    tools.edit("pkg/m.py", [{"oldText": "return -a", "newText": "return a"}])
+    tools.write("tests/test_m.py", "\n\ndef test_new_one():\n    assert False\n", append=True)
+    guard.changed()
+    new, _output = guard.regressions(30)
+    assert new == ["tests/test_m.py::test_neg"]  # the agent's new test is not a regression
+    guard.close()
+
+
+def test_commands_get_no_credentials_and_python_is_the_project_interpreter(
+    loop_session, monkeypatch
+):
+    monkeypatch.setenv("DEVSTILL_AGENT_API_KEY", "sk-secret")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp-secret")
+    chat = scripted(
+        reply(
+            call("edit", 0, path="a.py", oldText="return 1", newText="return 2"),
+            call("bash", 1, command="env; python -c 'import sys; print(sys.executable)'"),
+            call("done", 2, summary="x"),
+        )
+    )
+    monkeypatch.setattr(loop_session, "chat", chat)
+    proposal = loop_session.prepare("Make f return 2")
+    output = proposal["execution"]["commands"][0]["output"]
+    assert "sk-secret" not in output and "ghp-secret" not in output
+    assert sys.executable in output or str(Path(sys.executable).resolve()) in output
+
+
+def test_git_ignored_named_files_are_never_read(tmp_path):
+    import subprocess
+
+    from devstill.runtime.service import named_file_records
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / ".gitignore").write_text("local_settings.py\n")
+    (tmp_path / "local_settings.py").write_text("PASSWORD = 'hunter2'\n")
+    (tmp_path / "app.py").write_text("X = 1\n")
+    records = named_file_records(
+        tmp_path, DevstillConfig(), "Use ./local_settings.py and app.py here."
+    )
+    assert [r["path"] for r in records] == ["app.py"]
+
+
+def test_lenient_changes_propose_only_the_agents_files(tmp_path):
+    from devstill.runtime import workspace
+
+    repo, work = tmp_path / "repo", tmp_path / "work"
+    repo.mkdir()
+    (repo / "a.py").write_text("x = 1\n")
+    (repo / "b.py").write_text("y = 1\n")
+    config = DevstillConfig()
+    before = workspace.snapshot(repo, work, config, support=True)
+    (work / "a.py").write_text("x = 2\n")
+    (work / "b.py").write_text("y = 2\n")  # e.g. rewritten by a test run
+    files, patch = workspace.changes(repo, work, before, ["a.py"], strict=False)
+    assert list(files) == ["a.py"] and "b.py" not in patch
+
+
+def test_everyday_change_words_keep_code_first():
+    from devstill.runtime.service import DOC_WORDS
+
+    assert not DOC_WORDS.search("Make no other changes to the parser.")
+    assert DOC_WORDS.search("Add a CHANGES.rst changelog entry")

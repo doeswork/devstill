@@ -61,7 +61,9 @@ def snapshot(repo, workspace, config, support=False):
         mode = stat.S_IMODE(path.stat().st_mode)
         target.chmod(mode)
         manifest[item.relative] = {"sha256": sha(raw), "mode": mode}
-        if not eligible:
+        if not eligible and item.decision.category != "empty":
+            # Fixtures and assets: copied for tests, never proposed or edited.
+            # Empty files (package markers) stay editable sources.
             manifest[item.relative]["support"] = True
     return manifest
 
@@ -90,17 +92,16 @@ def changes(repo, workspace, before, allowed, strict=True):
         if not path.is_file():
             continue
         name = relative.as_posix()
-        if not strict and name not in allowed and name not in before:
+        if not strict and name not in allowed:
+            # Only the agent's own changes (edit/write, or tracked files its
+            # commands changed) are proposed; test runs and scratch files are not.
             continue
         raw = path.read_bytes()
         observed[name] = raw
-        if name not in allowed and (
+        if strict and name not in allowed and (
             name not in before or sha(raw) != before[name]["sha256"]
         ):
-            if strict:
-                raise ValueError(f"Check changed unproposed source: {name}")
-            if not before[name].get("support"):
-                allowed.add(name)
+            raise ValueError(f"Check changed unproposed source: {name}")
     if strict and set(before) - set(observed):
         raise ValueError("File deletion is unsupported")
     result, patches = {}, []
@@ -178,6 +179,8 @@ def apply(repo, root, run_id, expected_digest, config):
             )
         # Conservative initial policy: validation is tied to the entire copied source.
         for name, entry in proposal["sources"].items():
+            if entry.get("support"):
+                continue  # fixtures/assets copied for tests; never proposed
             path = source_path(repo, name)
             if (
                 not path.is_file()

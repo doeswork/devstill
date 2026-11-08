@@ -59,34 +59,32 @@ def outline(text: str, limit: int = 40) -> str:
     except SyntaxError:
         return ""
     items = []
-    names = []
+    previous_def = None
     for node in tree.body:
-        if (
-            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and names
-            and names[-1] == node.name
-        ):
-            # Collapse @overload stubs into the implementation's line.
-            items.pop()
-            names.pop()
-        names.append(getattr(node, "name", None))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if previous_def == node.name and items:
+                items.pop()  # collapse @overload stubs into the implementation
+            items.append(f"L{node.lineno} def {node.name}")
+            previous_def = node.name
+            continue
+        previous_def = None
         if isinstance(node, ast.ClassDef):
-            methods = [
-                n.name
-                for n in node.body
-                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-            ]
+            methods = list(
+                dict.fromkeys(  # overloaded methods appear once
+                    n.name
+                    for n in node.body
+                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                )
+            )
             shown = ", ".join(methods[:14]) + (", ..." if len(methods) > 14 else "")
             items.append(
                 f"L{node.lineno} class {node.name}" + (f": {shown}" if shown else "")
             )
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            items.append(f"L{node.lineno} def {node.name}")
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            names = [t.id for t in targets if isinstance(t, ast.Name)]
-            if names and (names[0].isupper() or names[0] == "__all__"):
-                items.append(f"L{node.lineno} {names[0]} = ...")
+            assigned = [t.id for t in targets if isinstance(t, ast.Name)]
+            if assigned and (assigned[0].isupper() or assigned[0] == "__all__"):
+                items.append(f"L{node.lineno} {assigned[0]} = ...")
     if len(items) > limit:
         items = items[:limit] + [f"... {len(items) - limit} more"]
     return "\n".join(items)
@@ -102,8 +100,12 @@ def _merge(intervals, gap=15):
     return merged
 
 
-def related_tests(work: Path, symbols, limit=3, max_lines=8):
-    """Test files mentioning the primary symbols plus a few usage lines."""
+def related_tests(work: Path, symbols, limit=3, max_lines=8, allowed=None):
+    """Test files mentioning the primary symbols plus a few usage lines.
+
+    allowed(name) filters files by the repository's path policy (excludes,
+    ignored or sensitive files are never quoted to the model).
+    """
     names = sorted({s for s in symbols if s and len(s) >= 3 and s.isidentifier()})
     if not names:
         return [], []
@@ -115,7 +117,9 @@ def related_tests(work: Path, symbols, limit=3, max_lines=8):
         if not root.is_dir():
             continue
         for path in sorted(root.rglob("*.py")):
-            if "__pycache__" in path.parts:
+            if "__pycache__" in path.parts or path.is_symlink():
+                continue
+            if allowed is not None and not allowed(path.relative_to(work).as_posix()):
                 continue
             try:
                 text = path.read_text(errors="ignore")
@@ -140,15 +144,19 @@ def primary_symbols(records):
     """Distinctive names of the primary (non-support) excerpts."""
     names = []
     for record in records:
-        if record.get("kind") in SUPPORT_KINDS or record.get("support"):
-            continue
-        if not record.get("symbol"):
+        if (
+            record.get("kind") in SUPPORT_KINDS
+            or record.get("support")
+            or record.get("alternate")
+            or not record.get("symbol")
+        ):
             continue
         parts = str(record["symbol"]).split(".")
         # Owner classes are distinctive; short method names are not.
         names.extend(p for p in parts[:-1] if p[:1].isupper())
-        if len(parts[-1]) >= 5 or parts[-1][:1].isupper():
-            names.append(parts[-1])
+        last = parts[-1]
+        if not last.startswith("__") and (len(last) >= 5 or last[:1].isupper()):
+            names.append(last)
     return names
 
 
@@ -163,12 +171,18 @@ def is_test_path(name: str) -> bool:
 
 def changed_symbols(new_text: str, old_text: str) -> set[str]:
     """Names of functions/classes in new_text whose lines differ from old_text."""
-    old_lines, new_lines = old_text.split("\n"), new_text.split("\n")
+    new_text = new_text.replace("\r\n", "\n")
+    old_lines = old_text.replace("\r\n", "\n").split("\n")
+    new_lines = new_text.split("\n")
     changed = set()
     matcher = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
     for tag, _, _, start, end in matcher.get_opcodes():
-        if tag != "equal":
-            changed.update(range(start + 1, max(end, start + 1) + 1))
+        if tag == "equal":
+            continue
+        if start == end:
+            changed.update({start, start + 1})  # pure deletion: lines around it
+        else:
+            changed.update(range(start + 1, end + 1))
     try:
         tree = ast.parse(new_text)
     except SyntaxError:
@@ -176,13 +190,14 @@ def changed_symbols(new_text: str, old_text: str) -> set[str]:
     names = set()
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            first = min([node.lineno, *(d.lineno for d in node.decorator_list)])
             last = node.end_lineno or node.lineno
-            if any(node.lineno <= line <= last for line in changed):
+            if any(first <= line <= last for line in changed):
                 names.add(node.name)
     return {n for n in names if len(n) >= 3 and not n.startswith("__")}
 
 
-def guard_test_files(work: Path, changed, original, limit=2):
+def guard_test_files(work: Path, changed, original, limit=2, allowed=None):
     """Existing test files that exercise the functions/classes just changed."""
     names = set()
     for name in changed:
@@ -197,15 +212,61 @@ def guard_test_files(work: Path, changed, original, limit=2):
         names |= changed_symbols(new_text, old_text)
     if not names:
         return []
-    counts, _ = related_tests(work, names)
+    counts, _ = related_tests(work, names, allowed=allowed)
     if not counts:
         return []
     top = counts[0][0]
     return [name for hits, name in counts[:limit] if hits * 2 >= top]
 
 
-def build_sections(work: Path, records, budget_chars=16000):
-    """Render records as merged whole-line excerpts within a character budget."""
+def _render_section(path, lines, intervals, complete, header, preface, cap):
+    """Render one file section within `cap` chars, cutting only at line ends."""
+    fence = FENCES.get(PurePosixPath(path).suffix, "")
+    parts = [header] + ([preface] if preface else [])
+    used = sum(len(p) + 1 for p in parts)
+    for start, end in intervals:
+        start, end = max(1, start), min(len(lines), end)
+        if start > end:
+            continue
+        code_lines = lines[start - 1 : end]
+        ticks = "```"
+        while any(ticks in line for line in code_lines):
+            ticks += "`"
+        label = "whole file" if complete else f"lines {start}-{end}"
+        opening = f"{label}:\n{ticks}{fence}"
+        room = cap - used - len(opening) - len(ticks) - 80
+        if room <= 0:
+            parts.append(f"[lines {start}-{end} omitted for space; read the file]")
+            break
+        kept, size = [], 0
+        for line in code_lines:
+            if size + len(line) + 1 > room:
+                break
+            kept.append(line)
+            size += len(line) + 1
+        shown_end = start + len(kept) - 1
+        if kept and shown_end < end:
+            opening = f"lines {start}-{shown_end}:\n{ticks}{fence}"
+        block = opening + "\n" + "\n".join(kept) + "\n" + ticks
+        if len(kept) < len(code_lines):
+            block += (
+                f"\n[{len(code_lines) - len(kept)} more lines ({shown_end + 1}-{end}) "
+                "not shown; read the file for them]"
+            )
+            parts.append(block)
+            break
+        parts.append(block)
+        used += len(block) + 1
+    return "\n".join(parts)
+
+
+def build_sections(work: Path, records, budget_chars=16000, allowed=None):
+    """Render records as merged whole-line excerpts within a character budget.
+
+    Files named in the request are capped at 40% of the budget so they cannot
+    crowd out the retrieved code; sections that do not fit are listed, not
+    silently dropped.
+    """
     by_path: dict[str, list] = {}
     order = []
     for record in records:
@@ -215,10 +276,15 @@ def build_sections(work: Path, records, budget_chars=16000):
             order.append(path)
         start, end = record["lines"]
         by_path[path].append(
-            (int(start), int(end), record.get("kind") in SUPPORT_KINDS)
+            (
+                int(start),
+                int(end),
+                record.get("kind") in SUPPORT_KINDS or record.get("support"),
+                record.get("kind") == "named_file",
+            )
         )
 
-    sections = []
+    sections, omitted = [], []
     used = 0
     for index, path in enumerate(order):
         target = work / path
@@ -230,8 +296,10 @@ def build_sections(work: Path, records, budget_chars=16000):
         if lines and lines[-1] == "":
             lines = lines[:-1]
         total = len(lines)
-        intervals = _merge([(s, e) for s, e, _ in by_path[path]])
-        only_support = all(support for _, _, support in by_path[path])
+        entries = by_path[path]
+        intervals = _merge([(s, e) for s, e, _, _ in entries])
+        only_support = all(support for _, _, support, _ in entries)
+        named_only = all(named for _, _, _, named in entries)
         complete = (
             len(intervals) == 1 and intervals[0][0] <= 1 and intervals[0][1] >= total
         )
@@ -240,43 +308,34 @@ def build_sections(work: Path, records, budget_chars=16000):
         if module:
             header += f" (import as {module})"
         header += f" — {total} lines"
-        body = []
+        preface = ""
         if path.endswith(".py") and not complete and not only_support and index < 3:
             summary = outline(text)
             if summary:
-                body.append("Outline:\n" + summary)
-        fence = FENCES.get(PurePosixPath(path).suffix, "")
-        for start, end in intervals:
-            start, end = max(1, start), min(total, end)
-            if start > end:
-                continue
-            code = "\n".join(lines[start - 1 : end])
-            ticks = "```"
-            while ticks in code:
-                ticks += "`"
-            label = "whole file" if complete else f"lines {start}-{end}"
-            body.append(f"{label}:\n{ticks}{fence}\n{code}\n{ticks}")
-        section = header + "\n" + "\n".join(body)
-        if used + len(section) > budget_chars:
-            if not sections:
-                # Always keep the primary excerpt, trimmed to the budget.
-                section = (
-                    section[: max(2000, budget_chars)]
-                    + "\n[truncated; read the file for more]"
-                )
-                sections.append(section)
-                used += len(section)
+                preface = "Outline:\n" + summary
+        remaining = budget_chars - used
+        cap = min(remaining, int(budget_chars * 0.4)) if named_only else remaining
+        if cap < 600:
+            omitted.append(path)
             continue
+        section = _render_section(path, lines, intervals, complete, header, preface, cap)
         sections.append(section)
         used += len(section)
-    tests, examples = related_tests(work, primary_symbols(records))
+    if omitted:
+        sections.append(
+            "Not shown for space (read if needed): " + ", ".join(omitted)
+        )
+    tests, examples = related_tests(work, primary_symbols(records), allowed=allowed)
     if tests:
         text = "Related tests: " + ", ".join(
             f"{name} ({hits} mentions)" for hits, name in tests
         )
-        if examples:
-            text += "\nExisting usage in tests:\n" + "\n".join(
-                f"{name}:{number}: {line}" for name, number, line in examples
-            )
+        lines = [f"{name}:{number}: {line}" for name, number, line in examples]
+        while lines and len(text) + sum(len(line) + 1 for line in lines) + 30 > max(
+            600, budget_chars - used
+        ):
+            lines.pop()
+        if lines:
+            text += "\nExisting usage in tests:\n" + "\n".join(lines)
         sections.append(text)
     return sections
