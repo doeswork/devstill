@@ -137,3 +137,41 @@ class ChromaStore:
         while len(groups) < len(embeddings):
             groups.append([])
         return groups
+
+
+class LazyChromaStore:
+    """Defer importing chromadb (over a second) until a vector operation runs.
+
+    Lexical-only retrieval and an unchanged-index reconciliation never touch
+    vectors, so cold Quick runs skip the import entirely.
+    """
+
+    def __init__(self, path: Path, collection_name: str) -> None:
+        self._path = path
+        self._collection_name = collection_name
+        self._store: ChromaStore | None = None
+
+    @property
+    def loaded(self) -> bool:
+        return self._store is not None
+
+    def _get(self) -> ChromaStore:
+        if self._store is None:
+            self._store = ChromaStore(self._path, self._collection_name)
+        return self._store
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self._get(), name)
+
+    def upsert_search_units(self, units, *args: Any, **kwargs: Any) -> None:
+        if not units:
+            return None
+        return self._get().upsert_search_units(units, *args, **kwargs)
+
+    def delete_search_units(self, unit_ids, *args: Any, **kwargs: Any) -> None:
+        ids = list(unit_ids)
+        if not ids:
+            return None
+        return self._get().delete_search_units(ids, *args, **kwargs)

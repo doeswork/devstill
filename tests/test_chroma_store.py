@@ -93,3 +93,14 @@ def test_chroma_batches_upserts_and_deletes_at_runtime_limit() -> None:
     )
     assert [len(batch["ids"]) for batch in store.collection.deletes] == [3, 3, 1]
     assert delete_progress == [(3, 7), (6, 7), (7, 7)]
+
+
+def test_lazy_store_defers_chromadb_until_a_vector_operation(tmp_path):
+    from devstill.storage.chroma_store import LazyChromaStore
+
+    store = LazyChromaStore(tmp_path / "chroma", "lazy")
+    store.delete_search_units([])
+    store.upsert_search_units([], [], {})
+    assert not store.loaded  # empty operations never open Chroma
+    assert store.max_batch_size >= 1  # real operations load it on demand
+    assert store.loaded

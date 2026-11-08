@@ -16,7 +16,7 @@ from devstill.retrieval_policy import (
     query_references,
     requests_signatures,
 )
-from devstill.storage import ChromaStore, SQLiteStore
+from devstill.storage import LazyChromaStore, SQLiteStore
 
 RRF_K = 60.0
 MIN_CANDIDATES_PER_CHANNEL = 50
@@ -59,7 +59,9 @@ class HybridSearch:
             normalize=config.embedding.normalize_embeddings,
             device=config.embedding.device,
         )
-        self.chroma = chroma_store or ChromaStore(paths.chroma, config.index.collection)
+        self.chroma = chroma_store or LazyChromaStore(
+            paths.chroma, config.index.collection
+        )
         self._symbol_choices: dict[str, str] | None = None
 
     def close(self) -> None:
@@ -216,9 +218,7 @@ class HybridSearch:
                 if choices and (allowed_paths is not None or kind):
                     eligible = self.store.eligible_chunk_ids(**scope)
                     choices = {
-                        key: value
-                        for key, value in choices.items()
-                        if key in eligible
+                        key: value for key, value in choices.items() if key in eligible
                     }
                 fuzzy_values = (
                     process.extract(

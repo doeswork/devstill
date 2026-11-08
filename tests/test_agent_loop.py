@@ -463,3 +463,28 @@ def test_python_tool_runs_scripts_without_shell_quoting_and_explains_asserts(wor
     assert "left:  -1" in failed.text and "right: 5" in failed.text
     crashed = tools.python("import pkg.missing\n", 10)
     assert not crashed.ok and "ModuleNotFoundError" in crashed.text
+
+
+def test_fast_binary_detection_matches_reference_rule():
+    from devstill.parsers.detection import is_binary
+
+    def reference(raw):
+        sample = raw[:8192]
+        if b"\0" in sample:
+            return True
+        if not sample:
+            return False
+        control = sum(v < 9 or (13 < v < 32) or v == 127 for v in sample)
+        return control / len(sample) > 0.08
+
+    samples = [
+        b"",
+        b"plain text\n",
+        bytes(range(1, 256)),
+        b"\x01" * 9 + b"a" * 91,
+        b"\x01" * 8 + b"a" * 92,
+        b"x\x00y",
+        "café".encode() * 50,
+    ]
+    for raw in samples:
+        assert is_binary(raw) == reference(raw)

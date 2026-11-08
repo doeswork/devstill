@@ -39,7 +39,7 @@ from devstill.parsers import (
 )
 from devstill.parsers.registry import language_for
 from devstill.paths import IndexPaths
-from devstill.storage import ChromaStore, SQLiteStore
+from devstill.storage import LazyChromaStore, SQLiteStore
 
 
 class RepositoryIndexer:
@@ -65,7 +65,7 @@ class RepositoryIndexer:
             normalize=config.embedding.normalize_embeddings,
             device=config.embedding.device,
         )
-        self.chroma = chroma_store or ChromaStore(
+        self.chroma = chroma_store or LazyChromaStore(
             self.paths.chroma,
             config.index.collection,
         )
