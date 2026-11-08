@@ -260,6 +260,8 @@ class EditingConfig(StrictModel):
     turn_output_tokens: int = Field(default=2048, ge=128, le=65536)
     bash_timeout_seconds: float = Field(default=30, ge=1, le=600)
     loop_context_chars: int = Field(default=16000, ge=2000)
+    # Re-run related existing tests after loop edits; report new failures.
+    regression_tests: bool = True
 
 
 class DevstillConfig(StrictModel):

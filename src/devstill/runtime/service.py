@@ -29,9 +29,9 @@ from devstill.runtime.artifacts import digest, load, run_directory, write
 from devstill.runtime.checks import run_checks
 from devstill.runtime.context import focused_candidates, support_records
 from devstill.runtime.editor import edit_loop, editor_messages, response_schema
-from devstill.runtime.loop_context import build_sections
+from devstill.runtime.loop_context import build_sections, guard_test_files
 from devstill.runtime.requirements import delivery_checks, delivery_requirements
-from devstill.runtime.tools import Workspace
+from devstill.runtime.tools import TestGuard, Workspace
 from devstill.search import HybridSearch
 
 DOC_SUFFIXES = {".rst", ".md", ".markdown", ".txt", ".adoc"}
@@ -412,6 +412,15 @@ class RuntimeSession:
                 cfg.editing.python,
             )
 
+        guard = None
+        if cfg.editing.regression_tests:
+            files = guard_test_files(self.repo, records)
+
+            def original(name):
+                path = workspace.source_path(self.repo, name)
+                return path.read_bytes() if path.is_file() else None
+
+            guard = TestGuard(tools, files, original) if files else None
         state = {}
         with ThreadPoolExecutor(max_workers=1) as pool:
             pending = pool.submit(workspace.snapshot, self.repo, work, cfg, True)
@@ -440,6 +449,7 @@ class RuntimeSession:
                 bash_timeout=cfg.editing.bash_timeout_seconds,
                 report=emit,
                 before_tools=ready,
+                guard=guard,
             )
             ready()
         return outcome, state["sources"]

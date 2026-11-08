@@ -135,11 +135,35 @@ def related_tests(work: Path, symbols, limit=3, max_lines=8):
     return counts[:limit], examples
 
 
+def primary_symbols(records):
+    """Distinctive names of the primary (non-support) excerpts."""
+    names = []
+    for record in records:
+        if record.get("kind") in SUPPORT_KINDS or record.get("support"):
+            continue
+        if not record.get("symbol"):
+            continue
+        parts = str(record["symbol"]).split(".")
+        # Owner classes are distinctive; short method names are not.
+        names.extend(p for p in parts[:-1] if p[:1].isupper())
+        if len(parts[-1]) >= 5 or parts[-1][:1].isupper():
+            names.append(parts[-1])
+    return names
+
+
+def guard_test_files(work: Path, records, limit=2):
+    """Existing test files worth re-running after a change."""
+    counts, _ = related_tests(work, primary_symbols(records))
+    if not counts:
+        return []
+    top = counts[0][0]
+    return [name for hits, name in counts[:limit] if hits * 2 >= top]
+
+
 def build_sections(work: Path, records, budget_chars=16000):
     """Render records as merged whole-line excerpts within a character budget."""
     by_path: dict[str, list] = {}
     order = []
-    primary_symbols = []
     for record in records:
         path = record["path"]
         if path not in by_path:
@@ -149,12 +173,7 @@ def build_sections(work: Path, records, budget_chars=16000):
         by_path[path].append(
             (int(start), int(end), record.get("kind") in SUPPORT_KINDS)
         )
-        if record.get("kind") not in SUPPORT_KINDS and record.get("symbol"):
-            parts = str(record["symbol"]).split(".")
-            # Owner classes are distinctive; short method names are not.
-            primary_symbols.extend(p for p in parts[:-1] if p[:1].isupper())
-            if len(parts[-1]) >= 5 or parts[-1][:1].isupper():
-                primary_symbols.append(parts[-1])
+
     sections = []
     used = 0
     for index, path in enumerate(order):
@@ -206,7 +225,7 @@ def build_sections(work: Path, records, budget_chars=16000):
             continue
         sections.append(section)
         used += len(section)
-    tests, examples = related_tests(work, primary_symbols)
+    tests, examples = related_tests(work, primary_symbols(records))
     if tests:
         text = "Related tests: " + ", ".join(
             f"{name} ({hits} mentions)" for hits, name in tests

@@ -293,6 +293,7 @@ def agent_loop(
     bash_timeout=30.0,
     report=lambda message: None,
     before_tools=lambda: None,
+    guard=None,
 ):
     """Run the tool loop; return an outcome compatible with the structured editor."""
     messages = [
@@ -314,6 +315,8 @@ def agent_loop(
         write(output / "agent-trace.json", {"messages": messages, "commands": commands})
 
     def outcome(status, **extra):
+        if guard is not None:
+            guard.close()
         trace()
         after_edit = [c for c in commands if c["step"] > last_edit_step]
         return {
@@ -331,7 +334,11 @@ def agent_loop(
     def verification_failed_since_edit():
         return any(not c["ok"] for c in commands if c["step"] > last_edit_step)
 
-    def finish(summary):
+    guard_reports = 0
+
+    def finish():
+        """None when the change may be accepted; otherwise feedback for the model."""
+        nonlocal guard_reports
         before_tools()
         failures = []
         for command in required_checks:
@@ -340,8 +347,29 @@ def agent_loop(
             )
             failures.extend(r for r in results if r.get("returncode") != 0)
         if failures:
-            return failures
+            return "Runtime delivery checks failed:\n" + "\n".join(
+                f["output"][-1500:] for f in failures
+            )
+        if guard is not None and guard_reports < 2:
+            report("Running related tests")
+            wait = min(45.0, max(0.0, deadline - time.perf_counter() - 5))
+            found = guard.regressions(wait)
+            if found:
+                guard_reports += 1
+                new, output = found
+                return (
+                    "Existing tests that passed before your change now fail:\n"
+                    + "\n".join(new[:10])
+                    + "\n\nOutput (tail):\n"
+                    + output[-2500:]
+                    + "\nFix the code so they pass again, unless the request explicitly "
+                    "asks to change that behavior."
+                )
         return None
+
+    def changed():
+        if guard is not None:
+            guard.changed()
 
     while True:
         checkpoint()
@@ -420,23 +448,16 @@ def agent_loop(
                     error="The model finished without changing any file",
                     summary=assistant["content"][:500],
                 )
-            failures = finish(assistant["content"])
-            if failures and calls < max_turns:
+            problem = finish()
+            if problem and calls < max_turns:
                 messages.append(
-                    {
-                        "role": "user",
-                        "content": "Runtime delivery checks failed:\n"
-                        + "\n".join(f["output"][-1500:] for f in failures)
-                        + "\nFix this, then call done.",
-                    }
+                    {"role": "user", "content": problem + "\nFix this, then call done."}
                 )
                 trace()
                 continue
-            if failures:
+            if problem:
                 return outcome(
-                    "failed",
-                    failure_stage="delivery_verification",
-                    error="Runtime delivery checks failed",
+                    "failed", failure_stage="verification", error=problem[:500]
                 )
             return outcome("applied_unvalidated", summary=assistant["content"][:500])
 
@@ -475,12 +496,14 @@ def agent_loop(
                             str(arguments["path"]), normalize_edits(arguments)
                         )
                         last_edit_step = step
+                        changed()
                     elif name == "write":
                         content = arguments.get("content")
                         if not isinstance(content, str):
                             raise ToolError("write needs string content")
                         result = workspace.write(str(arguments["path"]), content)
                         last_edit_step = step
+                        changed()
                     elif name == "python":
                         code = arguments.get("code")
                         if not isinstance(code, str):
@@ -494,6 +517,7 @@ def agent_loop(
                         result = workspace.python(code, timeout, checkpoint)
                         if result.changed:
                             last_edit_step = step - 0.5
+                            changed()
                         commands.append(
                             {
                                 "command": "python:\n" + code,
@@ -516,6 +540,7 @@ def agent_loop(
                             # The command edited files itself; its own exit
                             # status already reflects the edited state.
                             last_edit_step = step - 0.5
+                            changed()
                         commands.append(
                             {
                                 "command": command,
@@ -574,17 +599,12 @@ def agent_loop(
                     error="The model finished without changing any file",
                     summary=done_summary[:500],
                 )
-            failures = finish(done_summary)
-            if failures and calls < max_turns:
-                messages[-1]["content"] = (
-                    "Not finished: runtime delivery checks failed:\n"
-                    + "\n".join(f["output"][-1500:] for f in failures)
-                )
+            problem = finish()
+            if problem and calls < max_turns:
+                messages[-1]["content"] = "Not finished: " + problem
                 continue
-            if failures:
+            if problem:
                 return outcome(
-                    "failed",
-                    failure_stage="delivery_verification",
-                    error="Runtime delivery checks failed",
+                    "failed", failure_stage="verification", error=problem[:500]
                 )
             return outcome("applied_unvalidated", summary=done_summary[:500])

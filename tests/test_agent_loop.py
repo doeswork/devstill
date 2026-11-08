@@ -509,3 +509,76 @@ def test_review_render_shows_agent_checks_and_summary(loop_session, monkeypatch)
     assert "Summary: f returns 2" in text
     state = loop_session.apply(proposal["id"], proposal["digest"])
     assert state["validation"] == "agent_check_passed"
+
+
+# --- regression guard -----------------------------------------------------------
+
+
+@pytest.fixture
+def tested(tmp_path):
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__init__.py").write_text("")
+    (tmp_path / "pkg" / "m.py").write_text(
+        "def add(a, b):\n    return a + b\n\n\ndef neg(a):\n    return -a\n"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_m.py").write_text(
+        "from pkg.m import add, neg\n\n\ndef test_add():\n    assert add(2, 3) == 5\n\n\n"
+        "def test_neg():\n    assert neg(2) == -2\n\n\ndef test_known_bad():\n    assert add(1, 1) == 3\n"
+    )
+    return tmp_path
+
+
+def test_guard_reports_only_tests_broken_by_the_change(tested):
+    from devstill.runtime.tools import TestGuard
+
+    original = {"pkg/m.py": (tested / "pkg" / "m.py").read_bytes()}
+    tools = tools_for(tested)
+    guard = TestGuard(tools, ["tests/test_m.py"], original.get)
+    tools.edit("pkg/m.py", [{"oldText": "return -a", "newText": "return a"}])
+    guard.changed()
+    new, output = guard.regressions(30)
+    assert new == ["tests/test_m.py::test_neg"]  # test_known_bad failed before too
+    assert "test_neg" in output
+    assert (tested / "pkg" / "m.py").read_text().endswith("return a\n")  # restored
+    tools.edit("pkg/m.py", [{"oldText": "return a\n", "newText": "return -a\n"}])
+    guard.changed()
+    assert guard.regressions(30) is None
+    guard.close()
+
+
+def test_loop_feeds_regressions_back_before_accepting_done(tested):
+    from devstill.runtime.tools import TestGuard
+
+    original = {"pkg/m.py": (tested / "pkg" / "m.py").read_bytes()}
+    tools = tools_for(tested)
+    guard = TestGuard(tools, ["tests/test_m.py"], original.get)
+    chat = scripted(
+        reply(
+            call(
+                "edit",
+                0,
+                path="pkg/m.py",
+                oldText="    return a + b",
+                newText="    return abs(a + b)",
+            ),
+            call("edit", 1, path="pkg/m.py", oldText="return -a", newText="return a"),
+            call("done", 2, summary="x"),
+        ),
+        reply(
+            call(
+                "edit", 0, path="pkg/m.py", oldText="return a\n", newText="return -a\n"
+            ),
+            call("done", 1, summary="fixed"),
+        ),
+    )
+    result = agent_loop(
+        tools, "Make add return absolute sums", [], chat, tested, FAR, guard=guard
+    )
+    assert result["status"] == "applied_unvalidated" and result["model_calls"] == 2
+    feedback = chat.seen[1][-1]["content"]
+    assert (
+        "now fail" in feedback
+        and "test_neg" in feedback
+        and "test_known_bad" not in feedback
+    )

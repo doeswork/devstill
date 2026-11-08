@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import difflib
 import os
+import re
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 import unicodedata
 from dataclasses import dataclass, field
@@ -467,3 +469,156 @@ class Workspace:
             ok=code == 0,
             changed=modified,
         )
+
+
+_FAILURE = re.compile(r"^(FAILED|ERROR) (\S+)", re.MULTILINE)
+
+
+class TestGuard:
+    """Run related existing tests in the background after each change.
+
+    The latest run is awaited when the agent finishes. Tests that fail after
+    the change are re-run against the original sources (restored briefly);
+    only tests that passed before count as regressions.
+    """
+
+    def __init__(self, workspace: Workspace, files, originals, timeout=60.0):
+        self.workspace = workspace
+        self.files = list(files)
+        self.originals = originals  # name -> original bytes, or None if new
+        self.timeout = timeout
+        self._lock = threading.Lock()
+        self._generation = 0
+        self._result = None
+        self._done = threading.Event()
+        self._process = None
+        self._thread = None
+
+    def _argv(self, targets):
+        return ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider", *targets]
+
+    def _execute(self, targets, timeout, generation=None):
+        started = time.perf_counter()
+        with tempfile.TemporaryFile() as output:
+            process = subprocess.Popen(
+                self._argv(targets),
+                cwd=self.workspace.root,
+                env=self.workspace.env,
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+            if generation is not None:
+                with self._lock:
+                    if generation != self._generation:
+                        _kill(process)
+                        return None
+                    self._process = process
+            timed_out = False
+            try:
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+            finally:
+                _kill(process)
+            output.seek(0)
+            text = output.read().decode("utf-8", errors="replace")
+        return {
+            "code": process.returncode,
+            "failed": sorted({m.group(2) for m in _FAILURE.finditer(text)}),
+            "output": text[-4000:],
+            "timed_out": timed_out,
+            "seconds": time.perf_counter() - started,
+        }
+
+    def changed(self):
+        """Start (or restart) a background run for the current workspace state."""
+        if not self.files:
+            return
+        with self._lock:
+            self._generation += 1
+            generation = self._generation
+            if self._process is not None:
+                _kill(self._process)
+                self._process = None
+            self._done.clear()
+            self._result = None
+
+        def work():
+            result = self._execute(self.files, self.timeout, generation)
+            with self._lock:
+                if generation == self._generation and result is not None:
+                    self._result = result
+                    self._done.set()
+
+        self._thread = threading.Thread(target=work, daemon=True)
+        self._thread.start()
+
+    def close(self):
+        with self._lock:
+            self._generation += 1
+            if self._process is not None:
+                _kill(self._process)
+
+    def regressions(self, wait):
+        """Return (new_failures, output) for the latest change, or None if unknown."""
+        if not self.files or self._thread is None:
+            return None
+        if not self._done.wait(timeout=max(0.0, wait)):
+            return None
+        result = self._result
+        if result is None or result["timed_out"] or not result["failed"]:
+            return None
+        if result["code"] not in (0, 1):
+            # Collection or usage errors say nothing about this change.
+            return None
+        failing = result["failed"]
+        baseline = self._baseline(failing, wait)
+        if baseline is None:
+            return None
+        new = [name for name in failing if name not in baseline]
+        if not new:
+            return None
+        # Show only the new failures (the full run also lists old ones).
+        focused = self._execute(new, max(5.0, min(self.timeout, wait)))
+        output = focused["output"] if focused else result["output"]
+        return new, output
+
+    def _baseline(self, failing, wait):
+        """Failures among `failing` with the original sources restored."""
+        current = {}
+        root = self.workspace.root
+        for name in self.workspace.changed:
+            path = root / name
+            current[name] = path.read_bytes() if path.exists() else None
+        try:
+            for name in current:
+                original = self.originals(name)
+                path = root / name
+                if original is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    path.write_bytes(original)
+            result = self._execute(failing, max(5.0, min(self.timeout, wait)))
+        finally:
+            for name, data in current.items():
+                path = root / name
+                if data is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    path.write_bytes(data)
+        if result is None or result["timed_out"] or result["code"] not in (0, 1):
+            return None
+        return set(result["failed"])
+
+
+def _kill(process):
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
