@@ -188,3 +188,26 @@ Validate on development cases only (click xc01/03/05/09/11 and the werkzeug set,
 three repeats), accepting a change only if click passes rise, werkzeug does not
 regress, and werkzeug median calls and wall time stay within +10%.
 
+## Follow-up: checks judged against the original code (`5143f07`)
+
+Steps 1–3 were implemented after the final evaluation: a failing check that
+gets further than it does on the original code no longer blocks a change; a
+passing check that also passes on the original code is refused once; only
+assert-bearing scripts count as checks; identical resubmitted checks are refused;
+the check runner explains chained/boolean asserts and errors raised by the check
+script itself; bash runs with `pipefail`.
+
+A loop-only A/B on development cases (the 12 new dev cases plus nq06 and nq10,
+two repeats, versions alternated, same production path and acceptance):
+
+| Version | Accepted | click | werkzeug (new dev) | nq06/nq10 | Median s | Median calls |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `e6476fb` (final evaluation) | 24/28 | 10/12 | 11/12 | 3/4 | 17.2 | 6 |
+| `5143f07` | 24/28 | 9/12 | 12/12 | 3/4 | 16.9 | 6 |
+
+No measurable change: six cases flipped, three each way, and the new rules
+rarely fired on these cases (one refusal, no progress-based acceptance). They
+target patterns seen in the held-out click traces, which are now exposed; their
+effect needs fresh click-heavy cases to measure. The change is kept because it
+did not regress anything and closes documented failure modes.
+
