@@ -463,3 +463,19 @@ def test_stop_while_a_suite_is_preparing_marks_it_interrupted(
     states = {s["name"]: s["status"] for s in record["suites"]}
     assert states == {"a": "interrupted", "b": "not_run"}
     assert record["status"] == "interrupted"
+
+
+def test_campaign_output_does_not_make_the_tree_dirty(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    (repo / "benchmarks/history").mkdir(parents=True)
+    (repo / "code.py").write_text("x = 1\n")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run([*git, "init", "-q"], cwd=repo, check=True)
+    subprocess.run([*git, "add", "."], cwd=repo, check=True)
+    subprocess.run([*git, "commit", "-qm", "base"], cwd=repo, check=True)
+    monkeypatch.setattr(bench_suite, "ROOT", repo)
+    (repo / "benchmarks/history/HISTORY.md").write_text("a previous campaign\n")
+    assert bench_suite.git_state()["dirty"] is False
+    (repo / "code.py").write_text("x = 2\n")
+    state = bench_suite.git_state()
+    assert state["dirty"] is True and state["status"] == [" M code.py"]

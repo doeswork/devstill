@@ -163,7 +163,14 @@ def classify(row, trial):
         return "incomplete_workflow", prefix + detail
     patch = trial / "change.patch"
     if patch.exists() and not patch.read_text(errors="replace").strip():
-        return "no_change", prefix + (gist(error) or "nothing changed")
+        calls = execution.get("tool_calls")
+        idle = "nothing changed"
+        if calls is not None:
+            idle = (
+                f"agent ended its turn after {calls} tool call(s) without editing "
+                f"(stop reason: {execution.get('stop_reason', 'unknown')})"
+            )
+        return "no_change", prefix + (gist(error) or idle)
     if prefix:
         return f"gave_up:{stage}", prefix + gist(error)
     return acceptance_failure(trial)
@@ -254,6 +261,13 @@ def suite_report(directory, record):
             },
             "median_ratio": median(ratios, 2),
             "candidate_faster": sum(r < 1 for r in ratios),
+            "shared_seconds": [
+                [
+                    round(p[0]["worker_wall_seconds"], 2),
+                    round(q[0]["worker_wall_seconds"], 2),
+                ]
+                for p, q in shared
+            ],
         }
     for case in sorted({r["id"] for r, _, _ in classified}):
         entry = {"id": case, "outcomes": {}, "median_seconds": {}}
@@ -383,6 +397,31 @@ def compare(previous, suites):
     return result
 
 
+def pooled_pairs(suites):
+    """Paired outcomes and timings pooled over every suite, per candidate arm."""
+    pooled = {}
+    for suite in suites:
+        for candidate, data in suite["paired"].items():
+            total = pooled.setdefault(
+                candidate,
+                {"pairs": 0, "both": 0, "pi_only": 0, "candidate_only": 0, "neither": 0}
+                | {"seconds": []},
+            )
+            for key in ("pairs", "both", "pi_only", "candidate_only", "neither"):
+                total[key] += data[key]
+            total["seconds"] += data["shared_seconds"]
+    for total in pooled.values():
+        seconds = total.pop("seconds")
+        ratios = [q / p for p, q in seconds if p > 0]
+        total["median_shared_seconds"] = {
+            "pi": median(p for p, _ in seconds),
+            "candidate": median(q for _, q in seconds),
+        }
+        total["median_ratio"] = median(ratios, 2)
+        total["candidate_faster"] = sum(r < 1 for r in ratios)
+    return pooled
+
+
 def campaign_report(directory, index_path=None):
     directory = Path(directory)
     campaign = read_json(directory / "campaign.json")
@@ -426,6 +465,7 @@ def campaign_report(directory, index_path=None):
         },
         "suites": suites,
         "totals": totals,
+        "totals_paired": pooled_pairs(suites),
         "previous": compare(previous_campaign(index_path, campaign), suites),
     }
 
@@ -496,12 +536,18 @@ def render(report):
         )
     t = report["totals"]
     if t:
+        both = (report.get("totals_paired") or {}).get("runtime") or {}
+        shared = both.get("median_shared_seconds") or {}
         lines.append(
             "| **All** | | "
             f"{sum(v['attempts'] for v in t.values())} "
             f"| **{t.get('pi', {}).get('passes', '–')}/{t.get('pi', {}).get('attempts', '–')}** "
             f"| **{t.get('runtime', {}).get('passes', '–')}/{t.get('runtime', {}).get('attempts', '–')}** "
-            "| | | | | | |"
+            f"| {cell(both.get('both'))} | {cell(both.get('pi_only'))} "
+            f"| {cell(both.get('candidate_only'))} "
+            f"| {cell(shared.get('pi'))} / {cell(shared.get('candidate'))} "
+            f"| **{cell(both.get('median_ratio'))}** "
+            f"| {cell(both.get('candidate_faster'))}/{cell(both.get('both'))} |"
         )
     previous = report.get("previous")
     if previous and previous["suites"]:

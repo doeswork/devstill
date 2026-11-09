@@ -122,6 +122,11 @@ passed, the median Devstill/Pi time ratio over cases both passed (below 1 means
 Devstill is faster), changes since the previous campaign (including every case
 whose outcome flipped), per-case results and code quality.
 
+The **All** row pools every suite: total passes per arm and the median time ratio
+over all cases both agents passed. Reports are rebuilt from the raw records, so
+after changing `bench_report.py`, regenerate an older campaign's report with
+`python -m benchmarks.bench_suite report <dir>` before running `--check` on it.
+
 Every non-passing trial gets one category and a one-line detail, plus the path
 of its trial folder:
 

@@ -168,13 +168,17 @@ def check(name, ok, detail, blocking=False):
 
 
 def git_state():
-    def git(*args):
+    def git(*args, raw=False):
         reply = subprocess.run(
             ["git", *args], cwd=ROOT, capture_output=True, text=True, check=False
         )
-        return reply.stdout.strip()
+        # Porcelain lines start with a meaningful space (" M" = unstaged).
+        return reply.stdout.rstrip("\n") if raw else reply.stdout.strip()
 
-    porcelain = git("status", "--porcelain")
+    # The campaign's own output (benchmarks/history) is not code under test.
+    porcelain = git(
+        "status", "--porcelain", "--", ".", ":(exclude)benchmarks/history", raw=True
+    )
     return {
         "sha": git("rev-parse", "HEAD"),
         "short": git("rev-parse", "--short=7", "HEAD"),

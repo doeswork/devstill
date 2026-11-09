@@ -249,6 +249,8 @@ def test_report_compares_with_the_previous_campaign_and_detects_tampering(tmp_pa
         {"id": "c2", "variant": "runtime", "before": "0/1", "now": "1/1"}
     ]
     markdown = (second / "REPORT.md").read_text()
+    assert report["totals_paired"]["runtime"]["median_ratio"] == 0.62
+    assert "| **All** |" in markdown and "**0.62**" in markdown
     assert "c2 (Devstill): 0/1 → 1/1" in markdown
     assert "c9: excluded" in markdown
     # Same records, same report; edited records are caught.
@@ -331,3 +333,51 @@ def test_report_tolerates_a_suite_that_never_ran(tmp_path):
     )
     assert report["trials"] == 0 and report["reason"] == "no docker"
     assert report["failures"] == [] and report["arms"] == {}
+
+
+def test_no_change_says_what_the_agent_did(tmp_path):
+    directory = trial(tmp_path, patch="")
+    category, detail = bench_report.classify(
+        row(
+            execution={
+                "status": "applied_unvalidated",
+                "tool_calls": 2,
+                "stop_reason": "stop",
+            }
+        ),
+        directory,
+    )
+    assert category == "no_change"
+    assert detail == (
+        "agent ended its turn after 2 tool call(s) without editing (stop reason: stop)"
+    )
+    # An explicit error from the agent wins over the generic description.
+    _, detail = bench_report.classify(
+        row(error="No verified change within 20 model calls"), directory
+    )
+    assert detail == "No verified change within 20 model calls"
+
+
+def test_totals_pool_the_paired_timings_of_every_suite(tmp_path):
+    def suite(pairs):
+        return {
+            "paired": {
+                "runtime": {
+                    "pairs": len(pairs),
+                    "both": len(pairs),
+                    "pi_only": 1,
+                    "candidate_only": 0,
+                    "neither": 0,
+                    "shared_seconds": pairs,
+                }
+            }
+        }
+
+    pooled = bench_report.pooled_pairs(
+        [suite([[10.0, 5.0], [20.0, 30.0]]), suite([[8.0, 4.0]])]
+    )["runtime"]
+    assert pooled["both"] == 3 and pooled["pi_only"] == 2
+    assert pooled["median_shared_seconds"] == {"pi": 10.0, "candidate": 5.0}
+    assert pooled["median_ratio"] == 0.5  # median of 0.5, 1.5, 0.5
+    assert pooled["candidate_faster"] == 2
+    assert bench_report.pooled_pairs([{"paired": {}}]) == {}
