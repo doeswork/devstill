@@ -13,7 +13,14 @@ import httpx
 
 
 @contextmanager
-def recording_proxy(upstream, directory, max_calls=0, *, disable_reasoning=False):
+def recording_proxy(
+    upstream, directory, max_calls=0, *, disable_reasoning=False, sampling=None
+):
+    """Forward and record model traffic.
+
+    sampling: optional request fields (e.g. {"temperature": 0, "seed": 1})
+    applied to every generation request, so both agents decode identically.
+    """
     directory.mkdir(parents=True, exist_ok=False)
     origin = urlsplit(upstream)
     target = f"{origin.scheme}://{origin.netloc}"
@@ -45,13 +52,16 @@ def recording_proxy(upstream, directory, max_calls=0, *, disable_reasoning=False
                 if generation and not blocked:
                     counts["model_calls"] += 1
             prefix = directory / f"{number:04d}"
-            if generation and disable_reasoning:
+            if generation and (disable_reasoning or sampling):
                 prefix.with_suffix(".original-request").write_bytes(body)
                 payload = json.loads(body)
-                payload["chat_template_kwargs"] = {
-                    **payload.get("chat_template_kwargs", {}),
-                    "enable_thinking": False,
-                }
+                if disable_reasoning:
+                    payload["chat_template_kwargs"] = {
+                        **payload.get("chat_template_kwargs", {}),
+                        "enable_thinking": False,
+                    }
+                if sampling:
+                    payload.update(sampling)
                 body = json.dumps(payload).encode()
             prefix.with_suffix(".request").write_bytes(body)
             record = {
@@ -61,6 +71,7 @@ def recording_proxy(upstream, directory, max_calls=0, *, disable_reasoning=False
                 "generation": generation,
                 "budget_blocked": blocked,
                 "reasoning_explicitly_disabled": bool(generation and disable_reasoning),
+                "sampling_override": sampling if generation and sampling else None,
             }
             prefix.with_suffix(".json").write_text(json.dumps(record) + "\n")
             # Headers are forwarded in memory, never logged. Drop hop-by-hop headers.
@@ -133,6 +144,9 @@ def recording_proxy(upstream, directory, max_calls=0, *, disable_reasoning=False
         thread.join()
 
 
+UNREACHABLE = {"ConnectError", "ConnectTimeout"}
+
+
 def transport_metrics(directory):
     """Count actual upstream attempts; tokens stay unknown if usage is absent."""
     rows = []
@@ -188,6 +202,10 @@ def transport_metrics(directory):
         "model_calls": len(rows),
         "model_errors": sum(
             r.get("status", 0) >= 400 or "error_type" in r for r in rows
+        ),
+        # The server could not be reached at all: infrastructure, not the agent.
+        "upstream_unreachable": sum(
+            r.get("error_type") in UNREACHABLE and "status" not in r for r in rows
         ),
         "usage_complete": complete,
         "total_tokens": sum(known) if complete else None,

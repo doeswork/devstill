@@ -25,6 +25,10 @@ on six cases, one draw each. Do not pool that run with the new diagnostic.
 
 ## Tools and naming
 
+For unattended runs of every suite with history and reports, use
+`./pi_vs_devstill_bench.sh` ([BENCHMARKING.md](../BENCHMARKING.md)); it drives the
+tools below.
+
 Use [pi_comparison.py](pi_comparison.py) with explicit
 `--variants pi,runtime --pi-disable-reasoning`. `runtime` is today's native Quick;
 `quick` is the historical campaign path and `minimal` is the older prototype.

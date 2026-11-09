@@ -75,11 +75,21 @@ def write(path, value):
 
 
 def load_cases(path=None):
-    cases = json.loads(path.read_text()) if path else CASES
+    return load_cases_from_list(json.loads(path.read_text()) if path else CASES)
+
+
+def load_cases_from_list(cases):
     if not isinstance(cases, list) or not cases:
         raise ValueError("Dataset must contain a nonempty case list")
     seen = set()
     for case in cases:
+        if case.get("corpus") == "swebench":
+            from benchmarks.retrieval import swebench
+
+            if not swebench.valid_case(case) or case["id"] in seen:
+                raise ValueError("Invalid, incomplete or duplicate SWE-bench case")
+            seen.add(case["id"])
+            continue
         if (
             not re.fullmatch(r"[a-z][a-z0-9_]{0,79}", case.get("id", ""))
             or case["id"] in seen
@@ -102,7 +112,20 @@ def fingerprint():
     return h.hexdigest()
 
 
+def corpus_entry(case):
+    """(checkout name, index config name, pinned commit) of a case's corpus."""
+    if case["corpus"] == "swebench":
+        from benchmarks.retrieval import swebench
+
+        return swebench.corpus_entry(case)
+    return CORPORA[case["corpus"]]
+
+
 def clone(case, destination):
+    if case["corpus"] == "swebench":
+        from benchmarks.retrieval import swebench
+
+        return swebench.clone(case, destination)
     name, _, commit = CORPORA[case["corpus"]]
     source = BENCH / "repos" / name
     actual = subprocess.check_output(
@@ -126,6 +149,10 @@ def clone(case, destination):
 
 
 def reference(case, repo):
+    if case["corpus"] == "swebench":
+        from benchmarks.retrieval import swebench
+
+        return swebench.apply_reference(case, repo)
     for edit in case["edits"]:
         path = repo / edit["path"]
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -141,6 +168,11 @@ def reference(case, repo):
 
 def accept(case, repo, artifact, *, protect_regressions=False):
     """Acceptance copy is destroyed; model never sees appended test modules."""
+    if case["corpus"] == "swebench":
+        from benchmarks.retrieval import swebench
+
+        # Official grader: it restores the issue's tests itself.
+        return swebench.accept(case, repo, artifact)
     start = time.perf_counter()
     env = dict(os.environ, **RUST_ENV)
     with tempfile.TemporaryDirectory(prefix="devstill-accept-") as temp:
@@ -244,27 +276,20 @@ def verify(output, cases=CASES):
     output.mkdir(parents=True, exist_ok=False)
     results = []
     for case in cases:
-        with tempfile.TemporaryDirectory(prefix="devstill-case-verify-") as temp:
-            repo = Path(temp) / "repo"
-            clone(case, repo)
-            baseline, _ = accept(case, repo, output / (case["id"] + "-base.json"))
-            reference(case, repo)
-            good, _ = accept(case, repo, output / (case["id"] + "-reference.json"))
-            # Include untracked New reference files in the patch.
-            subprocess.run(
-                ["git", "add", "-N", "--", ".", ":!.devstill"], cwd=repo, check=True
-            )
-            patch = subprocess.check_output(
-                ["git", "diff", "--binary", "--", ".", ":!.devstill"],
-                cwd=repo,
-                text=True,
-            )
-            (output / (case["id"] + ".patch")).write_text(patch)
+        try:
+            results.append(verify_case(output, case))
+        except Exception as exc:  # noqa: BLE001 - record it, check the rest
+            error = f"{type(exc).__name__}: {exc}"[:500]
             results.append(
-                {"id": case["id"], "base_pass": baseline, "reference_pass": good}
+                {
+                    "id": case["id"],
+                    "base_pass": None,
+                    "reference_pass": False,
+                    "error": error,
+                }
             )
-            print(case["id"], "base", baseline, "reference", good, flush=True)
-            write(output / "verification.json", results)
+            print(case["id"], "ERROR", error, flush=True)
+        write(output / "verification.json", results)
     write(output / "cases.json", cases)
     write(
         output / "manifest.json",
@@ -275,8 +300,29 @@ def verify(output, cases=CASES):
             "corpora": CORPORA,
         },
     )
-    if any(r["base_pass"] or not r["reference_pass"] for r in results):
+    if any(r["base_pass"] is not False or not r["reference_pass"] for r in results):
         raise RuntimeError("Case verification failed; do not run the campaign")
+
+
+def verify_case(output, case):
+    with tempfile.TemporaryDirectory(prefix="devstill-case-verify-") as temp:
+        repo = Path(temp) / "repo"
+        clone(case, repo)
+        baseline, _ = accept(case, repo, output / (case["id"] + "-base.json"))
+        reference(case, repo)
+        good, _ = accept(case, repo, output / (case["id"] + "-reference.json"))
+        # Include untracked New reference files in the patch.
+        subprocess.run(
+            ["git", "add", "-N", "--", ".", ":!.devstill"], cwd=repo, check=True
+        )
+        patch = subprocess.check_output(
+            ["git", "diff", "--binary", "--", ".", ":!.devstill"],
+            cwd=repo,
+            text=True,
+        )
+        (output / (case["id"] + ".patch")).write_text(patch)
+        print(case["id"], "base", baseline, "reference", good, flush=True)
+        return {"id": case["id"], "base_pass": baseline, "reference_pass": good}
 
 
 def copy_index(source, destination):

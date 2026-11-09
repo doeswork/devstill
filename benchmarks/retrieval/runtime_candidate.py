@@ -12,7 +12,8 @@ from devstill.runtime.service import RuntimeSession
 
 def runtime_worker(args):
     runtime = DevstillConfig.model_validate(json.loads(args.runtime.read_text()))
-    path = campaign.BENCH / "configs" / campaign.CORPORA[args.corpus][1]
+    case = {"id": args.case[0], "corpus": args.corpus}
+    path = campaign.BENCH / "configs" / campaign.corpus_entry(case)[1]
     cfg = load_config(path)
     private = args.output / "private-index"
     campaign.copy_index(resolve_index_path(path, cfg), private)

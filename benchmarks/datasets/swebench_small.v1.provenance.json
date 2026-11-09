@@ -1,0 +1,62 @@
+{
+  "source_dataset": "SWE-bench/SWE-bench_Verified",
+  "source_revision": "78f471bf655a3137b2e8a75af1501690ec009ec3",
+  "fetched_at": "2026-11-09T03:10:22.357008+00:00",
+  "source_rows": 500,
+  "selection": {
+    "difficulty": "<15 min fix",
+    "max_source_files": 1,
+    "max_changed_lines": 12,
+    "max_fail_to_pass": 5,
+    "max_problem_chars": 4000,
+    "count": 24
+  },
+  "pure_python_repos": [
+    "django/django",
+    "mwaskom/seaborn",
+    "pallets/flask",
+    "psf/requests",
+    "pydata/xarray",
+    "pylint-dev/pylint",
+    "pytest-dev/pytest",
+    "sphinx-doc/sphinx",
+    "sympy/sympy"
+  ],
+  "eligible_per_repo": {
+    "django/django": 82,
+    "mwaskom/seaborn": 0,
+    "pallets/flask": 1,
+    "psf/requests": 2,
+    "pydata/xarray": 4,
+    "pylint-dev/pylint": 3,
+    "pytest-dev/pytest": 6,
+    "sphinx-doc/sphinx": 19,
+    "sympy/sympy": 24
+  },
+  "instance_ids": [
+    "django__django-10880",
+    "django__django-10914",
+    "django__django-10999",
+    "django__django-11066",
+    "pallets__flask-5014",
+    "psf__requests-1142",
+    "psf__requests-5414",
+    "pydata__xarray-4075",
+    "pydata__xarray-4094",
+    "pydata__xarray-4629",
+    "pydata__xarray-6461",
+    "pylint-dev__pylint-4970",
+    "pylint-dev__pylint-6903",
+    "pylint-dev__pylint-7277",
+    "pytest-dev__pytest-10081",
+    "pytest-dev__pytest-5809",
+    "pytest-dev__pytest-6202",
+    "pytest-dev__pytest-7432",
+    "sphinx-doc__sphinx-10323",
+    "sphinx-doc__sphinx-10435",
+    "sphinx-doc__sphinx-7440",
+    "sympy__sympy-12096",
+    "sympy__sympy-12481",
+    "sympy__sympy-13372"
+  ]
+}

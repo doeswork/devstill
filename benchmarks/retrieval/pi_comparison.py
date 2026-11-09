@@ -7,26 +7,33 @@ not a pool from which to select the best model draws.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
 import platform
 import shutil
+import signal
 import statistics
 import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 
 from benchmarks.retrieval import coding_campaign as campaign
+from benchmarks.retrieval import swebench
 from benchmarks.retrieval.coding_report import completed
 from benchmarks.retrieval.recording_proxy import recording_proxy, transport_metrics
 
 ROOT = Path(__file__).resolve().parents[2]
+# Applied by the recording proxy to every model request of BOTH arms.
+SAMPLING_PROFILES = {"default": None, "greedy": {"temperature": 0, "seed": 1}}
+
 VARIANTS = (
     "pi",
     "quick",
@@ -90,11 +97,14 @@ def input_manifest(cases):
     from devstill.config import load_config, resolve_index_path
 
     manifest = {}
-    for corpus in sorted({c["corpus"] for c in cases}):
-        path = campaign.BENCH / "configs" / campaign.CORPORA[corpus][1]
+    for config in sorted({campaign.corpus_entry(c)[1] for c in cases}):
+        path = campaign.BENCH / "configs" / config
         cfg = load_config(path)
         index = resolve_index_path(path, cfg)
-        for file in [path, index.parent / "metadata.sqlite", index / "chroma.sqlite3"]:
+        files = [path, index.parent / "metadata.sqlite"]
+        if cfg.index.vectors:
+            files.append(index / "chroma.sqlite3")
+        for file in files:
             manifest[str(file)] = digest(file)
             wal = file.with_name(file.name + "-wal")
             # SQLite can create an empty WAL when a read-only backup opens it.
@@ -371,6 +381,166 @@ def summarize(rows, cases, variants, repeats):
     return report
 
 
+# Infrastructure failures, not agent outcomes: retried once, and again on --resume.
+RETRYABLE = ("harness_error", "endpoint_error")
+
+
+class EndpointUnavailable(RuntimeError):
+    """The model server stayed down; stop rather than record agent failures."""
+
+
+def retryable(row):
+    return any(row.get(flag) for flag in RETRYABLE)
+
+
+@contextlib.contextmanager
+def trial_workspace(path=None):
+    """The same directory for every trial (runs are serial under the lock).
+
+    Pi's prompt and tool output name the working directory; a random temp path
+    would make otherwise identical repeats differ.
+    """
+    path = Path(path or Path(tempfile.gettempdir()) / "devstill-pi-compare")
+    shutil.rmtree(path, ignore_errors=True)
+    if path.exists():
+        raise RuntimeError(f"Cannot clear the trial workspace {path}")
+    path.mkdir(parents=True)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def resume_mismatches(protocol, expected):
+    """Recorded protocol settings that differ from this invocation."""
+    return sorted(key for key, value in expected.items() if protocol.get(key) != value)
+
+
+def pending_trials(cases, variants, repeats, rows):
+    """Trials without a usable result, in the fixed rotation order."""
+    done = {(r["id"], r["repeat"], r["variant"]) for r in rows if not retryable(r)}
+    return [
+        (case, repeat, variant)
+        for repeat in range(repeats)
+        for index, case in enumerate(cases)
+        for variant in trial_order(variants, index, repeat)
+        if (case["id"], repeat, variant) not in done
+    ]
+
+
+def set_aside(directory):
+    """Keep an interrupted or retried trial's files for diagnosis."""
+    if not directory.exists():
+        return None
+    stale, number = directory.with_name(directory.name + ".discarded"), 1
+    while stale.exists():
+        number += 1
+        stale = directory.with_name(f"{directory.name}.discarded{number}")
+    directory.rename(stale)
+    return stale
+
+
+def harness_error_row(case, repeat, variant, directory, exc, elapsed):
+    return {
+        "id": case["id"],
+        "repeat": repeat,
+        "variant": variant,
+        "workload": case["workload"],
+        "corpus": case["corpus"],
+        "error": f"harness_error: {type(exc).__name__}: {exc}"[:500],
+        "harness_error": True,
+        "acceptance_pass": False,
+        "worker_wall_seconds": elapsed,
+        "coding_seconds": elapsed,
+        "validation_seconds": 0.0,
+        "total_seconds": elapsed,
+        "end_to_end_seconds": elapsed,
+        "transport": transport_metrics(directory / "transport"),
+    }
+
+
+def wait_for_endpoint(
+    base_url, headers, budget_seconds, *, interval=30, sleep=time.sleep
+):
+    """Block until the model server answers, so a restart pauses the campaign."""
+    deadline = time.monotonic() + budget_seconds
+    while True:
+        try:
+            with httpx.Client(timeout=15, trust_env=False) as client:
+                client.get(
+                    base_url.rstrip("/") + "/models", headers=headers
+                ).raise_for_status()
+            return
+        except httpx.HTTPError as exc:
+            if time.monotonic() >= deadline:
+                raise EndpointUnavailable(
+                    f"Model endpoint unavailable for {budget_seconds:.0f}s: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
+            print(
+                f"model endpoint unavailable ({type(exc).__name__}); "
+                f"retrying in {interval}s",
+                flush=True,
+            )
+            sleep(interval)
+
+
+def run_trials(
+    output, cases, variants, repeats, rows, trial, *, before_trial=None, attempts=2
+):
+    """Run every pending trial; one trial's failure never stops the others.
+
+    A trial that fails for infrastructure reasons (harness exception, model
+    server unreachable) is retried up to `attempts` times; any other exception
+    escaping `before_trial` (Pi changed, endpoint down for good) stops the run.
+    """
+    earlier = {(r["id"], r["repeat"], r["variant"]): r for r in rows if retryable(r)}
+    rows[:] = [r for r in rows if not retryable(r)]
+    for case, repeat, variant in pending_trials(cases, variants, repeats, rows):
+        key = (case["id"], repeat, variant)
+        directory = output / f"{case['id']}-{repeat}-{variant}"
+        for attempt in range(1, attempts + 1):
+            if before_trial:
+                before_trial()
+            set_aside(directory)
+            directory.mkdir()
+            started = time.perf_counter()
+            try:
+                row = trial(case, repeat, variant, directory)
+            except Exception as exc:  # noqa: BLE001 - isolate this trial only
+                (directory / "harness-error.txt").write_text(traceback.format_exc())
+                row = harness_error_row(
+                    case, repeat, variant, directory, exc, time.perf_counter() - started
+                )
+            if key in earlier or attempt > 1:
+                row["attempt"] = attempt
+                row["retry_of"] = (earlier.get(key) or {}).get("error") or "retryable"
+            write(directory / "result.json", row)
+            if not retryable(row):
+                break
+        rows.append(row)
+        write(output / "results.json", rows)
+        write(output / "summary.json", summarize(rows, cases, variants, repeats))
+        print(
+            case["id"],
+            repeat,
+            variant,
+            "pass" if completed(row) else "FAIL",
+            round(row["worker_wall_seconds"], 2),
+            "s",
+            flush=True,
+        )
+    return rows
+
+
+def server_model_ids(models):
+    """Served model identity without volatile fields such as `created`."""
+    return sorted(
+        (m.get("id"), m.get("root"), m.get("max_model_len"))
+        for m in models.get("data", [])
+    )
+
+
 def validate_verification(directory, dataset):
     manifest = json.loads((directory / "manifest.json").read_text())
     results = json.loads((directory / "verification.json").read_text())
@@ -387,9 +557,16 @@ def validate_verification(directory, dataset):
         )
 
 
+def model_headers(runtime):
+    from devstill.config import LlmConfig
+    from devstill.credentials import resolve_api_key
+
+    key = resolve_api_key(LlmConfig.model_validate(runtime["llm"]))
+    return {"Authorization": f"Bearer {key}"} if key else {}
+
+
 def run(args):
     from devstill.config import load_config
-    from devstill.credentials import resolve_api_key
 
     tool_environment = prepared_tool_environment()
     dataset = campaign.load_cases(args.dataset)
@@ -427,266 +604,326 @@ def run(args):
         lock.close()
         raise ValueError("Another Pi comparison is active") from exc
     output = args.output.resolve()
-    output.mkdir(parents=True, exist_ok=False)
-    source = output / "source"
-    manifest = source_manifest(ROOT)
-    for name in manifest:
-        path = source / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(ROOT / name, path)
-    write(output / "source-manifest.json", manifest)
-    baseline_manifest = None
-    if "baseline" in variants:
-        baseline_manifest = json.loads((args.baseline / "manifest.json").read_text())
-        if (
-            not baseline_manifest
-            or not (args.baseline / "src/devstill/quick_tasks.py").is_file()
-        ):
-            raise ValueError("A frozen Quick baseline is required")
-        if any(
-            digest(args.baseline / name) != sha
-            for name, sha in baseline_manifest.items()
-        ):
-            raise ValueError("Frozen Quick baseline changed")
-        for name in baseline_manifest:
-            target = output / "baseline" / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(args.baseline / name, target)
-        write(output / "baseline-manifest.json", baseline_manifest)
+    resuming = bool(args.resume) and (output / "protocol.json").exists()
+    dataset_sha = hashlib.sha256(
+        json.dumps(dataset, sort_keys=True).encode()
+    ).hexdigest()
+    sampling = SAMPLING_PROFILES[args.sampling]
+    if resuming:
+        # Continue an interrupted run with the very same frozen inputs.
+        protocol = json.loads((output / "protocol.json").read_text())
+        source = output / "source"
+        manifest = json.loads((output / "source-manifest.json").read_text())
+        if source_manifest(ROOT) != manifest:
+            raise ValueError(
+                "Cannot resume: Devstill or benchmark source changed since this run started"
+            )
+        expected = {
+            "dataset_sha256": dataset_sha,
+            "case_ids": [c["id"] for c in cases],
+            "variants": variants,
+            "repeats": args.repeats,
+            "sampling_override": sampling,
+            "worker_timeout_seconds": args.timeout,
+            "pi_disable_reasoning": args.pi_disable_reasoning,
+            "max_model_calls_per_attempt": args.max_model_calls or None,
+            "coding_tool_versions": tool_versions,
+        }
+        if mismatched := resume_mismatches(protocol, expected):
+            raise ValueError(f"Cannot resume: {', '.join(mismatched)} changed")
+        runtime = json.loads((source / "devstill.json").read_text())
+        identity = pi_identity()
+        if identity != protocol["pi"]:
+            raise ValueError("Cannot resume: Pi changed")
+        baseline_path = output / "baseline-manifest.json"
+        baseline_manifest = (
+            json.loads(baseline_path.read_text()) if baseline_path.exists() else None
+        )
+        inputs = json.loads((output / "retrieval-input-manifest.json").read_text())
+        if input_manifest(cases) != inputs:
+            raise ValueError("Cannot resume: retrieval inputs changed")
+        headers = model_headers(runtime)
+        wait_for_endpoint(runtime["llm"]["base_url"], headers, args.endpoint_wait)
+        with httpx.Client(timeout=15, trust_env=False) as client:
+            served = client.get(
+                runtime["llm"]["base_url"].rstrip("/") + "/models", headers=headers
+            )
+            served.raise_for_status()
+        recorded = json.loads((output / "server-models.json").read_text())
+        if server_model_ids(served.json()) != server_model_ids(recorded):
+            raise ValueError("Cannot resume: the server now serves a different model")
+        results_path = output / "results.json"
+        rows = json.loads(results_path.read_text()) if results_path.exists() else []
+        protocol.setdefault("resumed_at", []).append(datetime.now(UTC).isoformat())
+        write(output / "protocol.json", protocol)
+    else:
+        output.mkdir(parents=True, exist_ok=False)
+        source = output / "source"
+        manifest = source_manifest(ROOT)
+        for name in manifest:
+            path = source / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / name, path)
+        write(output / "source-manifest.json", manifest)
+        baseline_manifest = None
+        if "baseline" in variants:
+            baseline_manifest = json.loads(
+                (args.baseline / "manifest.json").read_text()
+            )
+            if (
+                not baseline_manifest
+                or not (args.baseline / "src/devstill/quick_tasks.py").is_file()
+            ):
+                raise ValueError("A frozen Quick baseline is required")
+            if any(
+                digest(args.baseline / name) != sha
+                for name, sha in baseline_manifest.items()
+            ):
+                raise ValueError("Frozen Quick baseline changed")
+            for name in baseline_manifest:
+                target = output / "baseline" / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(args.baseline / name, target)
+            write(output / "baseline-manifest.json", baseline_manifest)
 
-    cfg = load_config(ROOT / "devstill.json")
-    if not cfg.llm.enabled or not cfg.llm.model:
-        raise ValueError("Configure the model first")
-    cfg.llm.max_output_tokens = cfg.llm.planning_max_output_tokens = 4096
-    cfg.llm.planning_reasoning = "off"
-    cfg.executor.reasoning = "off"
-    cfg.executor.timeout_seconds = 120
-    cfg.executor.max_tool_calls = 12
-    cfg.executor.max_output_tokens = 4096
-    cfg.executor.validation_commands = []
-    runtime = cfg.model_dump(mode="json")
-    write(source / "devstill.json", runtime)
-    identity = pi_identity()
-    inputs = input_manifest(cases)
-    write(output / "retrieval-input-manifest.json", inputs)
-    package_versions = subprocess.check_output(
-        [sys.executable, "-m", "pip", "freeze"], text=True
-    )
-    (output / "python-packages.txt").write_text(package_versions)
-    headers = (
-        {"Authorization": f"Bearer {resolve_api_key(cfg.llm)}"}
-        if resolve_api_key(cfg.llm)
-        else {}
-    )
-    with httpx.Client(timeout=15) as client:
-        metadata = client.get(cfg.llm.base_url.rstrip("/") + "/models", headers=headers)
-        metadata.raise_for_status()
-        write(output / "server-models.json", metadata.json())
-    protocol = {
-        "schema_version": 1,
-        "pi_disable_reasoning": args.pi_disable_reasoning,
-        "pi_request_override": {"chat_template_kwargs": {"enable_thinking": False}}
-        if args.pi_disable_reasoning
-        else None,
-        "pi_context_mode": "Native Pi plus Quick-selected source excerpts; normal native tools",
-        "minimal_mode": "Benchmark-only exact replacements, Python checks, two generation calls maximum; explicit reasoning off; same selected source excerpts",
-        "created_at": datetime.now(UTC).isoformat(),
-        "purpose": args.purpose,
-        "variants": variants,
-        "baseline": str(args.baseline) if baseline_manifest else None,
-        "review_policy": "Saved review reloaded and accepted unchanged automatically; no human think time or intervention",
-        "coding_tool_environment": tool_environment,
-        "coding_tool_versions": tool_versions,
-        "repeats": args.repeats,
-        "case_ids": [c["id"] for c in cases],
-        "expected_attempts": len(cases) * args.repeats * len(variants),
-        "pi": identity,
-        "runtime": runtime,
-        "python": sys.version,
-        "platform": platform.platform(),
-        "corpora": campaign.CORPORA,
-        "dataset_sha256": hashlib.sha256(
-            json.dumps(dataset, sort_keys=True).encode()
-        ).hexdigest(),
-        "dataset_status": "exposed development cases"
-        if not args.dataset
-        else "user supplied; held-out status not certified",
-        "worker_timeout_seconds": args.timeout,
-        "max_model_calls_per_attempt": args.max_model_calls or None,
-        "operating_point": "stock Pi tools vs production Devstill limits; common outer timeout; not equal total token budgets",
-        "timing": "worker wall includes process startup, embedding warmup and index copy; coding excludes those; acceptance separate; checkout excluded",
-        "pi_mode": "one initial request; stock system prompt and read,bash,edit,write; multiple model/tool turns allowed",
-        "target": "no lower completed-acceptance success rate and median paired-success worker-wall ratio below 1, separately by workload",
-        "sampling": "server defaults unless recorded in actual requests; cache state uncontrolled; order rotated; full bodies recorded without authorization headers",
-    }
-    write(output / "protocol.json", protocol)
-    write(output / "cases.json", dataset)
-    # Preserve verification provenance without copying it into any coding repo.
-    write(
-        output / "verification-manifest.json",
-        json.loads((args.verified / "manifest.json").read_text()),
-    )
-    rows = []
+        cfg = load_config(ROOT / "devstill.json")
+        if not cfg.llm.enabled or not cfg.llm.model:
+            raise ValueError("Configure the model first")
+        cfg.llm.max_output_tokens = cfg.llm.planning_max_output_tokens = 4096
+        cfg.llm.planning_reasoning = "off"
+        cfg.executor.reasoning = "off"
+        cfg.executor.timeout_seconds = 120
+        cfg.executor.max_tool_calls = 12
+        cfg.executor.max_output_tokens = 4096
+        cfg.executor.validation_commands = []
+        runtime = cfg.model_dump(mode="json")
+        write(source / "devstill.json", runtime)
+        identity = pi_identity()
+        inputs = input_manifest(cases)
+        write(output / "retrieval-input-manifest.json", inputs)
+        package_versions = subprocess.check_output(
+            [sys.executable, "-m", "pip", "freeze"], text=True
+        )
+        (output / "python-packages.txt").write_text(package_versions)
+        headers = model_headers(runtime)
+        wait_for_endpoint(runtime["llm"]["base_url"], headers, args.endpoint_wait)
+        with httpx.Client(timeout=15, trust_env=False) as client:
+            metadata = client.get(
+                cfg.llm.base_url.rstrip("/") + "/models", headers=headers
+            )
+            metadata.raise_for_status()
+            write(output / "server-models.json", metadata.json())
+        protocol = {
+            "schema_version": 1,
+            "pi_disable_reasoning": args.pi_disable_reasoning,
+            "pi_request_override": {"chat_template_kwargs": {"enable_thinking": False}}
+            if args.pi_disable_reasoning
+            else None,
+            "pi_context_mode": "Native Pi plus Quick-selected source excerpts; normal native tools",
+            "minimal_mode": "Benchmark-only exact replacements, Python checks, two generation calls maximum; explicit reasoning off; same selected source excerpts",
+            "created_at": datetime.now(UTC).isoformat(),
+            "purpose": args.purpose,
+            "variants": variants,
+            "baseline": str(args.baseline) if baseline_manifest else None,
+            "review_policy": "Saved review reloaded and accepted unchanged automatically; no human think time or intervention",
+            "coding_tool_environment": tool_environment,
+            "coding_tool_versions": tool_versions,
+            "repeats": args.repeats,
+            "case_ids": [c["id"] for c in cases],
+            "expected_attempts": len(cases) * args.repeats * len(variants),
+            "pi": identity,
+            "runtime": runtime,
+            "python": sys.version,
+            "platform": platform.platform(),
+            "corpora": campaign.CORPORA,
+            "dataset_sha256": dataset_sha,
+            "dataset_status": "exposed development cases"
+            if not args.dataset
+            else "user supplied; held-out status not certified",
+            "worker_timeout_seconds": args.timeout,
+            "sampling_override": sampling,
+            "max_model_calls_per_attempt": args.max_model_calls or None,
+            "operating_point": "stock Pi tools vs production Devstill limits; common outer timeout; not equal total token budgets",
+            "timing": "worker wall includes process startup, embedding warmup and index copy; coding excludes those; acceptance separate; checkout excluded",
+            "pi_mode": "one initial request; stock system prompt and read,bash,edit,write; multiple model/tool turns allowed",
+            "target": "no lower completed-acceptance success rate and median paired-success worker-wall ratio below 1, separately by workload",
+            "sampling": (
+                f"fixed for both arms by the recording proxy: {sampling}"
+                if sampling
+                else "server defaults unless recorded in actual requests"
+            )
+            + "; cache state uncontrolled; order rotated; full bodies recorded without authorization headers",
+            "workspace": "same checkout path for every trial (serial runs); PYTHONHASHSEED=0 for workers; private index copies deleted after each trial",
+        }
+        write(output / "protocol.json", protocol)
+        write(output / "cases.json", dataset)
+        # Preserve verification provenance without copying it into any coding repo.
+        write(
+            output / "verification-manifest.json",
+            json.loads((args.verified / "manifest.json").read_text()),
+        )
+        rows = []
+
+    def trial(case, repeat, variant, directory):
+        (directory / "query.txt").write_text(case["query"])
+        with trial_workspace() as temporary:
+            repo = temporary / "repo"
+            # Independent clones avoid shared Git object writes by stock bash tools.
+            campaign.clone(case, repo)
+            if case["corpus"] != swebench.CORPUS:
+                subprocess.run(
+                    ["git", "repack", "-a", "-d"],
+                    cwd=repo,
+                    check=True,
+                    capture_output=True,
+                )
+                (repo / ".git/objects/info/alternates").unlink(missing_ok=True)
+            with recording_proxy(
+                runtime["llm"]["base_url"],
+                directory / "transport",
+                args.max_model_calls,
+                disable_reasoning=args.pi_disable_reasoning
+                and variant in {"pi", "pi_context"},
+                sampling=sampling,
+            ) as url:
+                trial_runtime = json.loads(json.dumps(runtime))
+                trial_runtime["llm"]["base_url"] = url
+                write(directory / "runtime.json", trial_runtime)
+                env = dict(
+                    os.environ,
+                    PYTHONPATH=str(
+                        (output / "baseline" if variant == "baseline" else source)
+                        / "src"
+                    )
+                    + os.pathsep
+                    + str(source),
+                    PI_OFFLINE="1",
+                    PI_TELEMETRY="0",
+                    # Stable set ordering in Python tool output across repeats.
+                    PYTHONHASHSEED="0",
+                )
+                env.update(tool_environment)
+                command = [
+                    sys.executable,
+                    "-P",
+                    "-m",
+                    "benchmarks.retrieval.pi_comparison",
+                    "worker",
+                    "--case",
+                    case["id"],
+                    "--variant",
+                    variant,
+                    "--workload",
+                    case["workload"],
+                    "--corpus",
+                    case["corpus"],
+                    "--repo",
+                    str(repo),
+                    "--output",
+                    str(directory),
+                    "--runtime",
+                    str(directory / "runtime.json"),
+                    "--query",
+                    str(directory / "query.txt"),
+                ]
+                started = time.perf_counter()
+                failure = None
+                # SWE-bench: python/pytest run inside the instance's image.
+                sandbox = (
+                    swebench.sandbox(case, repo)
+                    if case["corpus"] == swebench.CORPUS
+                    else contextlib.nullcontext({})
+                )
+                with sandbox as extra, (directory / "worker.log").open("w") as log:
+                    env.update(extra)
+                    try:
+                        campaign.invoke_worker(command, env, log, args.timeout)
+                    except (
+                        subprocess.TimeoutExpired,
+                        subprocess.CalledProcessError,
+                    ) as exc:
+                        failure = type(exc).__name__
+                elapsed = time.perf_counter() - started
+            row = (
+                json.loads((directory / "result.json").read_text())
+                if (directory / "result.json").exists()
+                else {}
+            )
+            row.update(
+                id=case["id"],
+                repeat=repeat,
+                variant=variant,
+                workload=case["workload"],
+                corpus=case["corpus"],
+                worker_wall_seconds=elapsed,
+            )
+            row.setdefault("coding_seconds", elapsed)
+            if failure:
+                row["error"] = failure
+            if (repo / ".devstill").exists() and not (directory / "artifacts").exists():
+                shutil.copytree(
+                    repo / ".devstill",
+                    directory / "artifacts",
+                    ignore=shutil.ignore_patterns(
+                        "chroma", "metadata.sqlite*", "cache"
+                    ),
+                )
+            row["transport"] = transport_metrics(directory / "transport")
+            if row["transport"]["upstream_unreachable"]:
+                row["endpoint_error"] = True
+            passed, validation = campaign.accept(
+                case,
+                repo,
+                directory / "acceptance.json",
+                protect_regressions=True,
+            )
+            row.update(
+                acceptance_pass=passed,
+                validation_seconds=validation,
+                total_seconds=row["coding_seconds"] + validation,
+                end_to_end_seconds=elapsed + validation,
+            )
+            if not passed and not row.get("error"):
+                row.setdefault("failure_stage", "independent_acceptance")
+            subprocess.run(
+                ["git", "add", "-N", "--", ".", ":!.devstill"],
+                cwd=repo,
+                check=True,
+            )
+            (directory / "change.patch").write_bytes(
+                subprocess.check_output(
+                    [
+                        "git",
+                        "diff",
+                        "--binary",
+                        campaign.corpus_entry(case)[2],
+                        "--",
+                        ".",
+                        ":!.devstill",
+                    ],
+                    cwd=repo,
+                )
+            )
+            write(directory / "result.json", row)
+            # A copy of the frozen corpus index (tens of MB); never read afterwards.
+            shutil.rmtree(directory / "private-index", ignore_errors=True)
+            return row
+
+    def before_trial():
+        if pi_identity() != identity:
+            raise ValueError("Pi runtime changed mid-campaign")
+        wait_for_endpoint(runtime["llm"]["base_url"], headers, args.endpoint_wait)
+
     try:
-        for repeat in range(args.repeats):
-            for index, case in enumerate(cases):
-                for variant in trial_order(variants, index, repeat):
-                    if pi_identity() != identity:
-                        raise ValueError("Pi runtime changed mid-campaign")
-                    directory = output / f"{case['id']}-{repeat}-{variant}"
-                    directory.mkdir()
-                    (directory / "query.txt").write_text(case["query"])
-                    with tempfile.TemporaryDirectory(
-                        prefix="devstill-pi-compare-"
-                    ) as temporary:
-                        repo = Path(temporary) / "repo"
-                        # Independent clones avoid shared Git object writes by stock bash tools.
-                        campaign.clone(case, repo)
-                        subprocess.run(
-                            ["git", "repack", "-a", "-d"],
-                            cwd=repo,
-                            check=True,
-                            capture_output=True,
-                        )
-                        (repo / ".git/objects/info/alternates").unlink(missing_ok=True)
-                        with recording_proxy(
-                            cfg.llm.base_url,
-                            directory / "transport",
-                            args.max_model_calls,
-                            disable_reasoning=args.pi_disable_reasoning
-                            and variant in {"pi", "pi_context"},
-                        ) as url:
-                            trial_runtime = json.loads(json.dumps(runtime))
-                            trial_runtime["llm"]["base_url"] = url
-                            write(directory / "runtime.json", trial_runtime)
-                            env = dict(
-                                os.environ,
-                                PYTHONPATH=str(
-                                    (
-                                        output / "baseline"
-                                        if variant == "baseline"
-                                        else source
-                                    )
-                                    / "src"
-                                )
-                                + os.pathsep
-                                + str(source),
-                                PI_OFFLINE="1",
-                                PI_TELEMETRY="0",
-                            )
-                            env.update(tool_environment)
-                            command = [
-                                sys.executable,
-                                "-P",
-                                "-m",
-                                "benchmarks.retrieval.pi_comparison",
-                                "worker",
-                                "--case",
-                                case["id"],
-                                "--variant",
-                                variant,
-                                "--workload",
-                                case["workload"],
-                                "--corpus",
-                                case["corpus"],
-                                "--repo",
-                                str(repo),
-                                "--output",
-                                str(directory),
-                                "--runtime",
-                                str(directory / "runtime.json"),
-                                "--query",
-                                str(directory / "query.txt"),
-                            ]
-                            started = time.perf_counter()
-                            failure = None
-                            with (directory / "worker.log").open("w") as log:
-                                try:
-                                    campaign.invoke_worker(
-                                        command, env, log, args.timeout
-                                    )
-                                except (
-                                    subprocess.TimeoutExpired,
-                                    subprocess.CalledProcessError,
-                                ) as exc:
-                                    failure = type(exc).__name__
-                            elapsed = time.perf_counter() - started
-                        row = (
-                            json.loads((directory / "result.json").read_text())
-                            if (directory / "result.json").exists()
-                            else {}
-                        )
-                        row.update(
-                            id=case["id"],
-                            repeat=repeat,
-                            variant=variant,
-                            workload=case["workload"],
-                            corpus=case["corpus"],
-                            worker_wall_seconds=elapsed,
-                        )
-                        row.setdefault("coding_seconds", elapsed)
-                        if failure:
-                            row["error"] = failure
-                        if (repo / ".devstill").exists() and not (
-                            directory / "artifacts"
-                        ).exists():
-                            shutil.copytree(
-                                repo / ".devstill",
-                                directory / "artifacts",
-                                ignore=shutil.ignore_patterns(
-                                    "chroma", "metadata.sqlite*", "cache"
-                                ),
-                            )
-                        row["transport"] = transport_metrics(directory / "transport")
-                        passed, validation = campaign.accept(
-                            case,
-                            repo,
-                            directory / "acceptance.json",
-                            protect_regressions=True,
-                        )
-                        row.update(
-                            acceptance_pass=passed,
-                            validation_seconds=validation,
-                            total_seconds=row["coding_seconds"] + validation,
-                            end_to_end_seconds=elapsed + validation,
-                        )
-                        if not passed and not row.get("error"):
-                            row.setdefault("failure_stage", "independent_acceptance")
-                        subprocess.run(
-                            ["git", "add", "-N", "--", ".", ":!.devstill"],
-                            cwd=repo,
-                            check=True,
-                        )
-                        (directory / "change.patch").write_bytes(
-                            subprocess.check_output(
-                                [
-                                    "git",
-                                    "diff",
-                                    "--binary",
-                                    campaign.CORPORA[case["corpus"]][2],
-                                    "--",
-                                    ".",
-                                    ":!.devstill",
-                                ],
-                                cwd=repo,
-                            )
-                        )
-                        write(directory / "result.json", row)
-                        rows.append(row)
-                        write(output / "results.json", rows)
-                        write(
-                            output / "summary.json",
-                            summarize(rows, cases, variants, args.repeats),
-                        )
-                        print(
-                            case["id"],
-                            repeat,
-                            variant,
-                            "pass" if completed(row) else "FAIL",
-                            round(elapsed, 2),
-                            "s",
-                            flush=True,
-                        )
+        run_trials(
+            output,
+            cases,
+            variants,
+            args.repeats,
+            rows,
+            trial,
+            before_trial=before_trial,
+        )
     finally:
         final_inputs = input_manifest(cases)
         write(output / "retrieval-input-final-manifest.json", final_inputs)
@@ -717,6 +954,10 @@ def run(args):
         lock.close()
 
 
+def interrupt(signum, _frame):
+    raise KeyboardInterrupt(f"signal {signum}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["run", "worker", "report", "history"])
@@ -734,6 +975,23 @@ def main():
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--timeout", type=float, default=180)
     parser.add_argument("--max-model-calls", type=int, default=0)
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Continue an interrupted run in --output (same frozen source and inputs)",
+    )
+    parser.add_argument(
+        "--endpoint-wait",
+        type=float,
+        default=1800,
+        help="Seconds to wait for an unreachable model server before stopping",
+    )
+    parser.add_argument(
+        "--sampling",
+        choices=sorted(SAMPLING_PROFILES),
+        default="default",
+        help="default: server sampling; greedy: temperature 0 and a fixed seed for both arms",
+    )
     parser.add_argument(
         "--pi-disable-reasoning",
         action="store_true",
@@ -800,6 +1058,9 @@ def main():
     elif not args.verified:
         parser.error("--verified is required for run")
     else:
+        # A supervisor's SIGTERM unwinds like Ctrl-C: the running worker's
+        # process group is killed and the final audit is still written.
+        signal.signal(signal.SIGTERM, interrupt)
         run(args)
 
 
