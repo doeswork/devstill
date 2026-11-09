@@ -978,3 +978,84 @@ def test_commands_that_create_files_tell_the_model_to_use_write(work):
     result = tools_for(work).bash("printf 'X = 1\\n' > pkg/helper.py", 10)
     assert "NOT part of the change: pkg/helper.py" in result.text
     assert "pkg/helper.py" not in tools_for(work).changed
+
+
+# --- verification semantics -------------------------------------------------------
+
+
+def originals_of(work):
+    saved = {"pkg/m.py": (work / "pkg" / "m.py").read_bytes()}
+    return saved.get
+
+
+def test_runner_explains_chained_asserts_and_check_script_errors(work):
+    tools = tools_for(work)
+    chained = tools.python("from pkg.m import add\nassert add(1, 1) == 0 == add(2, 1)\n", 10)
+    assert "add(1, 1) = 0" in chained.text and "add(2, 1) = 1" in chained.text
+    boolean = tools.python("from pkg.m import add\nassert add(1, 1) == 0 and add(2, 2) == 1\n", 10)
+    assert "add(2, 2) == 1 -> False" in boolean.text
+    own = tools.python("import pkg.m\npkg.m.missing_helper()\n", 10)
+    assert "raised by the check script itself (line 2)" in own.text
+    inner = tools.python("from pkg.m import add\nadd('a', 1)\n", 10)
+    assert "raised by the check script itself" not in inner.text
+    piped = tools.bash("python -c 'raise SystemExit(3)' | cat", 10)
+    assert "[exit code 3]" in piped.text  # pipefail
+
+
+def test_turn_limit_keeps_a_change_whose_check_fails_only_later(work):
+    original = originals_of(work)
+    edit = call("edit", 0, path="pkg/m.py", oldText="a - b", newText="a + b")
+    check = call(
+        "python", 1,
+        code="from pkg.m import add\nassert add(2, 3) == 5\nassert add(1, 1) == 3, 'wrong expectation'\n",
+    )
+    result = agent_loop(
+        tools_for(work), "Fix add", [], scripted(reply(edit, check)), work, FAR,
+        max_turns=1, originals=original,
+    )
+    assert result["status"] == "applied_unvalidated"  # line 3 now, line 2 originally
+    (work / "pkg" / "m.py").write_bytes(original("pkg/m.py"))
+    same = call("python", 1, code="from pkg.m import add\nassert add(2, 3) == 5\n")
+    wrong = call("edit", 0, path="pkg/m.py", oldText="a - b", newText="a * b")
+    result = agent_loop(
+        tools_for(work), "Fix add", [], scripted(reply(wrong, same)), work, FAR,
+        max_turns=1, originals=original,
+    )
+    assert result["status"] == "failed"  # fails at the same line as before the change
+
+
+def test_check_that_passes_without_the_change_is_refused_once(work):
+    chat = scripted(
+        reply(
+            call("edit", 0, path="pkg/m.py", oldText="a - b", newText="a + b"),
+            call("python", 1, code="from pkg.m import add\nassert add(0, 0) == 0\n"),
+            call("done", 2, summary="x"),
+        ),
+        reply(
+            call("python", 0, code="from pkg.m import add\nassert add(2, 3) == 5\n"),
+            call("done", 1, summary="fixed"),
+        ),
+    )
+    result = agent_loop(
+        tools_for(work), "Fix add", [], chat, work, FAR, originals=originals_of(work)
+    )
+    assert result["status"] == "applied_unvalidated" and result["model_calls"] == 2
+    refused = [m for m in chat.seen[1] if m["role"] == "tool"][-1]["content"]
+    assert "also passes on the original code" in refused
+
+
+def test_identical_check_resubmission_is_refused_and_prints_do_not_verify(work):
+    probe = "from pkg.m import add\nprint(add(2, 3))\n"
+    chat = scripted(
+        reply(
+            call("edit", 0, path="pkg/m.py", oldText="a - b", newText="a + b"),
+            call("python", 1, code=probe),
+            call("python", 2, code=probe),
+            call("done", 3, summary="x"),
+        ),
+        reply(call("done", 0, summary="x")),
+    )
+    result = agent_loop(tools_for(work), "Fix add", [], chat, work, FAR)
+    tools_seen = [m for m in chat.seen[1] if m["role"] == "tool" and not m["tool_call_id"].startswith("example")]
+    assert "already ran this exact check" in tools_seen[2]["content"]
+    assert result["status"] == "applied_unvalidated" and not result["verified"]

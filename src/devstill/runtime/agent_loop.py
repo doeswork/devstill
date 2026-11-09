@@ -15,7 +15,13 @@ import re
 import time
 
 from devstill.runtime.artifacts import write
-from devstill.runtime.tools import ToolError, ToolResult, Workspace
+from devstill.runtime.loop_context import is_test_path
+from devstill.runtime.tools import (
+    ToolError,
+    ToolResult,
+    Workspace,
+    check_failure_line,
+)
 
 SYSTEM = """You are Devstill Quick, a fast, careful coding agent working in a copy of the user's repository. Make the smallest correct change that fully satisfies the request.
 
@@ -360,6 +366,8 @@ def _call_name(call):
     return (call.get("function") or {}).get("name", "")
 
 
+# A python script verifies only if it can fail on a wrong result.
+ASSERTING = re.compile(r"\bassert\b|AssertionError|\braises\(")
 CHECK_COMMAND = re.compile(r"\b(pytest|python3?|unittest|tox|nox|make\s+test|npm\s+test)\b")
 MALFORMED_CALL = re.compile(r"<tool_call>|<function=|\{\s*\"name\"\s*:")
 
@@ -381,6 +389,7 @@ def agent_loop(
     report=lambda message: None,
     before_tools=lambda: None,
     guard=None,
+    originals=None,
 ):
     """Run the tool loop; return an outcome compatible with the structured editor.
 
@@ -445,6 +454,7 @@ def agent_loop(
             report=report,
             before_tools=before_tools,
             guard=guard,
+            originals=originals,
         )
     except InterruptedError:
         raise
@@ -475,6 +485,7 @@ def _loop(
     report,
     before_tools,
     guard,
+    originals,
 ):
     messages = state["messages"]
     commands = state["commands"]
@@ -483,6 +494,7 @@ def _loop(
     failed_assert = None  # the latest failing check comparison, if any
     guard_reports = 0
     failed_check_warned = None  # last_edit_step when we last refused a finish
+    discrimination_asked = None  # last_edit_step when a non-testing check was refused
 
     def trace():
         write(output / "agent-trace.json", {"messages": messages, "commands": commands})
@@ -498,6 +510,32 @@ def _loop(
     def check_failed():
         check = latest_check()
         return check is not None and not check["ok"]
+
+    def on_original(code):
+        """Run a check script against the original sources (no model call)."""
+        if originals is None or not workspace.changed:
+            return None
+        if guard is not None:
+            guard.close()  # background test runs must not see swapped files
+        timeout = min(bash_timeout, max(1.0, deadline - time.perf_counter() - 1))
+        try:
+            with workspace.original_state(originals):
+                return workspace.python(code, timeout, checkpoint)
+        finally:
+            if guard is not None:
+                guard.changed()  # restart runs for the restored current state
+
+    def progressed(code, output):
+        """A failing check gets further than it does on the original code.
+
+        Then the remaining failure is most likely in the check itself (the
+        requested behavior it asserts first now holds), not in the change.
+        """
+        base = on_original(code)
+        if base is None or base.ok:
+            return False
+        now, before = check_failure_line(output), check_failure_line(base.text)
+        return now is not None and before is not None and now > before
 
     def recheck():
         """Re-run the agent's latest python check if it edited afterwards.
@@ -526,6 +564,10 @@ def _loop(
             }
         )
         if result.ok:
+            return None
+        if progressed(code, result.text):
+            commands[-1]["check"] = False  # the check, not the change, is wrong
+            commands[-1]["check_problem"] = True
             return None
         return (
             "Your latest check fails after your last edit (re-run automatically):\n"
@@ -579,7 +621,29 @@ def _loop(
                 )
             if found:
                 return "Tests still fail: " + ", ".join(failing[:10])
-        return None
+        return discriminate()
+
+    def discriminate():
+        """Refuse once when the latest passing check also passes without the change."""
+        nonlocal discrimination_asked
+        check = latest_check()
+        if (
+            check is None
+            or not check["ok"]
+            or not check["command"].startswith("python:\n")
+            or discrimination_asked == state["last_edit_step"]
+            or all(is_test_path(name) for name in workspace.changed)
+        ):
+            return None
+        base = on_original(check["command"][len("python:\n") :])
+        if base is None or not base.ok:
+            return None
+        discrimination_asked = state["last_edit_step"]
+        return (
+            "Not finished: your latest check also passes on the original code, so it "
+            "does not test the requested change. Add assertions that fail without your "
+            "change and pass with it, run them, then call done."
+        )
 
     def changed():
         if guard is not None:
@@ -600,7 +664,14 @@ def _loop(
     while True:
         checkpoint()
         if state["calls"] >= max_turns:
-            if workspace.changed and not last_batch_failed_edit and not check_failed():
+            failed = check_failed()
+            if failed:
+                check = latest_check()
+                if check["command"].startswith("python:\n") and progressed(
+                    check["command"][len("python:\n") :], check["output"]
+                ):
+                    failed = False
+            if workspace.changed and not last_batch_failed_edit and not failed:
                 problem = finish(final=True)
                 if problem is None:
                     return outcome("applied_unvalidated", finished="turn_limit")
@@ -757,6 +828,25 @@ def _loop(
                             bash_timeout * 2,
                             max(1.0, deadline - time.perf_counter()),
                         )
+                        previous = next(
+                            (
+                                c
+                                for c in reversed(commands)
+                                if c["command"].startswith("python:\n")
+                            ),
+                            None,
+                        )
+                        if (
+                            name == "python"
+                            and previous is not None
+                            and previous["step"] > state["last_edit_step"]
+                            and previous["command"] == "python:\n" + text
+                        ):
+                            raise ToolError(
+                                "You already ran this exact check since your last edit "
+                                f"(it {'passed' if previous['ok'] else 'failed'}). Change "
+                                "the code or the check instead of re-running it."
+                            )
                         if name == "python":
                             report("Running check")
                             note = weakening_note(failed_assert, text)
@@ -777,7 +867,11 @@ def _loop(
                                 "command": ("python:\n" + text) if name == "python" else text,
                                 "ok": result.ok,
                                 "check": not result.changed
-                                and (name == "python" or bool(CHECK_COMMAND.search(text))),
+                                and bool(
+                                    ASSERTING.search(text)
+                                    if name == "python"
+                                    else CHECK_COMMAND.search(text)
+                                ),
                                 "turn": calls,
                                 "step": step,
                                 "output": result.text[-2000:],

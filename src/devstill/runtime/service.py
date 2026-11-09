@@ -571,13 +571,12 @@ class RuntimeSession:
                 interpreter,
             )
 
+        def original(name):
+            path = workspace.source_path(self.repo, name)
+            return path.read_bytes() if path.is_file() else None
+
         guard = None
         if cfg.editing.regression_tests:
-
-            def original(name):
-                path = workspace.source_path(self.repo, name)
-                return path.read_bytes() if path.is_file() else None
-
             suite = [
                 name for name in ("tests", "test") if (self.repo / name).is_dir()
             ]
@@ -593,14 +592,14 @@ class RuntimeSession:
         try:
             return self._loop_with_snapshot(
                 work, query, sections, requirements, chat, directory, deadline, emit,
-                tools, checks, guard, state,
+                tools, checks, guard, state, original,
             )
         finally:
             shutil.rmtree(shims, ignore_errors=True)
 
     def _loop_with_snapshot(
         self, work, query, sections, requirements, chat, directory, deadline, emit,
-        tools, checks, guard, state,
+        tools, checks, guard, state, original,
     ):
         cfg = self.config
         with ThreadPoolExecutor(max_workers=1) as pool:
@@ -631,6 +630,7 @@ class RuntimeSession:
                 report=emit,
                 before_tools=ready,
                 guard=guard,
+                originals=original,
             )
             ready()
         return outcome, state["sources"]

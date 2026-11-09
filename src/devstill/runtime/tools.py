@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 import unicodedata
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from itertools import pairwise
 from pathlib import Path
@@ -67,40 +68,73 @@ record = sys.argv[2] if len(sys.argv) > 2 else None
 source = open(path, encoding="utf-8").read()
 namespace = {"__name__": "__main__", "__file__": path}
 sys.argv = [path]
+
+
+def frames(tb):
+    found = []
+    while tb is not None:
+        found.append((tb.tb_frame.f_code.co_filename, tb.tb_lineno, tb.tb_frame))
+        tb = tb.tb_next
+    return found
+
+
+def show(scope, node):
+    try:
+        return repr(eval(compile(ast.Expression(node), path, "eval"), scope))[:300]
+    except Exception as exc:
+        return f"<error: {exc!r}>"
+
+
 try:
     exec(compile(source, path, "exec"), namespace)
 except AssertionError as exc:
-    tb, line, frame = exc.__traceback__, None, None
-    while tb is not None:
-        if tb.tb_frame.f_code.co_filename == path:
-            line, frame = tb.tb_lineno, tb.tb_frame
-        tb = tb.tb_next
+    stack = [f for f in frames(exc.__traceback__) if f[0] == path]
     traceback.print_exc()
-    if line is not None:
+    if stack:
+        line, frame = stack[-1][1], stack[-1][2]
         try:
             for node in ast.walk(ast.parse(source)):
                 if isinstance(node, ast.Assert) and node.lineno <= line <= (node.end_lineno or node.lineno):
+                    scope = dict(frame.f_globals)
+                    scope.update(frame.f_locals)
                     test = node.test
-                    if isinstance(test, ast.Compare) and len(test.ops) == 1:
-                        scope = dict(frame.f_globals)
-                        scope.update(frame.f_locals)
-                        left = eval(compile(ast.Expression(test.left), path, "eval"), scope)
-                        right = eval(compile(ast.Expression(test.comparators[0]), path, "eval"), scope)
-                        # Operands are evaluated again here (stateful expressions may differ).
-                        print(f"  left:  {left!r}\n  right: {right!r}", file=sys.stderr)
-                        if record:
+                    # Operands are evaluated again here (stateful expressions may differ).
+                    if isinstance(test, ast.Compare):
+                        operands = [test.left, *test.comparators]
+                        values = [show(scope, item) for item in operands]
+                        if len(operands) == 2:
+                            print(f"  left:  {values[0]}\n  right: {values[1]}", file=sys.stderr)
+                        else:
+                            for item, value in zip(operands, values):
+                                print(f"  {ast.unparse(item)} = {value}", file=sys.stderr)
+                        if record and len(test.ops) == 1:
                             import json
                             with open(record, "w", encoding="utf-8") as out:
                                 json.dump({
                                     "left_src": ast.unparse(test.left),
                                     "right_src": ast.unparse(test.comparators[0]),
                                     "op": type(test.ops[0]).__name__,
-                                    "left": repr(left)[:300],
-                                    "right": repr(right)[:300],
+                                    "left": values[0],
+                                    "right": values[1],
                                 }, out)
+                    elif isinstance(test, ast.BoolOp):
+                        for item in test.values:
+                            print(f"  {ast.unparse(item)} -> {show(scope, item)}", file=sys.stderr)
                     break
         except Exception:
             pass
+    sys.exit(1)
+except BaseException as exc:
+    if isinstance(exc, SystemExit) and exc.code in (0, None):
+        raise
+    stack = frames(exc.__traceback__)
+    traceback.print_exc()
+    if stack and stack[-1][0] == path:
+        print(
+            f"[raised by the check script itself (line {stack[-1][1]}), "
+            "not inside the code under test]",
+            file=sys.stderr,
+        )
     sys.exit(1)
 """
 
@@ -336,6 +370,15 @@ def _tail(stream, limit: int) -> str:
     return text
 
 
+_CHECK_FRAME = re.compile(r'File "[^"]*check\.py", line (\d+)')
+
+
+def check_failure_line(output: str):
+    """Top-level line of the check script where it failed (None if unknown)."""
+    match = _CHECK_FRAME.search(output or "")
+    return int(match.group(1)) if match else None
+
+
 class Workspace:
     """File and shell operations confined to one prepared workspace copy."""
 
@@ -390,6 +433,31 @@ class Workspace:
             for name in names:
                 found.add((base / name).as_posix())
         return found
+
+    @contextmanager
+    def original_state(self, originals):
+        """Temporarily restore the original bytes of every changed file."""
+        current = {}
+        for name in self.changed:
+            path = self.root / name
+            current[name] = path.read_bytes() if path.exists() else None
+        try:
+            for name in current:
+                original = originals(name)
+                path = self.root / name
+                if original is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    path.write_bytes(original)
+            yield
+        finally:
+            for name, data in current.items():
+                path = self.root / name
+                if data is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(data)
 
     def _note(self, name: str) -> None:
         if name not in self.changed:
@@ -525,7 +593,8 @@ class Workspace:
     def bash(self, command: str, timeout: float, checkpoint=lambda: None) -> ToolResult:
         if not command.strip():
             raise ToolError("command must not be empty")
-        return self._run(["bash", "-c", command], timeout, checkpoint)
+        # pipefail: `pytest ... | tail` must not report the pipe's last status.
+        return self._run(["bash", "-o", "pipefail", "-c", command], timeout, checkpoint)
 
     def _run(self, argv, timeout: float, checkpoint=lambda: None) -> ToolResult:
         before = self._stat_tracked()
