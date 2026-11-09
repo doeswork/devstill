@@ -58,6 +58,7 @@ class RepositoryIndexer:
         )
         self.paths.create()
         self.store = SQLiteStore(self.paths.sqlite)
+        self.vectors = config.index.vectors
         self.embedder = embedder or EmbeddingBackend(
             resolve_model_path(config),
             max_sequence_length=config.embedding.max_sequence_length,
@@ -86,6 +87,8 @@ class RepositoryIndexer:
         progress: Callable[[IndexProgress], None] | None,
         action: str,
     ) -> list[list[float]]:
+        if not self.vectors:
+            return []
         total = len(units)
         self._progress(
             progress,
@@ -120,6 +123,9 @@ class RepositoryIndexer:
         chunks: dict[str, SourceChunk],
         progress: Callable[[IndexProgress], None] | None,
     ) -> None:
+        if not self.vectors:
+            return
+
         def write_progress(current: int, total: int) -> None:
             self._progress(
                 progress,
@@ -144,6 +150,8 @@ class RepositoryIndexer:
         verbose: bool,
         progress: Callable[[IndexProgress], None] | None,
     ) -> int:
+        if not self.vectors:
+            return 0
         units = self.store.all_search_units()
         total = len(units)
         self._progress(
@@ -228,7 +236,8 @@ class RepositoryIndexer:
             self._mark_dirty()
             with self.store.transaction():
                 self.store.reset_all()
-            self.chroma.reset_collection()
+            if self.vectors:
+                self.chroma.reset_collection()
             previous = {}
             self._file_progress = IndexFileProgress()
 
@@ -423,12 +432,12 @@ class RepositoryIndexer:
                 total,
             )
 
-        if removed_units:
+        if removed_units and self.vectors:
             delete_progress(0, len(removed_units))
-        self.chroma.delete_search_units(
-            removed_units,
-            progress=delete_progress if progress is not None else None,
-        )
+            self.chroma.delete_search_units(
+                removed_units,
+                progress=delete_progress if progress is not None else None,
+            )
         self._upsert_vectors(
             all_new_units,
             embeddings,

@@ -51,6 +51,7 @@ class HybridSearch:
                 f"No Devstill index found at {paths.root}. Run `devstill index`."
             )
         self.store = SQLiteStore(paths.sqlite)
+        self.vectors = config.index.vectors
         self.retrieval_exclude = config.retrieval.exclude
         self.embedder = embedder or EmbeddingBackend(
             resolve_model_path(config),
@@ -125,6 +126,11 @@ class HybridSearch:
             raise ValueError(
                 "--semantic-only and --lexical-only cannot be used together"
             )
+        if not self.vectors:
+            if semantic_only:
+                raise ValueError("This index has no vectors (index.vectors is false)")
+            # A lexical-only index answers every query without embeddings.
+            lexical_only = not exact_only
         candidate_limit = self._candidate_limit(limit)
         allowed_paths = None
         if path or self.retrieval_exclude:

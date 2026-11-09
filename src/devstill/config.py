@@ -39,6 +39,9 @@ class IndexConfig(StrictModel):
     max_chunk_chars: int = Field(default=8000, ge=256)
     max_chunk_lines: int = Field(default=400, ge=1)
     fallback_overlap_lines: int = Field(default=20, ge=0)
+    # False keeps only the lexical/exact index: no embedding model is loaded,
+    # so large repositories index in seconds on a CPU-only machine.
+    vectors: bool = True
 
     @model_validator(mode="after")
     def validate_overlap(self) -> IndexConfig:
