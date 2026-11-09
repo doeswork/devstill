@@ -1,0 +1,312 @@
+{
+  "tool": "ruff 0.17.4",
+  "rules": "ruff default rules, --isolated",
+  "trials": [
+    {
+      "id": "nq01",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq01",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq02",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq02",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 4,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 2.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq03",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 7,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 3.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq03",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 7,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 3.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq04",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 7,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 3.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq04",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 7,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 3.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq05",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 1,
+      "tests_touched": [],
+      "reference_lines": 1,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq05",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 6,
+      "tests_touched": [],
+      "reference_lines": 1,
+      "size_ratio": 6.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq06",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 32,
+      "tests_touched": [],
+      "reference_lines": 9,
+      "size_ratio": 3.56,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq06",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 63,
+      "tests_touched": [
+        "tests/test_datastructures.py"
+      ],
+      "reference_lines": 9,
+      "size_ratio": 7.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq07",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 4,
+      "tests_touched": [],
+      "reference_lines": 4,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq07",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 8,
+      "tests_touched": [],
+      "reference_lines": 4,
+      "size_ratio": 2.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq08",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 2,
+      "changed_lines": 6,
+      "tests_touched": [],
+      "reference_lines": 6,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 1,
+        "new_codes": {
+          "I001": 1
+        }
+      }
+    },
+    {
+      "id": "nq08",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 9,
+      "tests_touched": [],
+      "reference_lines": 6,
+      "size_ratio": 1.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 1,
+        "new_codes": {
+          "I001": 1
+        }
+      }
+    },
+    {
+      "id": "nq09",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 20,
+      "tests_touched": [],
+      "reference_lines": 6,
+      "size_ratio": 3.33,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq09",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 2,
+      "changed_lines": 8,
+      "tests_touched": [],
+      "reference_lines": 6,
+      "size_ratio": 1.33,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq10",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq10",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    }
+  ]
+}

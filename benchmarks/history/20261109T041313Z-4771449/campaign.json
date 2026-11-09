@@ -1,0 +1,235 @@
+{
+  "schema_version": 1,
+  "id": "20261109T041313Z-4771449",
+  "status": "completed",
+  "started_at": "2026-11-09T04:13:13+00:00",
+  "finished_at": "2026-11-09T05:38:08+00:00",
+  "note": "overnight run; default sampling (relaunch after --purpose fix)",
+  "command": [
+    "bench_suite.py",
+    "run",
+    "--note",
+    "overnight run; default sampling (relaunch after --purpose fix)"
+  ],
+  "host": "USNBRosenbergJ",
+  "platform": "Linux-6.18.54.1-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+  "git": {
+    "sha": "4771449f464287d95ae26f9432a4b04886071e36",
+    "short": "4771449",
+    "branch": "bench-test-ui-ux",
+    "dirty": false,
+    "status": []
+  },
+  "model": {
+    "base_url": "http://192.168.0.131:1234/v1",
+    "configured_model": "vllm-qwen38-27b",
+    "served": [
+      [
+        "vllm-qwen38-27b",
+        "gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090",
+        262144
+      ]
+    ],
+    "served_sha256": "05a50541b75c9bee998e78c26a97e70deeb8c1da68a3150d6842d34ed586a6f1"
+  },
+  "pi": {
+    "version": "1.5.0",
+    "node": "v24.14.1",
+    "reason": null
+  },
+  "tools": {
+    "python": "Python 3.12.3",
+    "pytest": "pytest 8.3.5",
+    "ruff": "ruff 0.17.4",
+    "node": "v24.14.1",
+    "git": "git version 2.43.0"
+  },
+  "settings": {
+    "sampling": "default",
+    "endpoint_wait": 1800,
+    "max_hours": null,
+    "overrides": {
+      "repeats": null,
+      "variants": null,
+      "timeout": null
+    }
+  },
+  "suites": [
+    {
+      "name": "nq",
+      "settings": {
+        "variants": "pi,runtime",
+        "repeats": 1,
+        "timeout": 120,
+        "purpose": "development",
+        "pi_disable_reasoning": true,
+        "acceptance_budget": 240,
+        "requires": [],
+        "name": "nq",
+        "dataset": "benchmarks/retrieval/native_quick_fresh.v1.json",
+        "tags": [
+          "core",
+          "dev"
+        ],
+        "description": "10 Werkzeug quick edits (exposed development set)"
+      },
+      "dataset_sha256": "33c78670cdff816c8a85527fa346ddc3c38e181a0f648c19e7144367124adfe5",
+      "status": "completed",
+      "reason": null,
+      "attempts": [
+        {
+          "started_at": "2026-11-09T04:13:13+00:00",
+          "finished_at": "2026-11-09T04:24:48+00:00",
+          "exit_code": 0,
+          "resume": false,
+          "trials_recorded": 20,
+          "suite_time_limit_hit": false,
+          "stray_processes_killed": 0,
+          "stopped": null
+        }
+      ],
+      "verified_cache": "/home/jeffyx/devstill/.devstill/bench-cache/verified/nq-33c78670cdff-2fd24745cc8d",
+      "excluded_cases": {},
+      "dataset_used": "/home/jeffyx/devstill/benchmarks/retrieval/native_quick_fresh.v1.json",
+      "verified_used": "/home/jeffyx/devstill/.devstill/bench-cache/verified/nq-33c78670cdff-2fd24745cc8d"
+    },
+    {
+      "name": "quick-fast",
+      "settings": {
+        "variants": "pi,runtime",
+        "repeats": 1,
+        "timeout": 120,
+        "purpose": "development",
+        "pi_disable_reasoning": true,
+        "acceptance_budget": 240,
+        "requires": [],
+        "name": "quick-fast",
+        "dataset": "benchmarks/retrieval/quick_fast.v1.json",
+        "tags": [
+          "core",
+          "dev"
+        ],
+        "description": "10 Werkzeug fast edits (exposed development set)"
+      },
+      "dataset_sha256": "aeb5583db4c2f97f67a8320e35afa4520b91a356b35f2b5db1bcd82bb26eafbd",
+      "status": "completed",
+      "reason": null,
+      "attempts": [
+        {
+          "started_at": "2026-11-09T04:27:21+00:00",
+          "finished_at": "2026-11-09T04:34:39+00:00",
+          "exit_code": 0,
+          "resume": false,
+          "trials_recorded": 20,
+          "suite_time_limit_hit": false,
+          "stray_processes_killed": 0,
+          "stopped": null
+        }
+      ],
+      "verified_cache": "/home/jeffyx/devstill/.devstill/bench-cache/verified/quick-fast-aeb5583db4c2-2fd24745cc8d",
+      "excluded_cases": {},
+      "dataset_used": "/home/jeffyx/devstill/benchmarks/retrieval/quick_fast.v1.json",
+      "verified_used": "/home/jeffyx/devstill/.devstill/bench-cache/verified/quick-fast-aeb5583db4c2-2fd24745cc8d"
+    },
+    {
+      "name": "loop-dev",
+      "settings": {
+        "variants": "pi,runtime",
+        "repeats": 1,
+        "timeout": 120,
+        "purpose": "development",
+        "pi_disable_reasoning": true,
+        "acceptance_budget": 240,
+        "requires": [],
+        "name": "loop-dev",
+        "dataset": "benchmarks/retrieval/quick_loop_dev.v1.json",
+        "tags": [
+          "core",
+          "dev"
+        ],
+        "description": "12 Werkzeug and click cases (development set)"
+      },
+      "dataset_sha256": "3bcb9704cbf9c810e98535644cc7685c40862dc11e2f3d4121cb3da8e2d5f050",
+      "status": "completed",
+      "reason": null,
+      "attempts": [
+        {
+          "started_at": "2026-11-09T04:36:39+00:00",
+          "finished_at": "2026-11-09T04:52:37+00:00",
+          "exit_code": 0,
+          "resume": false,
+          "trials_recorded": 24,
+          "suite_time_limit_hit": false,
+          "stray_processes_killed": 0,
+          "stopped": null
+        }
+      ],
+      "verified_cache": "/home/jeffyx/devstill/.devstill/bench-cache/verified/loop-dev-3bcb9704cbf9-3dda0065fc2a",
+      "excluded_cases": {},
+      "dataset_used": "/home/jeffyx/devstill/benchmarks/retrieval/quick_loop_dev.v1.json",
+      "verified_used": "/home/jeffyx/devstill/.devstill/bench-cache/verified/loop-dev-3bcb9704cbf9-3dda0065fc2a"
+    },
+    {
+      "name": "loop-holdout",
+      "settings": {
+        "variants": "pi,runtime",
+        "repeats": 2,
+        "timeout": 120,
+        "purpose": "development",
+        "pi_disable_reasoning": true,
+        "acceptance_budget": 240,
+        "requires": [],
+        "name": "loop-holdout",
+        "dataset": "benchmarks/retrieval/quick_loop_holdout.v1.json",
+        "tags": [
+          "core"
+        ],
+        "description": "12 Werkzeug and click cases; exposed by the 2026-11-08 final run, so no longer held out"
+      },
+      "dataset_sha256": "19c8afcd816b9d071e95836790a1efaa040ba53b56796170a21c7f0282e621dc",
+      "status": "completed",
+      "reason": null,
+      "attempts": [
+        {
+          "started_at": "2026-11-09T04:54:38+00:00",
+          "finished_at": "2026-11-09T05:38:08+00:00",
+          "exit_code": 0,
+          "resume": false,
+          "trials_recorded": 48,
+          "suite_time_limit_hit": false,
+          "stray_processes_killed": 0,
+          "stopped": null
+        }
+      ],
+      "verified_cache": "/home/jeffyx/devstill/.devstill/bench-cache/verified/loop-holdout-19c8afcd816b-3dda0065fc2a",
+      "excluded_cases": {},
+      "dataset_used": "/home/jeffyx/devstill/benchmarks/retrieval/quick_loop_holdout.v1.json",
+      "verified_used": "/home/jeffyx/devstill/.devstill/bench-cache/verified/loop-holdout-19c8afcd816b-3dda0065fc2a"
+    },
+    {
+      "name": "swebench-small",
+      "settings": {
+        "variants": "pi,runtime",
+        "repeats": 1,
+        "timeout": 300,
+        "purpose": "development",
+        "pi_disable_reasoning": true,
+        "acceptance_budget": 900,
+        "requires": [
+          "docker"
+        ],
+        "name": "swebench-small",
+        "dataset": "benchmarks/datasets/swebench_small.v1.json",
+        "tags": [
+          "external"
+        ],
+        "prepare": "swebench",
+        "description": "24 SWE-bench Verified single-file fixes from 8 pure-Python projects, graded by the official harness"
+      },
+      "dataset_sha256": "0da1d9d55f993ea3aba4de0c11ed401f4567934121ff67af5931a6eb97e5692c",
+      "status": "skipped",
+      "reason": "Docker Desktop's WSL integration is off for this distro (Docker Desktop -> Settings -> Resources -> WSL integration)",
+      "attempts": []
+    }
+  ]
+}
