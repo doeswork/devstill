@@ -559,7 +559,17 @@ if code is not None:
             say(f"[the code under test called exit ({exc.code!r}); the rest of the check never ran]")
     except BaseException as exc:
         stop = stopped(exc)
-raise SystemExit(finish(stop))
+status = finish(stop)
+if status:
+    # Do not wait for the check's leftover non-daemon threads: the failure is
+    # already recorded and printed.
+    for stream in (sys.stdout, sys.stderr, ERR):
+        try:
+            stream.flush()
+        except Exception:
+            pass
+    real_exit(status)
+raise SystemExit(status)
 '''
 
 

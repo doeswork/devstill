@@ -420,6 +420,8 @@ PY_SCRIPT = re.compile(_COMMAND_START + _PYTHON + r"\s+(?:-c\b|-\s*<<|<<)")
 
 def bash_check_kind(command):
     """'tests' for a test run, 'script' for an asserting inline script, else None."""
+    if re.search(r"--collect-only|--co\b|--fixtures|--help", command):
+        return None  # lists tests without running them
     if TEST_RUNNER.search(command):
         return "tests"
     if PY_SCRIPT.search(command) and ASSERTING.search(command):
@@ -986,6 +988,19 @@ def _loop(
         """Refuse one finish while the latest check after the last edit failed."""
         nonlocal failed_check_warned
         check = latest_check()
+        if (
+            check is not None
+            and check["ok"]
+            and check.get("weakened")
+            and failed_check_warned != state["last_edit_step"]
+        ):
+            failed_check_warned = state["last_edit_step"]
+            return (
+                "Not finished: your latest check dropped or changed an assertion that "
+                "just failed. If that assertion states what the request requires or "
+                "keeps, restore it and fix the code; if it was wrong, say so and call "
+                "done again."
+            )
         if (
             check is None
             or check["ok"]

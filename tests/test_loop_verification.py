@@ -306,13 +306,14 @@ def test_no_automatic_finish_after_bending_an_assertion_that_held(work):
         ),
         reply(call("python", 0, code="from pkg.m import add\nassert add(0, 0) == 1\n")),
         reply(call("done", 0, summary="x")),
+        reply(call("done", 0, summary="x")),
     )
     result = agent_loop(
         tools_for(work), "Fix add", [], chat, work, FAR, originals=originals_of(work)
     )
     warned = tool_results(chat, 2)[-1]
     assert "now expects that actual value" in warned
-    assert result["model_calls"] == 3  # the bent check did not end the task
+    assert result["model_calls"] == 4  # the bent check did not end the task
 
 
 def test_weakening_warning_is_kept_when_the_change_reached_the_assertion(work):
@@ -328,13 +329,14 @@ def test_weakening_warning_is_kept_when_the_change_reached_the_assertion(work):
         ),
         reply(call("python", 0, code="from pkg.m import add\nassert add(2, 3) == 5\n")),
         reply(call("done", 0, summary="x")),
+        reply(call("done", 0, summary="x")),
     )
     result = agent_loop(
         tools_for(work), "Fix add", [], chat, work, FAR, originals=originals_of(work)
     )
     assert "no longer asserts it" in tool_results(chat, 2)[-1]
     assert (
-        result["model_calls"] == 3
+        result["model_calls"] == 4
     )  # a check that dropped an assertion: no auto-finish
 
 
@@ -353,13 +355,14 @@ def test_weakening_warning_text_is_dropped_for_an_assertion_the_change_never_rea
         ),
         reply(call("python", 0, code="from pkg.m import add\nassert add(2, 3) == 5\n")),
         reply(call("done", 0, summary="x")),
+        reply(call("done", 0, summary="x")),
     )
     result = agent_loop(
         tools_for(work), "Fix add", [], chat, work, FAR, originals=originals_of(work)
     )
     assert "Warning" not in tool_results(chat, 2)[-1]
     # It still dropped a failing assertion, so the model has to call done.
-    assert result["model_calls"] == 3 and result["status"] == "applied_unvalidated"
+    assert result["model_calls"] == 4 and result["status"] == "applied_unvalidated"
 
 
 def test_discrimination_judges_the_agent_check_even_after_a_test_run(work):
@@ -580,11 +583,12 @@ def test_no_automatic_finish_after_a_failed_check_since_the_edit(work):
         ),
         reply(call("python", 0, code="from pkg.m import add\nassert add(2, 3) == 5\n")),
         reply(call("done", 0, summary="fixed")),
+        reply(call("done", 0, summary="fixed")),
     )
     result = agent_loop(
         tools_for(work), "Fix add", [], chat, work, FAR, originals=originals_of(work)
     )
-    assert result["model_calls"] == 3
+    assert result["model_calls"] == 4
 
 
 def test_failing_python_commands_still_block_done_even_if_they_only_print(work):
@@ -607,3 +611,44 @@ def test_digest_is_the_same_for_a_value_and_its_json_copy():
 
     value = {"asserts": {9: [1, 0], 10: [1, 1]}, "pair": (1, 2)}
     assert digest(value) == digest(json.loads(json.dumps(value)))
+
+
+def test_a_failing_check_does_not_wait_for_leftover_threads(work):
+    import time
+
+    started = time.perf_counter()
+    result = tools_for(work).python(
+        "import threading, time\n"
+        "threading.Thread(target=time.sleep, args=(60,)).start()\n"
+        "assert 1 == 2\n",
+        20,
+    )
+    assert not result.ok and not result.meta.get("timed_out")
+    assert time.perf_counter() - started < 10
+    assert result.meta["record"]["first_line"] == 3
+
+
+def test_done_with_a_weakened_check_is_refused_once(work):
+    chat = scripted(
+        reply(
+            edit("a - b", "a + b + 1"),
+            call("python", 1, code="from pkg.m import add\nassert add(2, 3) == 5\n"),
+        ),
+        reply(
+            call("python", 0, code="from pkg.m import add\nassert add(2, 3) == 6\n"),
+            call("done", 1, summary="x"),
+        ),
+        reply(call("done", 0, summary="x")),
+    )
+    result = agent_loop(
+        tools_for(work), "Fix add", [], chat, work, FAR, originals=originals_of(work)
+    )
+    assert "dropped or changed an assertion" in tool_results(chat, 2)[-1]
+    assert result["model_calls"] == 3
+
+
+def test_listing_tests_is_not_a_test_run():
+    from devstill.runtime.agent_loop import bash_check_kind
+
+    assert bash_check_kind("python -m pytest -q --collect-only tests") is None
+    assert bash_check_kind("python -m pytest -q tests") == "tests"
