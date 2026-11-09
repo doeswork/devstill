@@ -78,7 +78,7 @@
   },
   "llm": {
     "enabled": true,
-    "base_url": "http://192.168.0.131:1234/v1",
+    "base_url": "https://llm.codemonkey.study/v1",
     "model": "vllm-qwen38-27b",
     "api_key_env": "DEVSTILL_AGENT_API_KEY",
     "timeout_seconds": 300.0,
