@@ -58,16 +58,272 @@ class ToolError(ValueError):
     """A tool failure reported back to the model; nothing was written."""
 
 
-# Runs a check script; a failing `assert left <op> right` also prints both sides
-# so a wrong expectation and a wrong implementation are easy to tell apart. The
-# comparison is recorded (argv[2]) so the loop can spot a weakened assertion.
-PYTHON_RUNNER = r"""
-import ast, sys, traceback
+# Runs a check script. Top-level asserts (also inside top-level if/for/while/
+# try blocks) are rewritten to record their outcome with operand values
+# captured when the assert ran (pytest-style temporaries: nothing is evaluated
+# twice, and names bound by `except ... as e` stay visible). A failing assert
+# keeps going only when the next statement is another assert, so a run reports
+# a whole block of failing assertions while guards still guard. Everything is
+# recorded in argv[2] (JSON) so the loop can compare a failing check with the
+# same check on the original code and spot a weakened assertion. The last
+# stderr line names the first failing line.
+PYTHON_RUNNER = r'''
+import ast, inspect, json, os, re, sys, traceback, types
+
 path = sys.argv[1]
 record = sys.argv[2] if len(sys.argv) > 2 else None
 source = open(path, encoding="utf-8").read()
-namespace = {"__name__": "__main__", "__file__": path}
+lines = source.split("\n")
 sys.argv = [path]
+ERR = sys.stderr  # the check may redirect sys.stderr; runner output must not follow
+PID = os.getpid()
+SHOWN, KEPT = 8, 50
+state = {
+    "failures": [],
+    "asserts": {},
+    "first": None,
+    "compare": None,
+    "count": 0,
+    "pending": False,  # an assert failed earlier in the current run of asserts
+}
+
+
+def say(text):
+    try:
+        ERR.write(text + "\n")
+        ERR.flush()
+    except Exception:
+        pass
+
+
+def snippet(line, end=None):
+    text = " ".join(part.strip() for part in lines[line - 1 : (end or line)])
+    return text if len(text) <= 200 else text[:199] + "..."
+
+
+def show(value):
+    try:
+        return repr(value)[:300]
+    except Exception as exc:
+        return f"<repr failed: {type(exc).__name__}>"
+
+
+def text_of(value):
+    try:
+        return str(value)[:300]
+    except Exception:
+        return show(value)
+
+
+class Stop(AssertionError):
+    """A failed assert that ends the script (the next statement is not an assert)."""
+
+
+def ran(line):
+    state["asserts"].setdefault(line, [0, 0])[0] += 1
+
+
+def failed(line, end, kind, values, op, message, stop):
+    state["asserts"].setdefault(line, [0, 0])[1] += 1
+    state["count"] += 1
+    shown = [[src, show(value)] for src, value in values]
+    if state["first"] is None:
+        state["first"] = line
+    if kind == "compare" and state["compare"] is None:
+        state["compare"] = {
+            "left_src": shown[0][0],
+            "right_src": shown[1][0],
+            "op": op,
+            "left": shown[0][1],
+            "right": shown[1][1],
+            "line": line,
+        }
+    if len(state["failures"]) < KEPT:
+        entry = {"line": line, "kind": kind, "values": shown, "op": op}
+        if message is not None:
+            entry["message"] = show(message)
+        state["failures"].append(entry)
+    if state["count"] <= SHOWN:
+        out = [f"AssertionError at check line {line}: {snippet(line, end)}"]
+        if message is not None:
+            out.append(f"  message: {text_of(message)}")
+        if kind == "compare":
+            out += [f"  left:  {shown[0][1]}", f"  right: {shown[1][1]}"]
+        elif kind == "chain":
+            out += [f"  {src} = {value}" for src, value in shown]
+        else:
+            out += [f"  {src} -> {value}" for src, value in shown]
+        say("\n".join(out))
+    if stop:
+        state["pending"] = False
+        raise Stop(f"check line {line}")
+    state["pending"] = True
+
+
+def end_run():
+    """After the last assert of a run: stop if any assert in the run failed."""
+    if state["pending"]:
+        state["pending"] = False
+        raise Stop("assert run")
+
+
+def catches_assertions(handler):
+    """True when an except clause would catch an AssertionError."""
+    if handler.type is None:
+        return True
+    names = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+    return any(
+        isinstance(n, (ast.Name, ast.Attribute))
+        and (n.id if isinstance(n, ast.Name) else n.attr)
+        in {"AssertionError", "Exception", "BaseException"}
+        for n in names
+    )
+
+
+class Rewrite:
+    """Rewrite top-level asserts so failures are recorded with their operands.
+
+    A failing assert keeps the script going only when the next statement is
+    another assert; otherwise it stops the script like a plain assert (a
+    guard before a loop step or a cleanup still guards). Asserts inside
+    functions, classes, `with` blocks and `try` blocks that catch
+    AssertionError stay plain asserts.
+    """
+
+    count = 0
+
+    def temp(self):
+        Rewrite.count += 1
+        return f"__dv_{Rewrite.count}"
+
+    def block(self, statements):
+        out = []
+        for index, node in enumerate(statements):
+            following = statements[index + 1] if index + 1 < len(statements) else None
+            if isinstance(node, ast.Assert):
+                out.extend(self.assertion(node, isinstance(following, ast.Assert)))
+                continue
+            if isinstance(node, (ast.If, ast.For, ast.While)):
+                node.body = self.block(node.body)
+                node.orelse = self.block(node.orelse)
+            elif isinstance(node, ast.Try) or type(node).__name__ == "TryStar":
+                if not any(catches_assertions(h) for h in node.handlers):
+                    node.body = self.block(node.body)
+                for handler in node.handlers:
+                    handler.body = self.block(handler.body)
+                node.orelse = self.block(node.orelse)
+                node.finalbody = self.block(node.finalbody)
+            elif type(node).__name__ == "Match":
+                for case in node.cases:
+                    case.body = self.block(case.body)
+            out.append(node)
+        return out
+
+    def assertion(self, node, keep_going):
+        line, end = node.lineno, node.end_lineno or node.lineno
+        test = node.test
+        load = lambda name: ast.Name(id=name, ctx=ast.Load())
+        store = lambda name, value: ast.Assign(
+            targets=[ast.Name(id=name, ctx=ast.Store())], value=value
+        )
+        call = lambda func, *args: ast.Expr(
+            ast.Call(func=load(func), args=list(args), keywords=[])
+        )
+        values, ok = self.temp(), self.temp()
+        temps = [values, ok]
+        body = [store(values, ast.List(elts=[], ctx=ast.Load()))]
+        append = lambda src, name: ast.Expr(
+            ast.Call(
+                func=ast.Attribute(value=load(values), attr="append", ctx=ast.Load()),
+                args=[ast.Tuple(elts=[ast.Constant(src), load(name)], ctx=ast.Load())],
+                keywords=[],
+            )
+        )
+        op = None
+        message = node.msg if node.msg is not None else ast.Constant(None)
+        if isinstance(test, ast.Tuple) and test.elts:
+            # `assert (x, "msg")` is always true: Python only warns about it.
+            kind = "tuple"
+            message = ast.Constant(
+                "always true: the parentheses make the assertion a non-empty tuple"
+            )
+            body.append(store(ok, ast.Constant(False)))
+        elif isinstance(test, ast.Compare):
+            kind = "compare" if len(test.ops) == 1 else "chain"
+            op = type(test.ops[0]).__name__ if kind == "compare" else None
+            previous = self.temp()
+            temps.append(previous)
+            body += [store(previous, test.left), append(ast.unparse(test.left), previous)]
+            target = body
+            for index, (operator, operand) in enumerate(zip(test.ops, test.comparators)):
+                value = self.temp()
+                temps.append(value)
+                target += [
+                    store(value, operand),
+                    append(ast.unparse(operand), value),
+                    store(
+                        ok,
+                        ast.Compare(
+                            left=load(previous), ops=[operator], comparators=[load(value)]
+                        ),
+                    ),
+                ]
+                if index < len(test.ops) - 1:
+                    nested = []
+                    target.append(ast.If(test=load(ok), body=nested, orelse=[]))
+                    target = nested
+                previous = value
+        elif isinstance(test, ast.BoolOp):
+            kind = "bool"
+            target = body
+            for index, operand in enumerate(test.values):
+                target += [store(ok, operand), append(ast.unparse(operand), ok)]
+                if index < len(test.values) - 1:
+                    nested = []
+                    guard = load(ok)
+                    if isinstance(test.op, ast.Or):
+                        guard = ast.UnaryOp(op=ast.Not(), operand=guard)
+                    target.append(ast.If(test=guard, body=nested, orelse=[]))
+                    target = nested
+        else:
+            kind = "value"
+            body += [store(ok, test), append(ast.unparse(test), ok)]
+        # Counted only once the operands evaluated: an assert whose operands
+        # raised never ran.
+        body.append(call("__dv_ran__", ast.Constant(line)))
+        body.append(
+            ast.If(
+                test=ast.UnaryOp(op=ast.Not(), operand=load(ok)),
+                body=[
+                    call(
+                        "__dv_failed__",
+                        ast.Constant(line),
+                        ast.Constant(end),
+                        ast.Constant(kind),
+                        load(values),
+                        ast.Constant(op),
+                        message,
+                        ast.Constant(not keep_going),
+                    )
+                ],
+                orelse=[],
+            )
+        )
+        if not keep_going:
+            # The run of consecutive asserts ends here: what follows may rely
+            # on all of them, so any earlier failure in the run stops too.
+            body.append(call("__dv_end_run__"))
+        # Drop the operand temporaries so asserted objects can be collected.
+        clear = ast.Assign(
+            targets=[ast.Name(id=t, ctx=ast.Store()) for t in temps],
+            value=ast.Constant(None),
+        )
+        wrapped = ast.Try(body=body, handlers=[], orelse=[], finalbody=[clear])
+        for child in ast.walk(wrapped):
+            if "lineno" in child._attributes and not hasattr(child, "lineno"):
+                child.lineno, child.end_lineno = line, line
+                child.col_offset, child.end_col_offset = 0, 0
+        return [wrapped]
 
 
 def frames(tb):
@@ -78,65 +334,233 @@ def frames(tb):
     return found
 
 
-def show(scope, node):
-    try:
-        return repr(eval(compile(ast.Expression(node), path, "eval"), scope))[:300]
-    except Exception as exc:
-        return f"<error: {exc!r}>"
+def statement_at(line):
+    best = None
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.stmt) and node.lineno <= line <= (node.end_lineno or node.lineno):
+            if best is None or node.lineno >= best.lineno:
+                best = node
+    return best
 
 
-try:
-    exec(compile(source, path, "exec"), namespace)
-except AssertionError as exc:
-    stack = [f for f in frames(exc.__traceback__) if f[0] == path]
-    traceback.print_exc()
-    if stack:
-        line, frame = stack[-1][1], stack[-1][2]
+def resolve(chain, scope):
+    """The object a dotted call target names, without running property getters."""
+    parts = chain.split(".")
+    if parts[0] not in scope:
+        return None
+    value = scope[parts[0]]
+    for part in parts[1:]:
+        if not (inspect.ismodule(value) or inspect.isclass(value)):
+            return None
         try:
+            static = inspect.getattr_static(value, part)
+        except AttributeError:
+            return None
+        if isinstance(static, property):
+            return None
+        value = getattr(value, part)
+    return value
+
+
+def dotted(node):
+    names = []
+    while isinstance(node, ast.Attribute):
+        names.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        return ".".join([node.id, *reversed(names)])
+    return None
+
+
+def api_hints(line, frame):
+    """Signatures of the library calls on the failing check line."""
+    statement = statement_at(line)
+    if statement is None:
+        return []
+    scope = dict(frame.f_globals)
+    scope.update(frame.f_locals)
+    hints = []
+    for node in ast.walk(statement):
+        if not isinstance(node, ast.Call):
+            continue
+        chain = dotted(node.func)
+        if chain is None or any(chain == h[0] for h in hints):
+            continue
+        try:
+            target = resolve(chain, scope)
+            if target is None or not callable(target):
+                continue
+            owner = target.__init__ if inspect.isclass(target) else target
+            if (inspect.getsourcefile(owner) or "") == path:
+                continue
+            signature = str(inspect.signature(target))
+        except (TypeError, ValueError, OSError):
+            continue
+        text = f"[called on check line {line}: {chain}{signature}"
+        text = (text if len(text) <= 240 else text[:236] + "...") + "]"
+        parameters = [
+            p for p in re.findall(r"\(([^,)=:*\s]+)", signature) if p not in ("self", "cls")
+        ]
+        if parameters:
+            owners = inspect.getmro(target) if inspect.isclass(target) else (target,)
+            for each in owners:
+                found = re.search(
+                    rf":param {re.escape(parameters[0])}:([^\n]*(?:\n[ \t]+[^:\s][^\n]*)*)",
+                    inspect.getdoc(each) or "",
+                )
+                if found:
+                    text += f"\n  {parameters[0]}: " + " ".join(found.group(1).split())[:200]
+                    break
+        hints.append((chain, text))
+        if len(hints) == 2:
+            break
+    return [text for _, text in hints]
+
+
+def stopped(exc):
+    """Report the exception that ended the script; returns its record."""
+    stack = frames(exc.__traceback__)
+    try:
+        traceback.print_exception(type(exc), exc, exc.__traceback__, file=ERR)
+    except Exception:
+        say(f"{type(exc).__name__}: {text_of(exc)}")
+    own = [f for f in stack if f[0] == path]
+    line = own[0][1] if own else None  # the top-level statement that raised
+    inner = own[-1][1] if own else None  # the innermost check line
+    in_check = bool(stack) and stack[-1][0] == path
+    if isinstance(exc, AssertionError) and own:
+        # A plain assert (inside a function, with or try block): show operands.
+        frame = own[-1][2]
+        try:
+            scope = dict(frame.f_globals)
+            scope.update(frame.f_locals)
             for node in ast.walk(ast.parse(source)):
-                if isinstance(node, ast.Assert) and node.lineno <= line <= (node.end_lineno or node.lineno):
-                    scope = dict(frame.f_globals)
-                    scope.update(frame.f_locals)
-                    test = node.test
-                    # Operands are evaluated again here (stateful expressions may differ).
-                    if isinstance(test, ast.Compare):
-                        operands = [test.left, *test.comparators]
-                        values = [show(scope, item) for item in operands]
-                        if len(operands) == 2:
-                            print(f"  left:  {values[0]}\n  right: {values[1]}", file=sys.stderr)
-                        else:
-                            for item, value in zip(operands, values):
-                                print(f"  {ast.unparse(item)} = {value}", file=sys.stderr)
-                        if record and len(test.ops) == 1:
-                            import json
-                            with open(record, "w", encoding="utf-8") as out:
-                                json.dump({
-                                    "left_src": ast.unparse(test.left),
-                                    "right_src": ast.unparse(test.comparators[0]),
-                                    "op": type(test.ops[0]).__name__,
-                                    "left": values[0],
-                                    "right": values[1],
-                                }, out)
-                    elif isinstance(test, ast.BoolOp):
-                        for item in test.values:
-                            print(f"  {ast.unparse(item)} -> {show(scope, item)}", file=sys.stderr)
+                if isinstance(node, ast.Assert) and node.lineno <= inner <= (node.end_lineno or node.lineno):
+                    if isinstance(node.test, ast.Compare):
+                        for item in [node.test.left, *node.test.comparators]:
+                            value = eval(compile(ast.Expression(item), path, "eval"), scope)
+                            say(f"  {ast.unparse(item)} = {show(value)}")
                     break
         except Exception:
             pass
-    sys.exit(1)
-except BaseException as exc:
-    if isinstance(exc, SystemExit) and exc.code in (0, None):
-        raise
-    stack = frames(exc.__traceback__)
-    traceback.print_exc()
-    if stack and stack[-1][0] == path:
-        print(
+    elif in_check and line is not None:
+        say(
             f"[raised by the check script itself (line {stack[-1][1]}), "
-            "not inside the code under test]",
-            file=sys.stderr,
+            "not inside the code under test]"
         )
-    sys.exit(1)
-"""
+    elif own:
+        try:
+            for hint in api_hints(line, own[0][2]):
+                say(hint)
+        except Exception:
+            pass
+    return {
+        "line": line,
+        "inner_line": inner,
+        "type": type(exc).__name__,
+        "message": text_of(exc),
+        "in_check": in_check,
+    }
+
+
+def finish(stop):
+    """Write the record and summary; returns the process exit status."""
+    first = state["first"] if state["first"] is not None else (stop or {}).get("line")
+    if record:
+        try:
+            with open(record, "w", encoding="utf-8") as out:
+                json.dump(
+                    {
+                        "failed_assert": state["compare"],
+                        "failures": state["failures"],
+                        "asserts": {str(k): v for k, v in state["asserts"].items()},
+                        "stop": stop,
+                        "first_line": first,
+                    },
+                    out,
+                )
+        except Exception:
+            pass
+    if not state["count"] and stop is None:
+        return 0
+    hidden = state["count"] - SHOWN
+    if hidden > 0:
+        say(f"[{hidden} more failed assert(s) not shown]")
+    parts = []
+    if state["count"]:
+        parts.append(f"{state['count']} failed assert(s)")
+    if stop is not None:
+        parts.append(
+            f"stopped by {stop['type']}"
+            + (f" at line {stop['line']}" if stop["line"] is not None else "")
+        )
+    where = f" at line {first}" if first is not None else ""
+    say(f"[check failed{where}: " + "; ".join(parts) + "]")
+    return 1
+
+
+real_exit = os._exit
+
+
+def guarded_exit(status=0):
+    # os._exit skips everything after it: settle the record first.
+    if os.getpid() == PID:
+        failure = finish(None)
+        real_exit(1 if failure else status)
+    real_exit(status)
+
+
+os._exit = guarded_exit
+module = types.ModuleType("__main__")
+module.__file__ = path
+module.__dict__.update(
+    {"__dv_ran__": ran, "__dv_failed__": failed, "__dv_end_run__": end_run}
+)
+sys.modules["__main__"] = module
+stop = None
+code = None
+try:
+    tree = ast.parse(source, path)
+    try:
+        tree.body = Rewrite().block(tree.body)
+        code = compile(ast.fix_missing_locations(tree), path, "exec")
+    except Exception:
+        code = compile(source, path, "exec")  # fall back to plain asserts
+except SyntaxError as exc:
+    say("".join(traceback.format_exception_only(type(exc), exc)).rstrip())
+    stop = {
+        "line": exc.lineno,
+        "inner_line": exc.lineno,
+        "type": "SyntaxError",
+        "message": text_of(exc.msg),
+        "in_check": True,
+    }
+if code is not None:
+    try:
+        exec(code, module.__dict__)
+    except Stop:
+        pass  # a failed assert already recorded and reported
+    except SystemExit as exc:
+        stack = frames(exc.__traceback__)
+        own = [f for f in stack if f[0] == path]
+        last = max((n.lineno for n in ast.parse(source).body), default=0)
+        if exc.code not in (0, None):
+            stop = stopped(exc)
+        elif stack and stack[-1][0] != path and own and own[0][1] < last:
+            # The code under test exited (e.g. a CLI's main()) before the
+            # rest of the check ran; exiting at the last statement is fine.
+            stop = {
+                "line": own[0][1] if own else None,
+                "inner_line": own[-1][1] if own else None,
+                "type": "SystemExit",
+                "message": f"the code under test exited with status {exc.code!r}",
+                "in_check": False,
+            }
+            say(f"[the code under test called exit ({exc.code!r}); the rest of the check never ran]")
+    except BaseException as exc:
+        stop = stopped(exc)
+raise SystemExit(finish(stop))
+'''
 
 
 @dataclass
@@ -370,12 +794,14 @@ def _tail(stream, limit: int) -> str:
     return text
 
 
-_CHECK_FRAME = re.compile(r'File "[^"]*check\.py", line (\d+)')
+# The runner's own summary line; tracebacks are a fallback for older output.
+_CHECK_SUMMARY = re.compile(r"\[check failed at line (\d+)")
+_CHECK_FRAME = re.compile(r'File "[^"]*devstill-check-[^/"]*/check\.py", line (\d+)')
 
 
 def check_failure_line(output: str):
-    """Top-level line of the check script where it failed (None if unknown)."""
-    match = _CHECK_FRAME.search(output or "")
+    """Line of the check script where it first failed (None if unknown)."""
+    match = _CHECK_SUMMARY.search(output or "") or _CHECK_FRAME.search(output or "")
     return int(match.group(1)) if match else None
 
 
@@ -585,9 +1011,28 @@ class Workspace:
             )
             if record.is_file():
                 try:
-                    result.meta["failed_assert"] = json.loads(record.read_text())
+                    data = json.loads(record.read_text())
                 except ValueError:
-                    pass
+                    data = {}
+                if data.get("failed_assert"):
+                    result.meta["failed_assert"] = data["failed_assert"]
+                # JSON-native (string line keys): commands end up in saved
+                # proposals, whose digests must survive a JSON round trip.
+                result.meta["record"] = {
+                    "failures": data.get("failures") or [],
+                    "asserts": data.get("asserts") or {},
+                    "stop": data.get("stop"),
+                    "first_line": data.get("first_line"),
+                }
+                failing = any(
+                    bad for _, bad in result.meta["record"]["asserts"].values()
+                )
+                if result.ok and (failing or data.get("stop")):
+                    # The script hid its failure (e.g. a patched sys.exit).
+                    result.ok = False
+                    result.text += (
+                        "\n[the check recorded failures but exited with status 0]"
+                    )
             return result
 
     def bash(self, command: str, timeout: float, checkpoint=lambda: None) -> ToolResult:
@@ -663,6 +1108,7 @@ class Workspace:
                 + note,
                 ok=False,
                 changed=modified,
+                meta={"timed_out": True},
             )
         code = process.returncode
         status = f"[exit code {code}]"

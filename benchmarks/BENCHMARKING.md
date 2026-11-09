@@ -88,6 +88,18 @@ project's real dependencies, and nothing gets installed on the host. Grading use
 the official harness: it applies the patch in a fresh container and runs the
 issue's FAIL_TO_PASS and PASS_TO_PASS tests.
 
+### Test environment
+
+The benchmark venv (`.venv`) must hold the corpora's test dependencies, without
+installing the corpora themselves: pytest 8.3.x (click 8.1.8's suite does not
+collect under pytest 9), plus Werkzeug's `cryptography`, `pytest-timeout` and
+`ephemeral-port-reserve` (preflight warns when they are missing). Werkzeug's
+`dev_server` tests start a server in a subprocess that cannot import the
+checkout unless Werkzeug is installed, so they would wait forever; agents'
+commands and Devstill's test guard run with `PYTEST_ADDOPTS=-m "not dev_server"`
+for Werkzeug cases (recorded in each run's protocol). The hidden acceptance
+tests do not include them.
+
 ## Where the records are
 
 ```

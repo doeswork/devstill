@@ -63,6 +63,10 @@ WERKZEUG_REGRESSIONS = (
     "tests/test_internal.py",
     "tests/test_send_file.py",
 )
+# Extra environment for agents' commands (and Devstill's test guard) per corpus.
+# Werkzeug's dev_server tests start a server in a subprocess whose PYTHONPATH
+# excludes the checkout, so outside an editable install they wait forever.
+CORPUS_TEST_ENV = {"werkzeug": {"PYTEST_ADDOPTS": '-m "not dev_server"'}}
 RUST_ENV = {
     "RUSTUP_HOME": "/tmp/devstill-rustup",
     "CARGO_HOME": "/tmp/devstill-cargo",

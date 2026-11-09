@@ -727,6 +727,7 @@ def run(args):
             "baseline": str(args.baseline) if baseline_manifest else None,
             "review_policy": "Saved review reloaded and accepted unchanged automatically; no human think time or intervention",
             "coding_tool_environment": tool_environment,
+            "corpus_test_environment": campaign.CORPUS_TEST_ENV,
             "coding_tool_versions": tool_versions,
             "repeats": args.repeats,
             "case_ids": [c["id"] for c in cases],
@@ -803,6 +804,7 @@ def run(args):
                     PYTHONHASHSEED="0",
                 )
                 env.update(tool_environment)
+                env.update(campaign.CORPUS_TEST_ENV.get(case["corpus"], {}))
                 command = [
                     sys.executable,
                     "-P",

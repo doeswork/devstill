@@ -23,7 +23,10 @@ def write(path, value):
 
 
 def digest(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+    # Hash the JSON form, so a value and its saved-and-reloaded copy agree
+    # (e.g. integer dict keys come back as strings and sort differently).
+    canonical = json.loads(json.dumps(value))
+    return hashlib.sha256(json.dumps(canonical, sort_keys=True).encode()).hexdigest()
 
 
 def run_directory(root, run_id):

@@ -23,17 +23,45 @@ in the [archive](archive/README.md).
    the target symbols. A fixed example exchange showing a one-response finish
    (edit, check, done) precedes the task; servers with prefix caching process it
    once.
-3. **Tools.** `read`, `python` (a check script run with the project interpreter;
-   a failing `assert a == b` prints both sides, and a later check that drops or
-   flips that assertion to the wrong value gets a warning), `bash`, `edit`
-   (exact, unique text replacement; whitespace/Unicode-tolerant fallback; a
-   failed match quotes the closest current text; Python files must still
-   compile), `write` (new files, or `append=true` to add to an existing one;
-   files over 40 lines cannot be replaced wholesale) and `done`. Several calls in
-   one response run in order; a failed edit skips the rest of that response.
-4. **Finishing.** `done` (or a plain reply) ends the task unless an edit or check
-   in the same response failed; finishing right after a failed check is refused
-   once. Required deliveries are then checked, and the **regression guard**
+3. **Tools.** `read`, `python`, `bash`, `edit` (all changes to one file in one
+   call, as a list of exact, unique `{oldText, newText}` blocks that apply all or
+   none; whitespace/Unicode-tolerant fallback; a failed match quotes the closest
+   current text; Python files must still compile), `write` (new files, or
+   `append=true` to add to an existing one; files over 40 lines cannot be
+   replaced wholesale) and `done`. Several calls in one response run in order; a
+   failed edit skips the rest of that response.
+   - **Checks.** A `python` script runs with the project interpreter as
+     `__main__`. Each failing top-level assert prints its operands (captured
+     when the assert ran); a run of consecutive asserts is reported together,
+     and the script stops after the run, so a guard still guards what follows
+     (asserts inside functions, `with` blocks and `try` blocks that catch
+     AssertionError stay plain asserts). The output ends with the first failing
+     line; an exit from the code under test before the check ends, or an
+     `os._exit`, cannot turn a failure into a pass. When a library call on the
+     failing line raises, its signature is shown. After an edit, a failing
+     check is also run once on the original code, and the result says which
+     assertions held there and fail now (the change broke them), which failed
+     there with other values (reached, still wrong), which fail the same way
+     (the change does not reach them yet, or the check is set up wrong) and
+     which the change fixed. A check that drops or flips a failed assertion
+     gets a warning, unless that assertion failed with the same values on the
+     original code.
+   - **What counts as a check.** The `python` tool with an assert, a test
+     runner (`pytest`, `python -m unittest`, `tox`, `make test`, also behind
+     `uv run`, `time`, an interpreter path, ...) or an inline Python script
+     (`-c` or a heredoc) that asserts. A passing print-only probe verifies
+     nothing; a failing command that runs Python or tests still counts against
+     the change.
+4. **Finishing.** When the last call of a response is a check that passes,
+   fails on the original code, ran at least one assert and did not drop or flip
+   an earlier failing assertion, and every check since the last edit passed,
+   the task finishes without another model call. Otherwise `done` (or a plain
+   reply) ends the task unless an edit or check in the same response failed.
+   Finishing after a failed check is refused once (naming test failures that
+   also fail on the original code, and test runs that did not finish). A
+   finish is also refused once when the agent's latest passing python check
+   passes on the original code too (it does not test the change). Required
+   deliveries are then checked, and the **regression guard**
    reports tests the change broke: after every edit it re-runs, in the
    background, the existing test files that mention the changed functions and
    (when Python changed) the whole test directory if it finishes within a few
@@ -43,7 +71,10 @@ in the [archive](archive/README.md).
    that still breaks tests is never accepted.
 5. **Limits.** Up to `max_turns` model calls (20) within `timeout_seconds`
    (120 s for the whole task); at the limit a change is accepted only if its
-   latest check passed, no edit in the last response failed, and the delivery
+   latest check passed, or every failing check since the last edit says nothing
+   against the change (a python check that now gets further than on the
+   original code while everything that held there still holds, or a test run
+   that never finished), no edit in the last response failed, and the delivery
    checks and guard pass. Cancellation stops the task at the next tool or call.
 6. **Workspace and review.** The task runs in a temporary copy of the repository
    (made while the first model call is in flight) that also contains small
@@ -51,9 +82,10 @@ in the [archive](archive/README.md).
    changes are proposed: edits and new files from `edit`/`write`, and tracked
    files its commands changed; scratch files, test-run side effects and support
    files never are. Review shows the diff, the agent's checks and its summary;
-   applying records `agent_check_passed` only when the latest real check (the
-   `python` tool or a test command) after the last edit passed and no
-   regression is outstanding, otherwise `unvalidated`.
+   applying records `agent_check_passed` only when the latest real check after
+   the last edit passed (and was not refused as passing on the original code
+   too), no failing check was excused and no regression is outstanding,
+   otherwise `unvalidated`.
 
 Configuration (`editing` section): `engine` (`loop`), `max_turns` (20 model calls),
 `turn_output_tokens` (2048 per call), `bash_timeout_seconds` (30),

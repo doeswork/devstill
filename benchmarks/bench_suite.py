@@ -291,6 +291,26 @@ def preflight(suites, registry, overrides, endpoint_wait):
         pi = {"version": None, "reason": str(exc)}
         checks.append(check("pi", False, exc, blocking=True))
     tools = tool_versions()
+    deps = subprocess.run(
+        [
+            str(PYTHON),
+            "-c",
+            "import cryptography, pytest_timeout, ephemeral_port_reserve",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    checks.append(
+        check(
+            "werkzeug_test_deps",
+            deps.returncode == 0,
+            "cryptography, pytest-timeout and ephemeral-port-reserve importable"
+            if deps.returncode == 0
+            else "missing Werkzeug test dependencies: "
+            + ((deps.stderr.strip().splitlines() or ["?"])[-1]),
+        )
+    )
     checks.append(
         check(
             "pytest_8",

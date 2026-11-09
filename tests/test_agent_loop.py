@@ -1059,3 +1059,26 @@ def test_identical_check_resubmission_is_refused_and_prints_do_not_verify(work):
     tools_seen = [m for m in chat.seen[1] if m["role"] == "tool" and not m["tool_call_id"].startswith("example")]
     assert "already ran this exact check" in tools_seen[2]["content"]
     assert result["status"] == "applied_unvalidated" and not result["verified"]
+
+
+def test_check_records_survive_a_saved_proposal_round_trip(loop_session, monkeypatch):
+    # Assert lines 2-10: numeric and text order differ (9 < 10 but "10" < "9").
+    lines = "".join(f"assert a.f() != {n}\n" for n in range(10, 19))
+    chat = scripted(
+        reply(
+            call(
+                "edit",
+                0,
+                path="a.py",
+                edits=[{"oldText": "return 1", "newText": "return 2"}],
+            ),
+            call("python", 1, code="import a\n" + lines + "assert a.f() == 2\n"),
+            call("done", 2, summary="f returns 2"),
+        )
+    )
+    monkeypatch.setattr(loop_session, "chat", chat)
+    proposal = loop_session.prepare("Make f return 2")
+    assert proposal["status"] == "ready", proposal
+    saved = loop_session.load(proposal["id"])
+    loop_session.apply(saved["id"], saved["digest"])
+    assert (loop_session.repo / "a.py").read_text() == "def f():\n    return 2\n"
