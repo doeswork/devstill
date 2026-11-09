@@ -14,7 +14,8 @@ end-to-end task time. Keep comparisons small, frozen and independently checked.
 - [Runtime usage and limitations](../../MINIMAL_RUNTIME.md): current TUI/headless behavior.
 - [Historical archive](../../archive/README.md): superseded plans, experiments and reports.
 
-Latest: [repair results and schema compatibility finding](QUICK_REPAIR_RESULTS.md).
+Latest: [Quick agent loop vs Pi](QUICK_LOOP_RESULTS.md) (the loop engine replaced the
+structured editor). Previous: [repair results and schema compatibility finding](QUICK_REPAIR_RESULTS.md).
 The paired gate failed; the final schema fix passed one live format probe and
 offline patch replay. It has not passed a paired coding comparison and was not
 installed. The 24-attempt/probe budget is exhausted; no broad run was started.

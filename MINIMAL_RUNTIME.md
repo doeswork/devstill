@@ -1,19 +1,73 @@
-# Minimal runtime: implementation and current status
+# Quick runtime: the agent loop
 
-**Validation:** [bounded repair plan](benchmarks/retrieval/QUICK_REPAIR_PLAN.md). Historical designs and reports are in the [archive](archive/README.md).
+**Status (2026-11-08):** Quick's default engine is a retrieval-primed tool loop
+(`editing.engine: "loop"`). Paired results against Pi are in
+[QUICK_LOOP_RESULTS.md](benchmarks/retrieval/QUICK_LOOP_RESULTS.md). The previous
+two-response structured editor remains available with `editing.engine:
+"structured"`; its design notes and history follow the loop description below and
+in the [archive](archive/README.md).
 
-**Latest:** [repair results and schema compatibility](benchmarks/retrieval/QUICK_REPAIR_RESULTS.md).
-The paired diagnostic failed the correctness gate. The final schema correction
-passed one live format probe and offline patch replay, not a paired comparison.
-The installed copy was not updated; no broader campaign was started.
-The earlier [fresh comparison](benchmarks/retrieval/NATIVE_QUICK_FRESH_RESULTS.md)
-failed the correctness gate; the original 10/10 known-case result is historical evidence.
+## How the loop works
 
-Devstill now has a shared native Quick coding runtime for CLI/headless and TUI.
-It retains mandatory checks, syntax/tautology guards and the two-generation limit.
-Checks use arrays of Python source strings, and retrieval includes complete small files. It does not generate a
-Task Plan or run Pi. Quick defaults to this runtime. The separate legacy feature path remains available.
-Default selection is not a claim of general benchmark superiority.
+1. **Retrieval.** Lexical search runs first; the embedding model (a multi-second
+   cold load) is used only when lexical search finds no code at all or a warm
+   session already holds it. Documentation ranks after code unless the request is
+   about docs. Files the request names (a test module, `pyproject.toml`, an
+   `.rst` page) are always included, as are module-qualified names
+   (`pkg.mod.func`), plus the best function-sized chunks from up to two other code
+   files as alternate locations. Chroma is opened lazily, so lexical runs never
+   import it.
+2. **First turn.** The model receives the request plus whole-line excerpts
+   (merged per file) of the current source, each file's import path and a short
+   outline of its real classes and functions, and existing test lines that call
+   the target symbols. A fixed example exchange showing a one-response finish
+   (edit, check, done) precedes the task; servers with prefix caching process it
+   once.
+3. **Tools.** `read`, `python` (a check script run with the project interpreter;
+   a failing `assert a == b` prints both sides, and a later check that drops or
+   flips that assertion to the wrong value gets a warning), `bash`, `edit`
+   (exact, unique text replacement; whitespace/Unicode-tolerant fallback; a
+   failed match quotes the closest current text; Python files must still
+   compile), `write` (new files, or `append=true` to add to an existing one;
+   files over 40 lines cannot be replaced wholesale) and `done`. Several calls in
+   one response run in order; a failed edit skips the rest of that response.
+4. **Finishing.** `done` (or a plain reply) ends the task unless an edit or check
+   in the same response failed; finishing right after a failed check is refused
+   once. Required deliveries are then checked, and the **regression guard**
+   reports tests the change broke: after every edit it re-runs, in the
+   background, the existing test files that mention the changed functions and
+   (when Python changed) the whole test directory if it finishes within a few
+   seconds. A failing test counts only if it passed with the original sources
+   (whole test files re-run with them restored) and fails again in a focused
+   re-run. Regressions are reported back to the model (twice at most); a change
+   that still breaks tests is never accepted.
+5. **Limits.** Up to `max_turns` model calls (20) within `timeout_seconds`
+   (120 s for the whole task); at the limit a change is accepted only if its
+   latest check passed, no edit in the last response failed, and the delivery
+   checks and guard pass. Cancellation stops the task at the next tool or call.
+6. **Workspace and review.** The task runs in a temporary copy of the repository
+   (made while the first model call is in flight) that also contains small
+   non-sensitive support files such as test fixtures. Only the agent's own
+   changes are proposed: edits and new files from `edit`/`write`, and tracked
+   files its commands changed; scratch files, test-run side effects and support
+   files never are. Review shows the diff, the agent's checks and its summary;
+   applying records `agent_check_passed` only when the latest real check (the
+   `python` tool or a test command) after the last edit passed and no
+   regression is outstanding, otherwise `unvalidated`.
+
+Configuration (`editing` section): `engine` (`loop`), `max_turns` (20 model calls),
+`turn_output_tokens` (2048 per call), `bash_timeout_seconds` (30),
+`loop_context_chars` (16000 first-turn context), `regression_tests` (true),
+`timeout_seconds` (120 for the whole task) and `python` (interpreter for checks;
+defaults to `python`/`python3` on PATH). Requests disable server-side reasoning
+and use the endpoint's native tool calling.
+
+**Safety.** Commands run in the workspace copy with your user's permissions, the
+same trust level as Pi's bash tool; the copy is not a sandbox. Command
+environments omit credential variables (API keys, tokens, passwords), and
+`python` in commands is the configured project interpreter. Git-ignored and
+sensitive files are never copied or shown to the model. Applying a proposal
+re-verifies every copied source hash first.
 
 ## Use from the source checkout
 
@@ -39,7 +93,8 @@ call. `task --engine minimal` is an alias for the minimal route. Setting
 configs without this section default to true. Set false only to explicitly retain legacy Quick. Explicit `task --engine legacy` retains the old route.
 
 In the TUI, `/edit REQUEST` opens an actual patch review with **Apply patch** and
-**Edit request** actions. `/edit-yolo REQUEST` applies after generated checks pass.
+**Edit request** actions. `/edit-yolo REQUEST` applies once the agent finishes
+(loop engine) or after generated checks pass (structured engine).
 The task cancel control stops further preparation/application. Closing the app
 closes the shared session. Legacy plan/feature controls remain available during
 migration; they do not wrap the new editor.
@@ -57,7 +112,9 @@ Responses contain the caller ID and either a result or error. This initial stdio
 adapter is sequential; it does not yet accept an asynchronous cancellation message.
 Ctrl+C stops the process. JSON stdout is separate from library progress on stderr.
 
-## What is implemented
+## Structured engine (previous default): design and history
+
+### What is implemented
 
 - `src/devstill/runtime/editor.py`: extracted hardened algorithm; strict local
   schema validation, checks required before any write, exact replacements and
@@ -93,7 +150,7 @@ Generated checks run on this explicit minimal route, preserving the tested edito
 behavior. Results say **generated checks passed**, not independent behavioral proof.
 Original benchmark acceptance/regression tests remain outside model context.
 
-## Current limits and remaining rebuild work
+### Current limits and remaining rebuild work
 
 This is an experimental usable runtime, not completion of every package in
 [REBUILD_PLAN.md](archive/REBUILD_PLAN.md).
@@ -118,7 +175,7 @@ This is an experimental usable runtime, not completion of every package in
 - Unsupported delete/rename/binary operations do not become implicit whole-file
   rewrite or shell fallbacks. No automatic fallback to Pi after failure.
 
-## Validation and live comparison
+### Validation and live comparison
 
 The latest full suite passed **596 tests, 1 skipped**. Ruff and diff whitespace
 checks passed. Wheel packaging/console-entry-point verification passed during the
@@ -154,7 +211,7 @@ small frozen comparison. Do not loosen syntax checks, mask failing assertions,
 add uncounted retries, or rerun until a favorable draw appears. Only then continue
 with repeated and fresh-case gates. Broad campaigns remain stopped.
 
-## Default Quick cutover
+### Default Quick cutover
 
 Quick now defaults to the native Devstill runtime (`editing.enabled=true` by
  default), following explicit user direction. `task --engine legacy` selects the

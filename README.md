@@ -1,9 +1,9 @@
 devstill
 
-Native Quick runtime: [usage, implementation status and measured limits](MINIMAL_RUNTIME.md). Quick now uses Devstill’s own editor in TUI and headless mode; Pi is a comparison baseline and explicit legacy option.
+Quick runtime: [how the agent loop works](MINIMAL_RUNTIME.md). Quick uses Devstill’s own retrieval-primed agent loop in TUI and headless mode; Pi is a comparison baseline and explicit legacy option.
 
-Evaluation: [active native Quick test plan](benchmarks/retrieval/TEST_PLAN.md) and
-[latest measured results](benchmarks/retrieval/QUICK_REPAIR_RESULTS.md). Superseded
+Evaluation: [latest results against Pi](benchmarks/retrieval/QUICK_LOOP_RESULTS.md) and the
+[earlier native Quick test plan](benchmarks/retrieval/TEST_PLAN.md). Superseded
 plans and reports are preserved in the [historical archive](archive/README.md).
 
 `devstill` is a standalone, local-first repository-intelligence TUI for developers and AI coding agents.
