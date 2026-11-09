@@ -568,8 +568,7 @@ def paired_comparison(baseline: dict, candidate: dict) -> dict:
     }
 
 
-def main() -> None:
-    global CORPUS
+def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--corpus-manifest",
@@ -626,6 +625,12 @@ def main() -> None:
             )
         )
     )
+    return parser
+
+
+def main() -> None:
+    global CORPUS
+    parser = build_parser()
     args = parser.parse_args()
     try:
         if args.corpus_manifest:

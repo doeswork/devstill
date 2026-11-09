@@ -4,6 +4,7 @@
     "variants": "pi,runtime",
     "repeats": 1,
     "timeout": 120,
+    "purpose": "development",
     "pi_disable_reasoning": true,
     "acceptance_budget": 240,
     "requires": []

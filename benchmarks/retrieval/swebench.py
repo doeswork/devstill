@@ -655,11 +655,16 @@ def status(cases):
     }
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["build", "prepare", "status"])
     parser.add_argument("--dataset", type=Path, default=DATASET)
     parser.add_argument("--case", action="append")
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
     if args.action == "build":
         cases = build(args.dataset)

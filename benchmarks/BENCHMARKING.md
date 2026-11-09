@@ -195,6 +195,7 @@ A small model (or a cron job) can run this without interpreting raw logs:
 - **New suite:** add a verified dataset (see `benchmarks/retrieval/coding_cases.py`
   for the case format; `swebench.py` shows an external source) and an entry in
   `suites.json` with a name, dataset, tags and any overrides (`repeats`,
-  `timeout`, `requires`). Run `--dry-run` to see the plan.
+  `timeout`, `requires`, and `purpose`: `smoke`, `development` or `evaluation`,
+  recorded in the run's protocol). Run `--dry-run` to see the plan.
 - **Lower-level runs:** `python -m benchmarks.retrieval.pi_comparison run ...`
   still works on its own, with `--resume`, `--sampling` and `--endpoint-wait`.

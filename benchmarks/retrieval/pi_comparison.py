@@ -958,7 +958,7 @@ def interrupt(signum, _frame):
     raise KeyboardInterrupt(f"signal {signum}")
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["run", "worker", "report", "history"])
     parser.add_argument("--output", type=Path, required=True)
@@ -1007,6 +1007,11 @@ def main():
     parser.add_argument("--repo", type=Path)
     parser.add_argument("--runtime", type=Path)
     parser.add_argument("--query", type=Path)
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
     if args.timeout <= 0 or args.max_model_calls < 0:
         parser.error("Timeout must be positive and call budget nonnegative")

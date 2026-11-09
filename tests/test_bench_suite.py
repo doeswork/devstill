@@ -313,3 +313,153 @@ def test_blocked_campaign_records_why_and_runs_nothing(tmp_path, registry, monke
     assert "connection refused" in record["reason"]
     assert all(s["status"] == "not_run" for s in record["suites"])
     assert "connection refused" in (tmp_path / "local/latest/REPORT.md").read_text()
+
+
+def test_every_command_the_orchestrator_builds_parses_with_the_real_cli(tmp_path):
+    """The fake-harness tests above cannot catch a mismatch with the real CLIs."""
+    from benchmarks.retrieval import coding_campaign, pi_comparison, runner, swebench
+
+    record = {
+        "id": "20260101T000000Z-abc1234",
+        "settings": {"sampling": "greedy", "endpoint_wait": 1800},
+    }
+    loaded = bench_suite.load_registry()
+    seen = 0
+    for suite in loaded["suites"]:
+        settings = bench_suite.resolve(loaded, suite)
+        for resume in (False, True):
+            command = bench_suite.suite_command(
+                settings,
+                tmp_path / "d.json",
+                tmp_path / "v",
+                tmp_path / "o",
+                record,
+                resume,
+            )
+            args = pi_comparison.build_parser().parse_args(command[3:])
+            assert args.action == "run" and args.resume is resume
+            assert args.purpose in bench_suite.PURPOSES
+            assert args.sampling == "greedy" and args.repeats == settings["repeats"]
+            assert args.variants == settings["variants"]
+            assert args.pi_disable_reasoning is bool(
+                settings.get("pi_disable_reasoning")
+            )
+            seen += 1
+    assert seen == 2 * len(loaded["suites"])
+
+    verify = bench_suite.verify_command(tmp_path / "d.json", tmp_path / "out")
+    args = coding_campaign.build_parser().parse_args(verify[3:])
+    assert args.action == "verify" and args.dataset == tmp_path / "d.json"
+
+    prepare = bench_suite.swebench_prepare_command(tmp_path / "d.json")
+    assert swebench.build_parser().parse_args(prepare[3:]).action == "prepare"
+
+    for corpus, (manifest, profile) in bench_suite.CORPUS_BUILD.items():
+        parser = runner.build_parser()
+        first = bench_suite.runner_command(
+            manifest, "prepare", "--profile", profile, "--device", "cpu"
+        )
+        args = parser.parse_args(first[3:])
+        assert args.command == "prepare" and args.profile == profile, corpus
+        second = bench_suite.runner_command(manifest, "index", "--config", "c.json")
+        assert parser.parse_args(second[3:]).command == "index"
+        assert bool(args.corpus_manifest) == bool(manifest)
+
+
+def test_registry_rejects_an_unknown_purpose(tmp_path):
+    registry = json.loads(bench_suite.REGISTRY.read_text())
+    registry["suites"][0]["purpose"] = "campaign nightly"
+    path = tmp_path / "suites.json"
+    path.write_text(json.dumps(registry))
+    with pytest.raises(ValueError, match="purpose must be one of"):
+        bench_suite.load_registry(path)
+
+
+def test_stop_during_preparation_interrupts_it_and_launches_nothing(tmp_path):
+    supervisor = bench_suite.Supervisor()
+    campaign = type("C", (), {"supervisor": supervisor, "deadline": None})()
+    threading.Timer(1, supervisor.stop, args=("stopped by signal 15",)).start()
+    started = time.monotonic()
+    code = bench_suite.run_logged(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        tmp_path / "prepare.log",
+        timeout=600,
+        campaign=campaign,
+    )
+    assert code == -15 and time.monotonic() - started < 30
+    # After a stop request nothing new is started.
+    marker = tmp_path / "started"
+    code = bench_suite.run_logged(
+        [sys.executable, "-c", f"open({str(marker)!r}, 'w')"],
+        tmp_path / "prepare.log",
+        campaign=campaign,
+    )
+    assert code == -15 and not marker.exists()
+
+
+def test_preparation_without_a_campaign_just_runs_the_command(tmp_path):
+    code = bench_suite.run_logged(
+        [sys.executable, "-c", "print('hello')"], tmp_path / "p.log"
+    )
+    assert code == 0 and "hello" in (tmp_path / "p.log").read_text()
+    code = bench_suite.run_logged(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        tmp_path / "p.log",
+        timeout=1,
+    )
+    assert code == 124  # the command's own time limit
+
+
+def test_stop_while_a_suite_is_preparing_marks_it_interrupted(
+    tmp_path, registry, monkeypatch
+):
+    monkeypatch.setattr(bench_suite, "LOCAL", tmp_path / "local")
+    monkeypatch.setattr(bench_suite, "TRACKED", tmp_path / "tracked")
+    monkeypatch.setattr(bench_suite.signal, "signal", lambda *args: None)
+    monkeypatch.setattr(
+        bench_suite,
+        "preflight",
+        lambda *a: {
+            "checks": [],
+            "suites": {},
+            "blocked": [],
+            "git": {"short": "abc1234", "branch": "main", "dirty": False, "status": []},
+            "model": None,
+            "pi": {},
+            "tools": {},
+            "host": "test",
+            "platform": "test",
+        },
+    )
+    seen = []
+
+    def prepare_suite(campaign, settings):
+        seen.append(settings["name"])
+        # A verification that is running when the stop request arrives.
+        threading.Timer(
+            1, campaign.supervisor.stop, args=("stopped by signal 15",)
+        ).start()
+        if bench_suite.run_logged(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            tmp_path / "prepare.log",
+            campaign=campaign,
+        ):
+            raise RuntimeError("case verification did not finish")
+
+    monkeypatch.setattr(bench_suite, "prepare_suite", prepare_suite)
+    monkeypatch.setattr(
+        bench_suite,
+        "suite_command",
+        lambda *a: pytest.fail("no suite may be launched after a stop"),
+    )
+    assert (
+        bench_suite.main(
+            ["run", "--registry", str(registry), "--suite", "a", "--suite", "b"]
+        )
+        == 1
+    )
+    record = json.loads((tmp_path / "local/latest/campaign.json").read_text())
+    assert seen == ["a"]  # the second suite is never prepared
+    states = {s["name"]: s["status"] for s in record["suites"]}
+    assert states == {"a": "interrupted", "b": "not_run"}
+    assert record["status"] == "interrupted"

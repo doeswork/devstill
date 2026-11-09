@@ -828,7 +828,7 @@ def run(args):
     )
 
 
-def main():
+def build_parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("action", choices=["verify", "run", "worker", "preflight", "freeze"])
     p.add_argument("--output", type=Path, required=True)
@@ -847,6 +847,11 @@ def main():
     )
     p.add_argument("--workload", choices=["all", "small", "feature"], default="all")
     p.add_argument("--repo", type=Path)
+    return p
+
+
+def main():
+    p = build_parser()
     args = p.parse_args()
     if args.action == "freeze":
         from benchmarks.retrieval.feature_preflight import freeze

@@ -51,6 +51,8 @@ CORPUS_BUILD = {
     "click": ("benchmarks/retrieval/corpus.click.json", "click"),
 }
 SCHEMA_VERSION = 1
+# pi_comparison's --purpose choices.
+PURPOSES = ("smoke", "development", "evaluation")
 
 
 def now():
@@ -101,6 +103,12 @@ def load_registry(path=REGISTRY):
     names = [s["name"] for s in registry["suites"]]
     if registry.get("schema_version") != 1 or len(names) != len(set(names)):
         raise ValueError(f"Invalid suite registry: {path}")
+    for suite in registry["suites"]:
+        purpose = {**registry["defaults"], **suite}.get("purpose", "development")
+        if purpose not in PURPOSES:
+            raise ValueError(
+                f"Suite {suite['name']}: purpose must be one of {PURPOSES}"
+            )
     return registry
 
 
@@ -331,6 +339,8 @@ class Campaign:
         self.directory = directory
         self.record = record
         self.lock = threading.Lock()
+        self.supervisor = None  # set by command_run; preparation uses it
+        self.deadline = None
 
     @classmethod
     def create(cls, record):
@@ -375,19 +385,22 @@ def campaign_id(state, moment=None):
 # --- Preparation: corpora, SWE-bench, verification --------------------------------
 
 
-def run_logged(command, log_path, timeout=None):
-    with Path(log_path).open("a") as log:
-        log.write(f"$ {' '.join(map(str, command))}\n")
-        log.flush()
-        return subprocess.run(
-            command,
-            cwd=ROOT,
-            env=environment(),
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            timeout=timeout,
-            check=False,
-        ).returncode
+def run_logged(command, log_path, timeout=None, campaign=None):
+    """Run a preparation command with its output logged; returns its exit code.
+
+    Under a campaign it runs through the campaign's supervisor, so --stop, a
+    signal or the campaign time limit ends it promptly (the exit code is then
+    negative) instead of after it finishes.
+    """
+    supervisor = getattr(campaign, "supervisor", None) or Supervisor()
+    deadline = getattr(campaign, "deadline", None) or time.monotonic() + 10**9
+    code, timed_out = supervisor.run(
+        command,
+        log_path,
+        suite_deadline=time.monotonic() + (timeout or 10**9),
+        campaign_deadline=deadline,
+    )
+    return 124 if timed_out else code
 
 
 def corpus_ready(corpus):
@@ -416,7 +429,7 @@ def corpus_ready(corpus):
     )
 
 
-def ensure_corpus(corpus, log_path):
+def ensure_corpus(corpus, log_path, campaign_context=None):
     """Rebuild a pinned corpus checkout and its CPU index if /tmp was wiped."""
     if corpus_ready(corpus):
         return
@@ -425,18 +438,21 @@ def ensure_corpus(corpus, log_path):
             f"corpus {corpus} is not prepared and cannot be rebuilt here"
         )
     manifest, profile = CORPUS_BUILD[corpus]
-    from benchmarks.retrieval import coding_campaign as campaign
+    from benchmarks.retrieval import coding_campaign as bench
 
-    runner = [str(PYTHON), "-m", "benchmarks.retrieval.runner"]
-    if manifest:
-        runner += ["--corpus-manifest", str(ROOT / manifest)]
-    config = campaign.BENCH / "configs" / f"{profile}.json"
+    config = bench.BENCH / "configs" / f"{profile}.json"
     if not config.exists() and run_logged(
-        [*runner, "prepare", "--profile", profile, "--device", "cpu"], log_path, 3600
+        runner_command(manifest, "prepare", "--profile", profile, "--device", "cpu"),
+        log_path,
+        3600,
+        campaign_context,
     ):
         raise RuntimeError(f"preparing corpus {corpus} failed (see {log_path})")
     if not corpus_ready(corpus) and run_logged(
-        [*runner, "index", "--config", str(config)], log_path, 4 * 3600
+        runner_command(manifest, "index", "--config", str(config)),
+        log_path,
+        4 * 3600,
+        campaign_context,
     ):
         raise RuntimeError(f"indexing corpus {corpus} failed (see {log_path})")
     if not corpus_ready(corpus):
@@ -470,7 +486,7 @@ def environment_fingerprint(cases):
     return sha256_json(parts)
 
 
-def verified_dir(name, cases, log_path):
+def verified_dir(name, cases, log_path, campaign=None):
     """Cached reference verification (base fails, reference passes) per case."""
     key = f"{name}-{sha256_json(cases)[:12]}-{environment_fingerprint(cases)[:12]}"
     directory = CACHE / "verified" / key
@@ -482,18 +498,10 @@ def verified_dir(name, cases, log_path):
     dataset = CACHE / "verified" / f"{key}.dataset.json"
     write_json(dataset, cases)
     run_logged(
-        [
-            str(PYTHON),
-            "-m",
-            "benchmarks.retrieval.coding_campaign",
-            "verify",
-            "--dataset",
-            str(dataset),
-            "--output",
-            str(directory),
-        ],
+        verify_command(dataset, directory),
         log_path,
         timeout=4 * 3600,
+        campaign=campaign,
     )
     if not results.exists() or not (directory / "manifest.json").exists():
         partial = json.loads(results.read_text()) if results.exists() else []
@@ -558,16 +566,10 @@ def prepare_suite(campaign, settings):
     if settings.get("prepare") == "swebench":
         campaign.log(f"{name}: preparing SWE-bench images, checkouts and indexes")
         if run_logged(
-            [
-                str(PYTHON),
-                "-m",
-                "benchmarks.retrieval.swebench",
-                "prepare",
-                "--dataset",
-                str(ROOT / settings["dataset"]),
-            ],
+            swebench_prepare_command(ROOT / settings["dataset"]),
             log_path,
             timeout=8 * 3600,
+            campaign=campaign,
         ):
             from benchmarks.retrieval import swebench
 
@@ -586,9 +588,9 @@ def prepare_suite(campaign, settings):
             cases = ready
     for corpus in sorted({c["corpus"] for c in cases} - {"swebench"}):
         campaign.log(f"{name}: checking corpus {corpus}")
-        ensure_corpus(corpus, log_path)
+        ensure_corpus(corpus, log_path, campaign)
     campaign.log(f"{name}: verifying {len(cases)} case(s) (cached when unchanged)")
-    source, verification = verified_dir(name, cases, log_path)
+    source, verification = verified_dir(name, cases, log_path, campaign)
     kept, excluded = usable_cases(dataset_cases(settings), verification)
     excluded.update(unprepared)
     if not kept:
@@ -639,6 +641,8 @@ class Supervisor:
         self, command, log_path, *, suite_deadline, campaign_deadline, on_line=None
     ):
         """Returns (exit code, True if the suite's own time limit ended it)."""
+        if self.stop_reason:
+            return -signal.SIGTERM, False  # stop requested: launch nothing
         with Path(log_path).open("a") as log:
             log.write(f"$ {' '.join(map(str, command))}\n")
             log.flush()
@@ -726,6 +730,37 @@ def remove_containers():
             )
 
 
+def verify_command(dataset, output):
+    return [
+        str(PYTHON),
+        "-m",
+        "benchmarks.retrieval.coding_campaign",
+        "verify",
+        "--dataset",
+        str(dataset),
+        "--output",
+        str(output),
+    ]
+
+
+def runner_command(manifest, *arguments):
+    command = [str(PYTHON), "-m", "benchmarks.retrieval.runner"]
+    if manifest:
+        command += ["--corpus-manifest", str(ROOT / manifest)]
+    return [*command, *arguments]
+
+
+def swebench_prepare_command(dataset):
+    return [
+        str(PYTHON),
+        "-m",
+        "benchmarks.retrieval.swebench",
+        "prepare",
+        "--dataset",
+        str(dataset),
+    ]
+
+
 def suite_command(settings, dataset, verified, output, campaign_record, resume):
     command = [
         str(PYTHON),
@@ -749,7 +784,7 @@ def suite_command(settings, dataset, verified, output, campaign_record, resume):
         "--endpoint-wait",
         str(campaign_record["settings"]["endpoint_wait"]),
         "--purpose",
-        f"campaign {campaign_record['id']} suite {settings['name']}",
+        settings.get("purpose", "development"),
     ]
     if settings.get("pi_disable_reasoning"):
         command.append("--pi-disable-reasoning")
@@ -1031,6 +1066,7 @@ def command_run(args):
                 campaign.log(f"{name}: skipped ({suite['reason']})")
         campaign.save()
 
+    campaign.supervisor = supervisor
     signal.signal(signal.SIGTERM, on_signal)
     signal.signal(signal.SIGINT, on_signal)
     # Lets `pi_vs_devstill_bench.sh --stop` find this process.
@@ -1045,6 +1081,7 @@ def command_run(args):
 def run_campaign(campaign, supervisor, settings_by_name):
     hours = campaign.record["settings"].get("max_hours")
     deadline = time.monotonic() + (hours * 3600 if hours else 10**9)
+    campaign.deadline = deadline
     for record in campaign.record["suites"]:
         if record["status"] in {"completed", "skipped"}:
             continue
@@ -1061,7 +1098,12 @@ def run_campaign(campaign, supervisor, settings_by_name):
         try:
             run_suite(campaign, supervisor, settings_by_name[name], deadline)
         except Exception as exc:  # noqa: BLE001 - one suite never stops the campaign
-            record.update(status="failed", reason=f"{type(exc).__name__}: {exc}"[:1000])
+            if supervisor.stop_reason:
+                record.update(status="interrupted", reason=supervisor.stop_reason)
+            else:
+                record.update(
+                    status="failed", reason=f"{type(exc).__name__}: {exc}"[:1000]
+                )
         campaign.log(
             f"{name}: {record['status']}"
             + (f" ({record['reason']})" if record.get("reason") else "")
