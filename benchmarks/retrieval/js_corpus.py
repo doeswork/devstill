@@ -92,16 +92,95 @@ def fingerprint_path(source):
     return Path(source).parent / f"{Path(source).name}.dependencies.sha256"
 
 
-def dependencies_ready(source):
+def manifest_path(source):
+    return Path(source).parent / f"{Path(source).name}.dependencies.manifest.json"
+
+
+def dependency_manifest(source):
+    """(size, mtime, link target) of every installed file, caches excluded.
+
+    Top-level dot entries other than the package store and .bin are tool
+    caches (`.vite`, `.cache/prettier`, ...) that test runs create.
+    """
+    modules = str(Path(source) / "node_modules")
+    found = {}
+    pending = [(modules, "")]
+    while pending:
+        directory, prefix = pending.pop()
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if (
+                    not prefix
+                    and entry.name.startswith(".")
+                    and entry.name
+                    not in {
+                        ".pnpm",
+                        ".bin",
+                        ".modules.yaml",
+                    }
+                ):
+                    continue
+                name = prefix + entry.name
+                if entry.is_symlink():
+                    found[name] = [0, 0, os.readlink(entry.path)]
+                elif entry.is_dir(follow_symlinks=False):
+                    pending.append((entry.path, name + "/"))
+                else:
+                    info = entry.stat(follow_symlinks=False)
+                    found[name] = [info.st_size, info.st_mtime_ns, None]
+    return found
+
+
+def audit(source, limit=20):
+    """Installed files added, removed or changed since the install (sorted)."""
+    try:
+        recorded = json.loads(manifest_path(source).read_text())
+    except (OSError, ValueError):
+        return ["(no install manifest)"]
+    current = dependency_manifest(source)
+    changed = sorted(
+        name
+        for name in set(recorded) | set(current)
+        if recorded.get(name) != current.get(name)
+    )
+    return changed[:limit]
+
+
+def dependencies_ready(source, thorough=True):
+    """Installed as recorded; thorough also compares every file (about 1 s)."""
     record = fingerprint_path(source)
     try:
-        return record.read_text().strip() == dependencies_fingerprint(source)
+        if record.read_text().strip() != dependencies_fingerprint(source):
+            return False
     except OSError:
         return False
+    return not thorough or not audit(source)
 
 
-def install(source, log):
-    """Install the locked dependencies (no install scripts) and record them."""
+def set_store_writable(source, writable):
+    """The package store is read-only between installs, so an agent's command
+    that follows the trial's node_modules link cannot delete or edit packages
+    (tool caches at the top level stay writable)."""
+    store = Path(source) / "node_modules" / ".pnpm"
+    if not store.is_dir():
+        return
+    for current, directories, names in os.walk(store):
+        for name in [*directories, *names, None]:
+            path = Path(current) / name if name else Path(current)
+            if path.is_symlink():
+                continue
+            mode = path.stat().st_mode
+            path.chmod(mode | 0o200 if writable else mode & ~0o222)
+
+
+def install(source, log, fresh=False):
+    """Install the locked dependencies (no install scripts) and record them.
+
+    fresh=True removes the existing tree first (repairs damaged packages).
+    """
+    set_store_writable(source, True)
+    if fresh:
+        shutil.rmtree(Path(source) / "node_modules", ignore_errors=True)
     with Path(log).open("a") as stream:
         subprocess.run(
             [
@@ -119,7 +198,9 @@ def install(source, log):
             check=True,
             timeout=1800,
         )
+    set_store_writable(source, False)
     fingerprint_path(source).write_text(dependencies_fingerprint(source) + "\n")
+    manifest_path(source).write_text(json.dumps(dependency_manifest(source)) + "\n")
 
 
 def ensure_clean(source):
@@ -138,7 +219,7 @@ def ensure_clean(source):
 def link_dependencies(source, repo):
     """Point repo/node_modules at the prepared tree; keep it out of git."""
     modules = Path(source) / "node_modules"
-    if not dependencies_ready(source):
+    if not dependencies_ready(source, thorough=False):
         raise ValueError("Corpus dependencies missing or changed; prepare again")
     target = Path(repo) / "node_modules"
     if target.is_symlink() or target.exists():

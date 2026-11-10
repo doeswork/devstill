@@ -75,6 +75,13 @@ def summarize(name, rows, total):
     )
     if failed:
         lines.append("  not passed: " + ", ".join(failed))
+    damaged = [
+        f"{r['variant']}:{r['id']}#{r.get('repeat')}"
+        for r in rows
+        if r.get("dependencies_damaged")
+    ]
+    if damaged:
+        lines.append("  changed node_modules (repaired after): " + ", ".join(damaged))
     return lines
 
 

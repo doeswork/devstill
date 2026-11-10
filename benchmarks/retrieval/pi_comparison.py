@@ -903,6 +903,18 @@ def run(args):
             )
             if not passed and not row.get("error"):
                 row.setdefault("failure_stage", "independent_acceptance")
+            if case["corpus"] in campaign.JS_CORPORA:
+                from benchmarks.retrieval import js_corpus
+
+                # Trials share one install through a node_modules link; an
+                # agent command can still change its top level. Attribute it
+                # to this trial and rebuild before the next one.
+                modules = campaign.BENCH / "repos" / campaign.corpus_entry(case)[0]
+                if damaged := js_corpus.audit(modules):
+                    row["dependencies_damaged"] = damaged
+                    js_corpus.install(
+                        modules, directory / "dependency-repair.log", fresh=True
+                    )
             subprocess.run(
                 ["git", "add", "-N", "--", ".", ":!.devstill"],
                 cwd=repo,

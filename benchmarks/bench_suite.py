@@ -504,7 +504,9 @@ def ensure_corpus(corpus, log_path, campaign_context=None):
     if not dependencies_ready(corpus):
         from benchmarks.retrieval import js_corpus
 
-        js_corpus.install(bench.BENCH / "repos" / bench.CORPORA[corpus][0], log_path)
+        js_corpus.install(
+            bench.BENCH / "repos" / bench.CORPORA[corpus][0], log_path, fresh=True
+        )
     if not corpus_ready(corpus):
         raise RuntimeError(f"corpus {corpus} still not ready (see {log_path})")
 

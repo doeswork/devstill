@@ -29,13 +29,11 @@ if [ "$actual" != "$COMMIT" ]; then
   exit 1
 fi
 
-step "install locked dependencies (pnpm 9.15.5, no install scripts)"
+step "install locked dependencies (pnpm 9.15.5, no install scripts; package store read-only)"
 start=$(date +%s)
-(cd "$REPO" && npx -y pnpm@9.15.5 install --frozen-lockfile --ignore-scripts) >>"$LOG" 2>&1
-install_seconds=$(( $(date +%s) - start ))
-# Record the installed tree; trial checkouts link to it only while it matches.
 (cd "$(dirname "$0")/../.." && .venv/bin/python -c \
-  "from benchmarks.retrieval import js_corpus as j; s='$REPO'; j.fingerprint_path(s).write_text(j.dependencies_fingerprint(s) + '\n')")
+  "from benchmarks.retrieval import js_corpus as j; j.install('$REPO', '$LOG')")
+install_seconds=$(( $(date +%s) - start ))
 
 step "run the test suite once (vitest)"
 start=$(date +%s)
