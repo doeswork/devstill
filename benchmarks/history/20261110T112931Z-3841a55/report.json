@@ -1,0 +1,547 @@
+{
+  "campaign": {
+    "command": [
+      "bench_suite.py",
+      "run",
+      "--suite",
+      "react-holdout",
+      "--repeats",
+      "2",
+      "--note",
+      "react-holdout after JS fixes 5c58680 (second look at the holdout; no tuning on it)"
+    ],
+    "finished_at": "2026-11-10T12:53:41+00:00",
+    "git": {
+      "branch": "bench-test-ui-ux",
+      "dirty": false,
+      "sha": "3841a55bd5272a427c8a4241435d73470d4b4884",
+      "short": "3841a55",
+      "status": []
+    },
+    "host": "USNBRosenbergJ",
+    "hours": 1.4,
+    "id": "20261110T112931Z-3841a55",
+    "model": "vllm-qwen38-27b",
+    "model_endpoint": "https://llm.codemonkey.study/v1",
+    "note": "react-holdout after JS fixes 5c58680 (second look at the holdout; no tuning on it)",
+    "pi_version": "1.5.0",
+    "reason": null,
+    "sampling": "default",
+    "served_models": [
+      [
+        "vllm-qwen38-27b",
+        "gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090",
+        262144
+      ]
+    ],
+    "started_at": "2026-11-10T11:29:31+00:00",
+    "status": "completed",
+    "tools": {
+      "git": "git version 2.43.0",
+      "node": "v24.14.1",
+      "pytest": "pytest 8.3.5",
+      "python": "Python 3.12.3",
+      "ruff": "ruff 0.17.4"
+    }
+  },
+  "generated_at": "2026-11-10T12:53:41+00:00",
+  "previous": {
+    "git": "b09dfad",
+    "id": "20261110T100311Z-b09dfad",
+    "model": "vllm-qwen38-27b",
+    "started_at": "2026-11-10T10:03:11+00:00",
+    "suites": {}
+  },
+  "schema_version": 1,
+  "suites": [
+    {
+      "arms": {
+        "pi": {
+          "acceptance_passes": 16,
+          "attempts": 24,
+          "failures": {
+            "incomplete_workflow": 1,
+            "timeout": 6,
+            "timeout_after_correct_edit": 6,
+            "worker_crash": 1,
+            "wrong_fix:behavior_check": 1
+          },
+          "median_pass_seconds": 65.3,
+          "passes": 9
+        },
+        "runtime": {
+          "acceptance_passes": 12,
+          "attempts": 24,
+          "failures": {
+            "no_change": 11,
+            "wrong_fix:regression_tests": 1
+          },
+          "median_pass_seconds": 70.7,
+          "passes": 12
+        }
+      },
+      "audit": {
+        "baseline_unchanged": null,
+        "coding_toolchain_unchanged": true,
+        "complete": true,
+        "frozen_runtime_unchanged": true,
+        "frozen_source_unchanged": true,
+        "pi_unchanged": true,
+        "retrieval_inputs_unchanged": true,
+        "working_tree_source_changed": false
+      },
+      "cases": [
+        {
+          "id": "zh01",
+          "median_seconds": {
+            "pi": 33.0,
+            "runtime": 31.6
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "zh02",
+          "median_seconds": {
+            "pi": 63.7,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "0/2"
+          }
+        },
+        {
+          "id": "zh03",
+          "median_seconds": {
+            "pi": 27.4,
+            "runtime": 45.4
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "1/2"
+          }
+        },
+        {
+          "id": "zh04",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "0/2"
+          }
+        },
+        {
+          "id": "zh05",
+          "median_seconds": {
+            "pi": null,
+            "runtime": 48.5
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "1/2"
+          }
+        },
+        {
+          "id": "zh06",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "0/2"
+          }
+        },
+        {
+          "id": "zh07",
+          "median_seconds": {
+            "pi": 60.6,
+            "runtime": 63.6
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "zh08",
+          "median_seconds": {
+            "pi": 84.8,
+            "runtime": 104.5
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "zh09",
+          "median_seconds": {
+            "pi": null,
+            "runtime": 83.3
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "zh10",
+          "median_seconds": {
+            "pi": 82.9,
+            "runtime": 111.4
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "1/2"
+          }
+        },
+        {
+          "id": "zh11",
+          "median_seconds": {
+            "pi": 77.2,
+            "runtime": 84.4
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "1/2"
+          }
+        },
+        {
+          "id": "zh12",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "0/2"
+          }
+        }
+      ],
+      "description": "12 zustand (React/TypeScript) cases authored with react-dev; not read while tuning Devstill",
+      "excluded_cases": {},
+      "expected_trials": 48,
+      "failures": [
+        {
+          "category": "wrong_fix:behavior_check",
+          "detail": "No index signature with a parameter of type 'string' was found on type '{}'.",
+          "id": "zh01",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh01-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "zh02",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh02-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: Your latest check fails after your last edit (re-run automatically): \u2026 thrown",
+          "id": "zh02",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh02-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: No verified change before the deadline",
+          "id": "zh02",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh02-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh03",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh03-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: No verified change within 20 model calls",
+          "id": "zh03",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh03-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "zh04",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh04-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: No verified change before the deadline",
+          "id": "zh04",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh04-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "worker_crash",
+          "detail": "FileNotFoundError: [Errno 2] No such file or directory: '/tmp/devstill-pi-compare/repo/.devstill/pi-direct.jsonl'",
+          "id": "zh04",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh04-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-520j02_q/vitest-report.json",
+          "id": "zh04",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh04-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "zh05",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh05-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "zh05",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh05-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: Tests still fail: tests/bind-store-check.test.tsx > createWithEqualityFn still works, tests/bind-store-check.test.tsx > useStoreWithEqualityFn still works, tests/bind-store-check.\u2026",
+          "id": "zh05",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh05-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh06",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh06-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: No verified change within 20 model calls",
+          "id": "zh06",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh06-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh06",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh06-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: No verified change before the deadline",
+          "id": "zh06",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh06-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh08",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh08-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh09",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh09-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "incomplete_workflow",
+          "detail": "Pi did not complete normally: exit=0, stop=toolUse",
+          "id": "zh09",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh09-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "zh10",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh10-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: Your latest check fails after your last edit (re-run automatically): \u2026 - 'setOptions({ storage }) enables",
+          "id": "zh10",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh10-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: No verified change before the deadline",
+          "id": "zh11",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh11-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh12",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh12-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: Tests still fail: tests/check-redux-replace.test.ts > reducer returning current state object does not notify subscribers, tests/check-redux-replace.test.ts > with devtools, each a\u2026",
+          "id": "zh12",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh12-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "zh12",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh12-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: Tests still fail: tests/redux-middleware.test.tsx > reducer result replaces state, not merge, tests/redux-middleware.test.tsx(20,38): error TS2722: Cannot invoke an object which i\u2026",
+          "id": "zh12",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh12-1-runtime",
+          "variant": "runtime"
+        }
+      ],
+      "name": "react-holdout",
+      "paired": {
+        "runtime": {
+          "both": 6,
+          "candidate_faster": 2,
+          "candidate_only": 6,
+          "median_ratio": 1.25,
+          "median_shared_seconds": {
+            "pi": 65.4,
+            "runtime": 93.4
+          },
+          "neither": 9,
+          "pairs": 24,
+          "pi_only": 3,
+          "shared_seconds": [
+            [
+              33.01,
+              26.41
+            ],
+            [
+              65.53,
+              110.23
+            ],
+            [
+              55.69,
+              16.93
+            ],
+            [
+              84.8,
+              102.36
+            ],
+            [
+              82.91,
+              111.43
+            ],
+            [
+              65.29,
+              84.36
+            ]
+          ]
+        }
+      },
+      "quality": {
+        "pi": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 78.0,
+          "median_size_ratio": 7.52,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 2,
+          "trials_touching_tests": 16,
+          "trials_with_change": 24
+        },
+        "runtime": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 21,
+          "median_size_ratio": 1.55,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 0,
+          "trials_touching_tests": 0,
+          "trials_with_change": 13
+        },
+        "tool": "ruff 0.17.4"
+      },
+      "reason": null,
+      "settings": {
+        "dataset": "benchmarks/retrieval/zustand_holdout.v1.json",
+        "repeats": 2,
+        "timeout": 120,
+        "variants": "pi,runtime"
+      },
+      "status": "completed",
+      "trials": 48
+    }
+  ],
+  "totals": {
+    "pi": {
+      "attempts": 24,
+      "passes": 9
+    },
+    "runtime": {
+      "attempts": 24,
+      "passes": 12
+    }
+  },
+  "totals_paired": {
+    "runtime": {
+      "both": 6,
+      "candidate_faster": 2,
+      "candidate_only": 6,
+      "median_ratio": 1.25,
+      "median_shared_seconds": {
+        "candidate": 93.4,
+        "pi": 65.4
+      },
+      "neither": 9,
+      "pairs": 24,
+      "pi_only": 3
+    }
+  }
+}
