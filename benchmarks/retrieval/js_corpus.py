@@ -75,13 +75,15 @@ def tool_env(base=None):
 def dependencies_fingerprint(source):
     """Identity of an installed node_modules tree (pnpm layout).
 
-    Vite/vitest caches (`.vite`) are excluded: test runs write them.
+    The install record plus the installed package names. Dot entries are
+    tool caches (`.vite`, `.vite-temp`, `.cache/prettier`, ...) that ordinary
+    test and format runs create; they do not change what is installed.
     """
     modules = Path(source) / "node_modules"
     h = hashlib.sha256()
     h.update((modules / ".modules.yaml").read_bytes())
     for directory in (modules, modules / ".pnpm"):
-        names = sorted(n for n in os.listdir(directory) if not n.startswith(".vite"))
+        names = sorted(n for n in os.listdir(directory) if not n.startswith("."))
         h.update(("\n".join(names) + "\n").encode())
     return h.hexdigest()
 
