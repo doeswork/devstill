@@ -49,6 +49,7 @@ PYTHON = ROOT / ".venv/bin/python"
 CORPUS_BUILD = {
     "werkzeug": (None, "baseline"),
     "click": ("benchmarks/retrieval/corpus.click.json", "click"),
+    "zustand": ("benchmarks/retrieval/corpus.zustand.json", "zustand"),
 }
 SCHEMA_VERSION = 1
 # pi_comparison's --purpose choices.
@@ -337,6 +338,10 @@ def preflight(suites, registry, overrides, endpoint_wait):
                 problems.append(reason)
             elif free_gb(ROOT) < 30:
                 problems.append("needs about 30 GB free disk for images")
+        if "node" in settings.get("requires", []) and not tools["node"].startswith(
+            "v"
+        ):
+            problems.append(f"needs Node.js on PATH ({tools['node']})")
         if not (ROOT / settings["dataset"]).exists():
             problems.append(f"missing dataset {settings['dataset']}")
         suite_checks[suite["name"]] = problems
@@ -428,6 +433,23 @@ def run_logged(command, log_path, timeout=None, campaign=None):
 
 
 def corpus_ready(corpus):
+    return index_ready(corpus) and dependencies_ready(corpus)
+
+
+def dependencies_ready(corpus):
+    """JS corpora also need their locked node_modules (see js_corpus)."""
+    from benchmarks.retrieval import coding_campaign as campaign
+
+    if corpus not in campaign.JS_CORPORA:
+        return True
+    from benchmarks.retrieval import js_corpus
+
+    return js_corpus.dependencies_ready(
+        campaign.BENCH / "repos" / campaign.CORPORA[corpus][0]
+    )
+
+
+def index_ready(corpus):
     from benchmarks.retrieval import coding_campaign as campaign
     from devstill.config import load_config, resolve_index_path
 
@@ -472,13 +494,17 @@ def ensure_corpus(corpus, log_path, campaign_context=None):
         campaign_context,
     ):
         raise RuntimeError(f"preparing corpus {corpus} failed (see {log_path})")
-    if not corpus_ready(corpus) and run_logged(
+    if not index_ready(corpus) and run_logged(
         runner_command(manifest, "index", "--config", str(config)),
         log_path,
         4 * 3600,
         campaign_context,
     ):
         raise RuntimeError(f"indexing corpus {corpus} failed (see {log_path})")
+    if not dependencies_ready(corpus):
+        from benchmarks.retrieval import js_corpus
+
+        js_corpus.install(bench.BENCH / "repos" / bench.CORPORA[corpus][0], log_path)
     if not corpus_ready(corpus):
         raise RuntimeError(f"corpus {corpus} still not ready (see {log_path})")
 

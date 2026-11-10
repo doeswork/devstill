@@ -8,3 +8,4 @@ dist/
 
 # devstill local index
 .devstill/
+.claude/settings.local.json

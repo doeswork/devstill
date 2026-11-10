@@ -42,8 +42,15 @@ CORPORA = {
         "click.json",
         "934813e4d421071a1b3db3973c02fe2721359a6e",
     ),
+    # React/TypeScript corpus (vitest + jsdom); see benchmarks/retrieval/js_corpus.py.
+    "zustand": (
+        "zustand-5.0.8",
+        "zustand.json",
+        "0ea8be27db13019819fc1c0492e5b672dd7b6f4b",
+    ),
 }
 PYTHON_CORPORA = {"werkzeug", "click"}
+JS_CORPORA = {"zustand"}
 BENCH = Path("/tmp/devstill-retrieval-bench")
 # Protected upstream regressions run after every Werkzeug acceptance check.
 # Covers routing/datastructures/utils, which most small cases edit (~11 s).
@@ -150,6 +157,11 @@ def clone(case, destination):
         ],
         check=True,
     )
+    if case["corpus"] in JS_CORPORA:
+        from benchmarks.retrieval import js_corpus
+
+        js_corpus.ensure_clean(source)
+        js_corpus.link_dependencies(source, destination)
 
 
 def reference(case, repo):
@@ -184,8 +196,23 @@ def accept(case, repo, artifact, *, protect_regressions=False):
         shutil.copytree(
             repo,
             work,
-            ignore=shutil.ignore_patterns(".git", ".devstill", "__pycache__"),
+            ignore=shutil.ignore_patterns(
+                ".git", ".devstill", "__pycache__", "node_modules"
+            ),
         )
+        if case["corpus"] in JS_CORPORA:
+            from benchmarks.retrieval import js_corpus
+
+            name, _, commit = CORPORA[case["corpus"]]
+            logs = js_corpus.accept(
+                case,
+                work,
+                BENCH / "repos" / name,
+                commit,
+                protect_regressions=protect_regressions,
+            )
+            write(artifact, logs)
+            return all(r["returncode"] == 0 for r in logs), time.perf_counter() - start
         if case["corpus"] in PYTHON_CORPORA:
             if protect_regressions:
                 # The direct-Pi comparison allows ordinary test edits. Restore

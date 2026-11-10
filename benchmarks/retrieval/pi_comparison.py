@@ -120,9 +120,15 @@ def trial_order(variants, case_index, repeat):
     return [*variants[offset:], *variants[:offset]]
 
 
-def prepared_tool_environment():
+def prepared_tool_environment(node=False):
     """Give coding shells the same prepared toolchain as the hidden evaluator."""
-    prefixes = os.pathsep.join((str(ROOT / ".venv/bin"), "/tmp/devstill-cargo/bin"))
+    paths = [str(ROOT / ".venv/bin"), "/tmp/devstill-cargo/bin"]
+    if node:
+        from benchmarks.retrieval import js_corpus
+
+        # The evaluator's node, ahead of version-manager shims and Pi's own.
+        paths.insert(0, js_corpus.node_bin())
+    prefixes = os.pathsep.join(paths)
     return {
         **campaign.RUST_ENV,
         "DEVSTILL_BENCH_TOOL_PATH": prefixes,
@@ -130,7 +136,7 @@ def prepared_tool_environment():
     }
 
 
-def check_tool_environment(environment, rust=True):
+def check_tool_environment(environment, rust=True, node=False):
     checks = {}
     commands = {
         "python": [
@@ -142,6 +148,8 @@ def check_tool_environment(environment, rust=True):
     if rust:
         # Only cargo corpora need the Rust toolchain.
         commands.update(cargo=["cargo", "--version"], rustc=["rustc", "--version"])
+    if node:
+        commands.update(node=["node", "-p", "process.execPath + ' ' + process.version"])
     for name, command in commands.items():
         result = subprocess.run(
             command,
@@ -580,7 +588,10 @@ def run(args):
         and (args.workload == "all" or c["workload"] == args.workload)
     ]
     need_rust = any(c["corpus"] == "cargo" for c in cases)
-    tool_versions = check_tool_environment(tool_environment, need_rust)
+    need_node = any(c["corpus"] in campaign.JS_CORPORA for c in cases)
+    if need_node:
+        tool_environment = prepared_tool_environment(node=True)
+    tool_versions = check_tool_environment(tool_environment, need_rust, need_node)
     variants = args.variants.split(",")
     if (
         not cases
@@ -939,7 +950,7 @@ def run(args):
                 == runtime,
                 "pi_unchanged": pi_identity() == identity,
                 "coding_toolchain_unchanged": check_tool_environment(
-                    tool_environment, need_rust
+                    tool_environment, need_rust, need_node
                 )
                 == tool_versions,
                 "baseline_unchanged": all(
