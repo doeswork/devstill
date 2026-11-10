@@ -1,0 +1,41 @@
+{
+  "tool": "ruff 0.17.4",
+  "rules": "ruff default rules, --isolated",
+  "trials": [
+    {
+      "id": "zd01",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 112,
+      "tests_touched": [
+        "tests/vanilla/basic.test.ts"
+      ],
+      "reference_lines": 10,
+      "size_ratio": 11.2,
+      "extra_files": []
+    },
+    {
+      "id": "zd01",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 9,
+      "tests_touched": [],
+      "reference_lines": 10,
+      "size_ratio": 0.9,
+      "extra_files": []
+    },
+    {
+      "id": "zd02",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 38,
+      "tests_touched": [],
+      "reference_lines": 27,
+      "size_ratio": 1.41,
+      "extra_files": []
+    }
+  ]
+}

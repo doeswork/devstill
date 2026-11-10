@@ -1,0 +1,1128 @@
+{
+  "campaign": {
+    "command": [
+      "bench_suite.py",
+      "run",
+      "--suite",
+      "react-dev",
+      "--suite",
+      "react-holdout",
+      "--repeats",
+      "2",
+      "--note",
+      "first React/TS campaign (zustand); Devstill JS support 3aa4240, remote endpoint"
+    ],
+    "finished_at": "2026-11-10T05:29:25+00:00",
+    "git": {
+      "branch": "bench-test-ui-ux",
+      "dirty": false,
+      "sha": "baab0f7a5aca86bad3cfef7647d2d21f4b794fab",
+      "short": "baab0f7",
+      "status": []
+    },
+    "host": "USNBRosenbergJ",
+    "hours": 1.44,
+    "id": "20261110T040310Z-baab0f7",
+    "model": "vllm-qwen38-27b",
+    "model_endpoint": "https://llm.codemonkey.study/v1",
+    "note": "first React/TS campaign (zustand); Devstill JS support 3aa4240, remote endpoint",
+    "pi_version": "1.5.0",
+    "reason": null,
+    "sampling": "default",
+    "served_models": [
+      [
+        "vllm-qwen38-27b",
+        "gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090",
+        262144
+      ]
+    ],
+    "started_at": "2026-11-10T04:03:10+00:00",
+    "status": "completed",
+    "tools": {
+      "git": "git version 2.43.0",
+      "node": "v24.14.1",
+      "pytest": "pytest 8.3.5",
+      "python": "Python 3.12.3",
+      "ruff": "ruff 0.17.4"
+    }
+  },
+  "generated_at": "2026-11-10T05:29:25+00:00",
+  "previous": {
+    "git": "8bdf9f3",
+    "id": "20261109T181124Z-8bdf9f3",
+    "model": "vllm-qwen38-27b",
+    "started_at": "2026-11-09T18:11:24+00:00",
+    "suites": {}
+  },
+  "schema_version": 1,
+  "suites": [
+    {
+      "arms": {
+        "pi": {
+          "acceptance_passes": 1,
+          "attempts": 24,
+          "failures": {
+            "harness_error": 23
+          },
+          "median_pass_seconds": 99.4,
+          "passes": 1
+        },
+        "runtime": {
+          "acceptance_passes": 2,
+          "attempts": 24,
+          "failures": {
+            "harness_error": 22
+          },
+          "median_pass_seconds": 51.6,
+          "passes": 2
+        }
+      },
+      "audit": {
+        "baseline_unchanged": null,
+        "coding_toolchain_unchanged": true,
+        "complete": true,
+        "frozen_runtime_unchanged": true,
+        "frozen_source_unchanged": true,
+        "pi_unchanged": true,
+        "retrieval_inputs_unchanged": true,
+        "working_tree_source_changed": false
+      },
+      "cases": [
+        {
+          "id": "zd01",
+          "median_seconds": {
+            "pi": 99.4,
+            "runtime": 26.8
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "1/2"
+          }
+        },
+        {
+          "id": "zd02",
+          "median_seconds": {
+            "pi": null,
+            "runtime": 76.5
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "1/2"
+          }
+        },
+        {
+          "id": "zd03",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "0/2"
+          }
+        },
+        {
+          "id": "zd04",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "0/2"
+          }
+        },
+        {
+          "id": "zd05",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "0/2"
+          }
+        },
+        {
+          "id": "zd06",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "0/2"
+          }
+        },
+        {
+          "id": "zd07",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "0/2"
+          }
+        },
+        {
+          "id": "zd08",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "0/2"
+          }
+        },
+        {
+          "id": "zd09",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "0/2"
+          }
+        },
+        {
+          "id": "zd10",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "0/2"
+          }
+        },
+        {
+          "id": "zd11",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "0/2"
+          }
+        },
+        {
+          "id": "zd12",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "0/2"
+          }
+        }
+      ],
+      "description": "12 zustand (React/TypeScript) cases, vitest + tsc acceptance (development set)",
+      "excluded_cases": {},
+      "expected_trials": 48,
+      "failures": [
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd01",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd01-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd01",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd01-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd02",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd02-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd02",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd02-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd02",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd02-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd03",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd03-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd03",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd03-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd03",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd03-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd03",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd03-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd04",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd04-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd04",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd04-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd04",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd04-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd04",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd04-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd05",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd05-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd05",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd05-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd05",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd05-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd05",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd05-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd06",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd06-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd06",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd06-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd06",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd06-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd06",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd06-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd07",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd07-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd07",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd07-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd07",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd07-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd07",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd07-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd08",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd08-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd08",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd08-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd08",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd08-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd08",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd08-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd09",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd09-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd09",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd09-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd09",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd09-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd09",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd09-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd10",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd10-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd10",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd10-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd10",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd10-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd10",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd10-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd11",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd11-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd11",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd11-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd11",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd11-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd11",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd11-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd12",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd12-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd12",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd12-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd12",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd12-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "harness_error",
+          "detail": "harness_error: ValueError: Corpus dependencies missing or changed; prepare again",
+          "id": "zd12",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd12-1-runtime",
+          "variant": "runtime"
+        }
+      ],
+      "name": "react-dev",
+      "paired": {
+        "runtime": {
+          "both": 1,
+          "candidate_faster": 1,
+          "candidate_only": 1,
+          "median_ratio": 0.27,
+          "median_shared_seconds": {
+            "pi": 99.4,
+            "runtime": 26.8
+          },
+          "neither": 22,
+          "pairs": 24,
+          "pi_only": 0,
+          "shared_seconds": [
+            [
+              99.35,
+              26.77
+            ]
+          ]
+        }
+      },
+      "quality": {
+        "pi": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 112,
+          "median_size_ratio": 11.2,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 0,
+          "trials_touching_tests": 1,
+          "trials_with_change": 1
+        },
+        "runtime": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 23.5,
+          "median_size_ratio": 1.16,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 0,
+          "trials_touching_tests": 0,
+          "trials_with_change": 2
+        },
+        "tool": "ruff 0.17.4"
+      },
+      "reason": null,
+      "settings": {
+        "dataset": "benchmarks/retrieval/zustand_dev.v1.json",
+        "repeats": 2,
+        "timeout": 120,
+        "variants": "pi,runtime"
+      },
+      "status": "completed",
+      "trials": 48
+    },
+    {
+      "arms": {
+        "pi": {
+          "acceptance_passes": 14,
+          "attempts": 24,
+          "failures": {
+            "timeout": 8,
+            "timeout_after_correct_edit": 4,
+            "wrong_fix:behavior_check": 1,
+            "wrong_fix:regression_tests": 1
+          },
+          "median_pass_seconds": 50.8,
+          "passes": 10
+        },
+        "runtime": {
+          "acceptance_passes": 12,
+          "attempts": 24,
+          "failures": {
+            "no_change": 9,
+            "timeout": 1,
+            "wrong_fix:regression_tests": 2
+          },
+          "median_pass_seconds": 43.9,
+          "passes": 12
+        }
+      },
+      "audit": {
+        "baseline_unchanged": null,
+        "coding_toolchain_unchanged": true,
+        "complete": true,
+        "frozen_runtime_unchanged": true,
+        "frozen_source_unchanged": true,
+        "pi_unchanged": true,
+        "retrieval_inputs_unchanged": true,
+        "working_tree_source_changed": false
+      },
+      "cases": [
+        {
+          "id": "zh01",
+          "median_seconds": {
+            "pi": 68.8,
+            "runtime": 29.9
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "zh02",
+          "median_seconds": {
+            "pi": 46.4,
+            "runtime": 61.4
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "zh03",
+          "median_seconds": {
+            "pi": 104.6,
+            "runtime": 54.2
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "zh04",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "0/2"
+          }
+        },
+        {
+          "id": "zh05",
+          "median_seconds": {
+            "pi": 18.9,
+            "runtime": 62.2
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "zh06",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "0/2"
+          }
+        },
+        {
+          "id": "zh07",
+          "median_seconds": {
+            "pi": 43.8,
+            "runtime": 26.3
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "zh08",
+          "median_seconds": {
+            "pi": null,
+            "runtime": 45.5
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "1/2"
+          }
+        },
+        {
+          "id": "zh09",
+          "median_seconds": {
+            "pi": 45.1,
+            "runtime": 42.3
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "1/2"
+          }
+        },
+        {
+          "id": "zh10",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "0/2"
+          }
+        },
+        {
+          "id": "zh11",
+          "median_seconds": {
+            "pi": 117.3,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "0/2"
+          }
+        },
+        {
+          "id": "zh12",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "0/2"
+          }
+        }
+      ],
+      "description": "12 zustand (React/TypeScript) cases authored with react-dev; not read while tuning Devstill",
+      "excluded_cases": {},
+      "expected_trials": 48,
+      "failures": [
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-a2cc6rtf/vitest-report.json",
+          "id": "zh02",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh02-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "zh03",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh03-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh04",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh04-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: No verified change within 20 model calls",
+          "id": "zh04",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh04-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh04",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh04-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: Your latest check fails after your last edit (re-run automatically): \u2026 </di",
+          "id": "zh04",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh04-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "zh05",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh05-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh06",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh06-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: No verified change within 20 model calls",
+          "id": "zh06",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh06-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh06",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh06-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: Tests still fail: tests/basic.test.tsx > can call useBoundStore with progressively more arguments, tests/basic.test.tsx > can throw an error in equality checker, tests/basic.test.\u2026",
+          "id": "zh06",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh06-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "zh08",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh08-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-40tf02aq/vitest-report.json",
+          "id": "zh08",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh08-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh08",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh08-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh09",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh09-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: Your latest check fails after your last edit (re-run automatically): \u2026 at check line 36: expect(seen).toEqual([[0, 0], [42, 0],",
+          "id": "zh09",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh09-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh10",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh10-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh10",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh10-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh10",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh10-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: No verified change within 20 model calls",
+          "id": "zh10",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh10-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: No verified change within 20 model calls",
+          "id": "zh11",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh11-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: No verified change within 20 model calls",
+          "id": "zh11",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh11-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "wrong_fix:behavior_check",
+          "detail": "'T' could be instantiated with an arbitrary type which could be unrelated to 'T | { dispatch: any; }'.",
+          "id": "zh12",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh12-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-jscw_6i7/vitest-report.json",
+          "id": "zh12",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh12-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "zh12",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh12-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: No verified change within 20 model calls",
+          "id": "zh12",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh12-1-runtime",
+          "variant": "runtime"
+        }
+      ],
+      "name": "react-holdout",
+      "paired": {
+        "runtime": {
+          "both": 7,
+          "candidate_faster": 6,
+          "candidate_only": 5,
+          "median_ratio": 0.63,
+          "median_shared_seconds": {
+            "pi": 46.4,
+            "runtime": 29.1
+          },
+          "neither": 9,
+          "pairs": 24,
+          "pi_only": 3,
+          "shared_seconds": [
+            [
+              55.23,
+              37.03
+            ],
+            [
+              82.27,
+              22.86
+            ],
+            [
+              46.37,
+              29.09
+            ],
+            [
+              104.6,
+              48.63
+            ],
+            [
+              18.92,
+              74.9
+            ],
+            [
+              45.39,
+              26.05
+            ],
+            [
+              42.25,
+              26.63
+            ]
+          ]
+        }
+      },
+      "quality": {
+        "pi": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 58.5,
+          "median_size_ratio": 6.76,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 2,
+          "trials_touching_tests": 15,
+          "trials_with_change": 24
+        },
+        "runtime": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 16.0,
+          "median_size_ratio": 1.1,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 2,
+          "trials_touching_tests": 0,
+          "trials_with_change": 14
+        },
+        "tool": "ruff 0.17.4"
+      },
+      "reason": null,
+      "settings": {
+        "dataset": "benchmarks/retrieval/zustand_holdout.v1.json",
+        "repeats": 2,
+        "timeout": 120,
+        "variants": "pi,runtime"
+      },
+      "status": "completed",
+      "trials": 48
+    }
+  ],
+  "totals": {
+    "pi": {
+      "attempts": 48,
+      "passes": 11
+    },
+    "runtime": {
+      "attempts": 48,
+      "passes": 14
+    }
+  },
+  "totals_paired": {
+    "runtime": {
+      "both": 8,
+      "candidate_faster": 7,
+      "candidate_only": 6,
+      "median_ratio": 0.6,
+      "median_shared_seconds": {
+        "candidate": 27.9,
+        "pi": 50.8
+      },
+      "neither": 31,
+      "pairs": 48,
+      "pi_only": 3
+    }
+  }
+}
