@@ -36,6 +36,20 @@
       "description": "12 Werkzeug and click cases; exposed by the 2026-11-08 final run, so no longer held out"
     },
     {
+      "name": "react-dev",
+      "dataset": "benchmarks/retrieval/zustand_dev.v1.json",
+      "tags": ["react", "dev"],
+      "requires": ["node"],
+      "description": "12 zustand (React/TypeScript) cases, vitest + tsc acceptance (development set)"
+    },
+    {
+      "name": "react-holdout",
+      "dataset": "benchmarks/retrieval/zustand_holdout.v1.json",
+      "tags": ["react"],
+      "requires": ["node"],
+      "description": "12 zustand (React/TypeScript) cases authored with react-dev; not read while tuning Devstill"
+    },
+    {
       "name": "swebench-small",
       "dataset": "benchmarks/datasets/swebench_small.v1.json",
       "tags": ["external"],
