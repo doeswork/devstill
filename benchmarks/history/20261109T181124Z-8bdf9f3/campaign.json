@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "id": "20261109T181124Z-8bdf9f3",
+  "status": "completed",
+  "started_at": "2026-11-09T18:11:24+00:00",
+  "finished_at": "2026-11-09T19:37:41+00:00",
+  "note": "loop improvements 8bdf9f3, remote endpoint llm.codemonkey.study, 2 repeats",
+  "command": [
+    "bench_suite.py",
+    "run",
+    "--suite",
+    "nq",
+    "--suite",
+    "quick-fast",
+    "--suite",
+    "loop-dev",
+    "--repeats",
+    "2",
+    "--note",
+    "loop improvements 8bdf9f3, remote endpoint llm.codemonkey.study, 2 repeats"
+  ],
+  "host": "USNBRosenbergJ",
+  "platform": "Linux-6.18.54.1-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+  "git": {
+    "sha": "8bdf9f369f2bad4124213e34e6a6f090aaa4c89a",
+    "short": "8bdf9f3",
+    "branch": "bench-test-ui-ux",
+    "dirty": false,
+    "status": []
+  },
+  "model": {
+    "base_url": "https://llm.codemonkey.study/v1",
+    "configured_model": "vllm-qwen38-27b",
+    "served": [
+      [
+        "vllm-qwen38-27b",
+        "gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090",
+        262144
+      ]
+    ],
+    "served_sha256": "05a50541b75c9bee998e78c26a97e70deeb8c1da68a3150d6842d34ed586a6f1"
+  },
+  "pi": {
+    "version": "1.5.0",
+    "node": "v24.14.1",
+    "reason": null
+  },
+  "tools": {
+    "python": "Python 3.12.3",
+    "pytest": "pytest 8.3.5",
+    "ruff": "ruff 0.17.4",
+    "node": "v24.14.1",
+    "git": "git version 2.43.0"
+  },
+  "settings": {
+    "sampling": "default",
+    "endpoint_wait": 1800,
+    "max_hours": null,
+    "overrides": {
+      "repeats": 2,
+      "variants": null,
+      "timeout": null
+    }
+  },
+  "suites": [
+    {
+      "name": "nq",
+      "settings": {
+        "variants": "pi,runtime",
+        "repeats": 2,
+        "timeout": 120,
+        "purpose": "development",
+        "pi_disable_reasoning": true,
+        "acceptance_budget": 240,
+        "requires": [],
+        "name": "nq",
+        "dataset": "benchmarks/retrieval/native_quick_fresh.v1.json",
+        "tags": [
+          "core",
+          "dev"
+        ],
+        "description": "10 Werkzeug quick edits (exposed development set)"
+      },
+      "dataset_sha256": "33c78670cdff816c8a85527fa346ddc3c38e181a0f648c19e7144367124adfe5",
+      "status": "completed",
+      "reason": null,
+      "attempts": [
+        {
+          "started_at": "2026-11-09T18:14:30+00:00",
+          "finished_at": "2026-11-09T18:34:41+00:00",
+          "exit_code": 0,
+          "resume": false,
+          "trials_recorded": 40,
+          "suite_time_limit_hit": false,
+          "stray_processes_killed": 0,
+          "stopped": null
+        }
+      ],
+      "verified_cache": "/home/jeffyx/devstill/.devstill/bench-cache/verified/nq-33c78670cdff-47d7060907c9",
+      "excluded_cases": {},
+      "dataset_used": "/home/jeffyx/devstill/benchmarks/retrieval/native_quick_fresh.v1.json",
+      "verified_used": "/home/jeffyx/devstill/.devstill/bench-cache/verified/nq-33c78670cdff-47d7060907c9"
+    },
+    {
+      "name": "quick-fast",
+      "settings": {
+        "variants": "pi,runtime",
+        "repeats": 2,
+        "timeout": 120,
+        "purpose": "development",
+        "pi_disable_reasoning": true,
+        "acceptance_budget": 240,
+        "requires": [],
+        "name": "quick-fast",
+        "dataset": "benchmarks/retrieval/quick_fast.v1.json",
+        "tags": [
+          "core",
+          "dev"
+        ],
+        "description": "10 Werkzeug fast edits (exposed development set)"
+      },
+      "dataset_sha256": "aeb5583db4c2f97f67a8320e35afa4520b91a356b35f2b5db1bcd82bb26eafbd",
+      "status": "completed",
+      "reason": null,
+      "attempts": [
+        {
+          "started_at": "2026-11-09T18:37:25+00:00",
+          "finished_at": "2026-11-09T18:52:30+00:00",
+          "exit_code": 0,
+          "resume": false,
+          "trials_recorded": 40,
+          "suite_time_limit_hit": false,
+          "stray_processes_killed": 0,
+          "stopped": null
+        }
+      ],
+      "verified_cache": "/home/jeffyx/devstill/.devstill/bench-cache/verified/quick-fast-aeb5583db4c2-47d7060907c9",
+      "excluded_cases": {},
+      "dataset_used": "/home/jeffyx/devstill/benchmarks/retrieval/quick_fast.v1.json",
+      "verified_used": "/home/jeffyx/devstill/.devstill/bench-cache/verified/quick-fast-aeb5583db4c2-47d7060907c9"
+    },
+    {
+      "name": "loop-dev",
+      "settings": {
+        "variants": "pi,runtime",
+        "repeats": 2,
+        "timeout": 120,
+        "purpose": "development",
+        "pi_disable_reasoning": true,
+        "acceptance_budget": 240,
+        "requires": [],
+        "name": "loop-dev",
+        "dataset": "benchmarks/retrieval/quick_loop_dev.v1.json",
+        "tags": [
+          "core",
+          "dev"
+        ],
+        "description": "12 Werkzeug and click cases (development set)"
+      },
+      "dataset_sha256": "3bcb9704cbf9c810e98535644cc7685c40862dc11e2f3d4121cb3da8e2d5f050",
+      "status": "completed",
+      "reason": null,
+      "attempts": [
+        {
+          "started_at": "2026-11-09T18:54:42+00:00",
+          "finished_at": "2026-11-09T19:37:41+00:00",
+          "exit_code": 0,
+          "resume": false,
+          "trials_recorded": 48,
+          "suite_time_limit_hit": false,
+          "stray_processes_killed": 0,
+          "stopped": null
+        }
+      ],
+      "verified_cache": "/home/jeffyx/devstill/.devstill/bench-cache/verified/loop-dev-3bcb9704cbf9-85d5e241e5c5",
+      "excluded_cases": {},
+      "dataset_used": "/home/jeffyx/devstill/benchmarks/retrieval/quick_loop_dev.v1.json",
+      "verified_used": "/home/jeffyx/devstill/.devstill/bench-cache/verified/loop-dev-3bcb9704cbf9-85d5e241e5c5"
+    }
+  ]
+}

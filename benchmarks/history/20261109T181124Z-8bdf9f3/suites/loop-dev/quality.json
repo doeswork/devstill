@@ -1,0 +1,735 @@
+{
+  "tool": "ruff 0.17.4",
+  "rules": "ruff default rules, --isolated",
+  "trials": [
+    {
+      "id": "xc01",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 3,
+      "changed_lines": 50,
+      "tests_touched": [
+        "tests/test_imports.py",
+        "tests/test_types.py"
+      ],
+      "reference_lines": 12,
+      "size_ratio": 4.17,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 1,
+        "new_codes": {
+          "SIM102": 1
+        }
+      }
+    },
+    {
+      "id": "xc01",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 10,
+      "tests_touched": [],
+      "reference_lines": 12,
+      "size_ratio": 0.83,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 1,
+        "new_codes": {
+          "I001": 1
+        }
+      }
+    },
+    {
+      "id": "xc03",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 7,
+      "tests_touched": [],
+      "reference_lines": 9,
+      "size_ratio": 0.78,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xc03",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 14,
+      "tests_touched": [],
+      "reference_lines": 9,
+      "size_ratio": 1.56,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xc05",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 8,
+      "tests_touched": [],
+      "reference_lines": 4,
+      "size_ratio": 2.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xc05",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 2,
+      "changed_lines": 5,
+      "tests_touched": [],
+      "reference_lines": 4,
+      "size_ratio": 1.25,
+      "extra_files": [
+        "src/click/utils.py"
+      ],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xc07",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": []
+    },
+    {
+      "id": "xc07",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": []
+    },
+    {
+      "id": "xc09",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 45,
+      "tests_touched": [
+        "tests/test_commands.py"
+      ],
+      "reference_lines": 39,
+      "size_ratio": 1.15,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xc09",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 37,
+      "tests_touched": [
+        "tests/test_commands.py"
+      ],
+      "reference_lines": 39,
+      "size_ratio": 0.95,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 1,
+        "new_codes": {
+          "F811": 1
+        }
+      }
+    },
+    {
+      "id": "xc11",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 5,
+      "tests_touched": [],
+      "reference_lines": 7,
+      "size_ratio": 0.71,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xc11",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 13,
+      "tests_touched": [],
+      "reference_lines": 7,
+      "size_ratio": 1.86,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xw01",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 4,
+      "tests_touched": [],
+      "reference_lines": 4,
+      "size_ratio": 1.0,
+      "extra_files": []
+    },
+    {
+      "id": "xw01",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 4,
+      "tests_touched": [],
+      "reference_lines": 4,
+      "size_ratio": 1.0,
+      "extra_files": []
+    },
+    {
+      "id": "xw03",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xw03",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xw05",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 3,
+      "changed_lines": 14,
+      "tests_touched": [],
+      "reference_lines": 14,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xw05",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 3,
+      "changed_lines": 14,
+      "tests_touched": [],
+      "reference_lines": 14,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xw07",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 12,
+      "tests_touched": [],
+      "reference_lines": 7,
+      "size_ratio": 1.71,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xw07",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 13,
+      "tests_touched": [],
+      "reference_lines": 7,
+      "size_ratio": 1.86,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 1,
+        "new_codes": {
+          "I001": 1
+        }
+      }
+    },
+    {
+      "id": "xw09",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 9,
+      "tests_touched": [
+        "tests/sansio/test_utils.py"
+      ],
+      "reference_lines": 10,
+      "size_ratio": 0.9,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xw09",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 9,
+      "tests_touched": [
+        "tests/sansio/test_utils.py"
+      ],
+      "reference_lines": 10,
+      "size_ratio": 0.9,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xw11",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 0,
+      "changed_lines": 0,
+      "tests_touched": [],
+      "reference_lines": 10,
+      "size_ratio": 0.0,
+      "extra_files": []
+    },
+    {
+      "id": "xw11",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 5,
+      "tests_touched": [],
+      "reference_lines": 10,
+      "size_ratio": 0.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 1,
+        "new_codes": {
+          "SIM114": 1
+        }
+      }
+    },
+    {
+      "id": "xc01",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 14,
+      "tests_touched": [],
+      "reference_lines": 12,
+      "size_ratio": 1.17,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 1,
+        "new_codes": {
+          "PLR0124": 1
+        }
+      }
+    },
+    {
+      "id": "xc01",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 21,
+      "tests_touched": [
+        "tests/test_imports.py"
+      ],
+      "reference_lines": 12,
+      "size_ratio": 1.75,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xc03",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 63,
+      "tests_touched": [
+        "tests/test_options.py"
+      ],
+      "reference_lines": 9,
+      "size_ratio": 7.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xc03",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 12,
+      "tests_touched": [],
+      "reference_lines": 9,
+      "size_ratio": 1.33,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xc05",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 4,
+      "tests_touched": [],
+      "reference_lines": 4,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xc05",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 14,
+      "tests_touched": [],
+      "reference_lines": 4,
+      "size_ratio": 3.5,
+      "extra_files": [
+        "src/click/utils.py"
+      ],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xc07",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": []
+    },
+    {
+      "id": "xc07",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": []
+    },
+    {
+      "id": "xc09",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 33,
+      "tests_touched": [
+        "tests/test_commands.py"
+      ],
+      "reference_lines": 39,
+      "size_ratio": 0.85,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xc09",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 42,
+      "tests_touched": [
+        "tests/test_commands.py"
+      ],
+      "reference_lines": 39,
+      "size_ratio": 1.08,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xc11",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 15,
+      "tests_touched": [],
+      "reference_lines": 7,
+      "size_ratio": 2.14,
+      "extra_files": [
+        "CHANGES.rst"
+      ],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xc11",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 12,
+      "tests_touched": [],
+      "reference_lines": 7,
+      "size_ratio": 1.71,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xw01",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 4,
+      "tests_touched": [],
+      "reference_lines": 4,
+      "size_ratio": 1.0,
+      "extra_files": []
+    },
+    {
+      "id": "xw01",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 4,
+      "tests_touched": [],
+      "reference_lines": 4,
+      "size_ratio": 1.0,
+      "extra_files": []
+    },
+    {
+      "id": "xw03",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xw03",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xw05",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 3,
+      "changed_lines": 14,
+      "tests_touched": [],
+      "reference_lines": 14,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xw05",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 3,
+      "changed_lines": 14,
+      "tests_touched": [],
+      "reference_lines": 14,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xw07",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 53,
+      "tests_touched": [
+        "tests/sansio/test_utils.py"
+      ],
+      "reference_lines": 7,
+      "size_ratio": 7.57,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xw07",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 7,
+      "tests_touched": [],
+      "reference_lines": 7,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xw09",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 9,
+      "tests_touched": [
+        "tests/sansio/test_utils.py"
+      ],
+      "reference_lines": 10,
+      "size_ratio": 0.9,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xw09",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 9,
+      "tests_touched": [
+        "tests/sansio/test_utils.py"
+      ],
+      "reference_lines": 10,
+      "size_ratio": 0.9,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "xw11",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 45,
+      "tests_touched": [],
+      "reference_lines": 10,
+      "size_ratio": 4.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 1,
+        "new_codes": {
+          "F401": 1
+        }
+      }
+    },
+    {
+      "id": "xw11",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 10,
+      "size_ratio": 0.2,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    }
+  ]
+}
