@@ -54,6 +54,11 @@ _TRANSLATE = str.maketrans(
 )
 
 
+# Never content: caches, VCS data and installed dependencies (a linked
+# node_modules is a symlink to the shared install).
+SKIPPED_DIRS = {"__pycache__", ".pytest_cache", ".git", ".devstill", "node_modules"}
+
+
 class ToolError(ValueError):
     """A tool failure reported back to the model; nothing was written."""
 
@@ -860,11 +865,7 @@ class Workspace:
         """Relative paths of regular files (caches and VCS data excluded)."""
         found = set()
         for current, directories, names in os.walk(self.root):
-            directories[:] = [
-                d
-                for d in directories
-                if d not in {"__pycache__", ".pytest_cache", ".git", ".devstill"}
-            ]
+            directories[:] = [d for d in directories if d not in SKIPPED_DIRS]
             base = Path(current).relative_to(self.root)
             for name in names:
                 found.add((base / name).as_posix())
@@ -1051,7 +1052,11 @@ class Workspace:
         # pipefail: `pytest ... | tail` must not report the pipe's last status.
         return self._run(["bash", "-o", "pipefail", "-c", command], timeout, checkpoint)
 
-    def _run(self, argv, timeout: float, checkpoint=lambda: None) -> ToolResult:
+    def _run(
+        self, argv, timeout: float, checkpoint=lambda: None, ignore=None, env=None
+    ) -> ToolResult:
+        """Run argv in the workspace; `ignore(name)` hides scratch files the
+        caller creates and removes itself from the created-files note."""
         before = self._stat_tracked()
         existing = self._files()
         started = time.perf_counter()
@@ -1060,7 +1065,7 @@ class Workspace:
                 process = subprocess.Popen(
                     argv,
                     cwd=self.root,
-                    env=self.env,
+                    env=self.env if env is None else env,
                     stdin=subprocess.DEVNULL,
                     stdout=output,
                     stderr=subprocess.STDOUT,
@@ -1100,6 +1105,8 @@ class Workspace:
         )
         created = []
         for name in sorted(self._files() - existing):
+            if ignore is not None and ignore(name):
+                continue
             try:
                 self.guard(name)
             except ValueError:

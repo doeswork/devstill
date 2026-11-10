@@ -32,8 +32,10 @@ from devstill.runtime.artifacts import digest, load, run_directory, write
 from devstill.runtime.checks import run_checks
 from devstill.runtime.context import focused_candidates, support_records
 from devstill.runtime.editor import edit_loop, editor_messages, response_schema
+from devstill.runtime.jstest import JsGuard, pristine_copy
 from devstill.runtime.loop_context import build_sections, guard_test_files
 from devstill.runtime.requirements import delivery_checks, delivery_requirements
+from devstill.runtime.toolchain import detect, link_dependencies
 from devstill.runtime.tools import TestGuard, Workspace
 from devstill.search import HybridSearch
 
@@ -216,6 +218,8 @@ def render_agent_checks(execution):
         label = (
             f"python check ({len(text.splitlines()) - 1} lines)"
             if text.startswith("python:\n")
+            else f"test check ({len(text.splitlines()) - 1} lines)"
+            if text.startswith("test:\n")
             else text.strip().splitlines()[0][:100]
         )
         rows.append(f"- {'passed' if command['ok'] else 'failed'}: {label}")
@@ -224,13 +228,14 @@ def render_agent_checks(execution):
         (
             c
             for c in reversed(commands)
-            if c["ok"] and c["command"].startswith("python:\n")
+            if c["ok"] and c["command"].startswith(("python:\n", "test:\n"))
         ),
         None,
     )
     if last:
         code = "\n".join(last["command"].splitlines()[1:21])
-        shown += "Latest passing check:\n```python\n" + code + "\n```\n\n"
+        fence = "python" if last["command"].startswith("python:\n") else "ts"
+        shown += f"Latest passing check:\n```{fence}\n" + code + "\n```\n\n"
     return shown
 
 
@@ -544,6 +549,11 @@ class RuntimeSession:
             if part == "" or (self.repo / part).is_dir()
         )
         env["PYTHONDONTWRITEBYTECODE"] = "1"
+        # Python unless the request is about JS/TS code in a package.json project.
+        toolchain = detect(self.repo, records, env.get("PATH"))
+        if toolchain.js:
+            # Installed dependencies are linked, never copied or proposed.
+            link_dependencies(self.repo, work, toolchain.dependencies)
 
         def allowed(name):
             try:
@@ -558,8 +568,18 @@ class RuntimeSession:
             env=env,
             python=interpreter,
         )
-        sections = build_sections(
-            self.repo, records, cfg.editing.loop_context_chars, allowed=allowed
+        sections = (
+            build_sections(
+                self.repo,
+                records,
+                cfg.editing.loop_context_chars,
+                allowed=allowed,
+                language="js",
+            )
+            if toolchain.js
+            else build_sections(
+                self.repo, records, cfg.editing.loop_context_chars, allowed=allowed
+            )
         )
 
         def checks(repo, commands, limit):
@@ -576,7 +596,12 @@ class RuntimeSession:
             return path.read_bytes() if path.is_file() else None
 
         guard = None
-        if cfg.editing.regression_tests:
+        baselines = None  # pristine copy for JS guard baselines
+        if cfg.editing.regression_tests and toolchain.js:
+            if toolchain.runner or toolchain.typescript:
+                guard = JsGuard(tools, toolchain, original)
+                baselines = Path(tempfile.mkdtemp(prefix="devstill-js-")) / "pristine"
+        elif cfg.editing.regression_tests:
             suite = [
                 name for name in ("tests", "test") if (self.repo / name).is_dir()
             ]
@@ -592,18 +617,36 @@ class RuntimeSession:
         try:
             return self._loop_with_snapshot(
                 work, query, sections, requirements, chat, directory, deadline, emit,
-                tools, checks, guard, state, original,
+                tools, checks, guard, state, original, toolchain, baselines,
             )
         finally:
             shutil.rmtree(shims, ignore_errors=True)
+            if baselines is not None:
+                guard.cleanup()
+                shutil.rmtree(baselines.parent, ignore_errors=True)
 
     def _loop_with_snapshot(
         self, work, query, sections, requirements, chat, directory, deadline, emit,
-        tools, checks, guard, state, original,
+        tools, checks, guard, state, original, toolchain=None, baselines=None,
     ):
         cfg = self.config
         with ThreadPoolExecutor(max_workers=1) as pool:
             pending = pool.submit(workspace.snapshot, self.repo, work, cfg, True)
+            if baselines is not None:
+
+                def pristine():
+                    # Baselines for the JS guard run in their own pristine
+                    # copy, started while the model reads.
+                    try:
+                        guard.start(
+                            pristine_copy(
+                                self.repo, baselines, cfg, toolchain.dependencies
+                            )
+                        )
+                    except Exception as exc:  # noqa: BLE001 - guard results stay unknown
+                        emit(f"Test baselines unavailable: {exc}")
+
+                pool.submit(pristine)
 
             def ready():
                 if "sources" not in state:
@@ -631,6 +674,7 @@ class RuntimeSession:
                 before_tools=ready,
                 guard=guard,
                 originals=original,
+                toolchain=toolchain if toolchain is not None and toolchain.js else None,
             )
             ready()
         return outcome, state["sources"]

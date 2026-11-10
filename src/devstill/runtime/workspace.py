@@ -26,7 +26,13 @@ SUPPORT_MAX_BYTES = 2_000_000
 NEVER_COPIED = {"sensitive", "metadata"}
 
 
+# Installed dependency directories: linked into workspaces, never content.
+DEPENDENCY_DIRS = {"node_modules"}
+
+
 def guard(repo, config, name):
+    if DEPENDENCY_DIRS.intersection(name.replace("\\", "/").split("/")):
+        raise ValueError(f"Installed dependency, not a source: {name}")
     path = source_path(repo, name)
     if matches_patterns(name, config.files.exclude) or matches_retrieval_exclude(
         name, config.retrieval.exclude
@@ -47,6 +53,8 @@ def snapshot(repo, workspace, config, support=False):
     for item in inventory.files if support else inventory.eligible:
         if matches_retrieval_exclude(item.relative, config.retrieval.exclude):
             continue
+        if DEPENDENCY_DIRS.intersection(item.relative.split("/")):
+            continue  # never copied (writing through a linked install)
         eligible = item.decision.disposition == "indexed"
         if not eligible and (
             item.decision.category in NEVER_COPIED
@@ -81,7 +89,7 @@ def changes(repo, workspace, before, allowed, strict=True):
     for path in workspace.rglob("*"):
         relative = path.relative_to(workspace)
         if any(
-            p in {"__pycache__", ".pytest_cache", ".git", ".devstill"}
+            p in {"__pycache__", ".pytest_cache", ".git", ".devstill", *DEPENDENCY_DIRS}
             for p in relative.parts
         ):
             continue

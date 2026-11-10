@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import difflib
+import os
 import re
 from pathlib import Path, PurePosixPath
 
@@ -17,6 +18,12 @@ FENCES = {
     ".py": "python",
     ".js": "javascript",
     ".ts": "typescript",
+    ".tsx": "tsx",
+    ".jsx": "jsx",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".mts": "typescript",
+    ".cts": "typescript",
     ".md": "markdown",
     ".toml": "toml",
     ".json": "json",
@@ -90,6 +97,27 @@ def outline(text: str, limit: int = 40) -> str:
     return "\n".join(items)
 
 
+JS_SUFFIXES = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"}
+_JS_DECLARATION = re.compile(
+    r"^(?:export\s+(?:default\s+)?)?(?:declare\s+)?(?:async\s+)?"
+    r"(function\*?|class|interface|type|enum|const|let|var)\s+([A-Za-z_$][\w$]*)"
+)
+
+
+def js_outline(text: str, limit: int = 40) -> str:
+    """One line per top-level JS/TS declaration (column 0 only; no parsing)."""
+    items = []
+    for number, line in enumerate(text.split("\n"), 1):
+        match = _JS_DECLARATION.match(line)
+        if match:
+            kind = match.group(1).rstrip("*")
+            exported = "export " if line.startswith("export") else ""
+            items.append(f"L{number} {exported}{kind} {match.group(2)}")
+    if len(items) > limit:
+        items = items[:limit] + [f"... {len(items) - limit} more"]
+    return "\n".join(items)
+
+
 def _merge(intervals, gap=15):
     merged = []
     for start, end in sorted(intervals):
@@ -100,11 +128,37 @@ def _merge(intervals, gap=15):
     return merged
 
 
-def related_tests(work: Path, symbols, limit=3, max_lines=8, allowed=None):
+def _js_test_files(work: Path, limit=4000):
+    """JS/TS test files: *.test.* / *.spec.* anywhere, and modules in test dirs.
+
+    Dependency, build and hidden directories are never entered.
+    """
+    skip = {"node_modules", "dist", "build", "coverage", "__pycache__"}
+    found, seen = [], 0
+    for current, directories, names in os.walk(work):
+        directories[:] = sorted(
+            d for d in directories if d not in skip and not d.startswith(".")
+        )
+        for name in sorted(names):
+            seen += 1
+            path = Path(current) / name
+            if path.suffix in JS_SUFFIXES and is_test_path(
+                path.relative_to(work).as_posix()
+            ):
+                found.append(path)
+        if seen > limit:
+            break
+    return found
+
+
+def related_tests(
+    work: Path, symbols, limit=3, max_lines=8, allowed=None, language="python"
+):
     """Test files mentioning the primary symbols plus a few usage lines.
 
     allowed(name) filters files by the repository's path policy (excludes,
-    ignored or sensitive files are never quoted to the model).
+    ignored or sensitive files are never quoted to the model). language "js"
+    scans JS/TS test files instead of Python ones.
     """
     names = sorted({s for s in symbols if s and len(s) >= 3 and s.isidentifier()})
     if not names:
@@ -112,28 +166,35 @@ def related_tests(work: Path, symbols, limit=3, max_lines=8, allowed=None):
     pattern = re.compile(r"\b(" + "|".join(map(re.escape, names)) + r")\b")
     calls = re.compile(r"\b(" + "|".join(map(re.escape, names)) + r")\s*\(")
     counts, examples = [], []
-    for directory in ("tests", "test"):
-        root = work / directory
-        if not root.is_dir():
+    if language == "js":
+        paths = _js_test_files(work)
+        declarations = ("//", "/*", "*", "import ", "export ", "function ")
+    else:
+        paths = [
+            path
+            for directory in ("tests", "test")
+            if (work / directory).is_dir()
+            for path in sorted((work / directory).rglob("*.py"))
+        ]
+        declarations = ("def ", "#")
+    for path in paths:
+        if "__pycache__" in path.parts or path.is_symlink():
             continue
-        for path in sorted(root.rglob("*.py")):
-            if "__pycache__" in path.parts or path.is_symlink():
-                continue
-            if allowed is not None and not allowed(path.relative_to(work).as_posix()):
-                continue
-            try:
-                text = path.read_text(errors="ignore")
-            except OSError:
-                continue
-            hits = len(pattern.findall(text))
-            if not hits:
-                continue
-            name = path.relative_to(work).as_posix()
-            counts.append((hits, name))
-            for number, line in enumerate(text.split("\n"), 1):
-                stripped = line.strip()
-                if calls.search(stripped) and not stripped.startswith(("def ", "#")):
-                    examples.append((name, number, stripped[:160]))
+        if allowed is not None and not allowed(path.relative_to(work).as_posix()):
+            continue
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+        hits = len(pattern.findall(text))
+        if not hits:
+            continue
+        name = path.relative_to(work).as_posix()
+        counts.append((hits, name))
+        for number, line in enumerate(text.split("\n"), 1):
+            stripped = line.strip()
+            if calls.search(stripped) and not stripped.startswith(declarations):
+                examples.append((name, number, stripped[:160]))
     counts.sort(key=lambda item: (-item[0], item[1]))
     top = {name for _, name in counts[:limit]}
     examples = [e for e in examples if e[0] in top][:max_lines]
@@ -160,12 +221,16 @@ def primary_symbols(records):
     return names
 
 
+_JS_TEST_NAME = re.compile(r"\.(?:test|spec)\.[cm]?[jt]sx?$")
+
+
 def is_test_path(name: str) -> bool:
     path = PurePosixPath(name)
     return (
-        any(part in {"tests", "test"} for part in path.parts[:-1])
+        any(part in {"tests", "test", "__tests__"} for part in path.parts[:-1])
         or path.name.startswith("test_")
         or path.name.endswith("_test.py")
+        or _JS_TEST_NAME.search(path.name) is not None
     )
 
 
@@ -265,12 +330,15 @@ def _render_section(path, lines, intervals, complete, header, preface, cap):
     return "\n".join(parts)
 
 
-def build_sections(work: Path, records, budget_chars=16000, allowed=None):
+def build_sections(
+    work: Path, records, budget_chars=16000, allowed=None, language="python"
+):
     """Render records as merged whole-line excerpts within a character budget.
 
     Files named in the request are capped at 40% of the budget so they cannot
     crowd out the retrieved code; sections that do not fit are listed, not
-    silently dropped.
+    silently dropped. language "js" outlines JS/TS files and finds related
+    JS/TS tests (Python output is unchanged by it).
     """
     by_path: dict[str, list] = {}
     order = []
@@ -318,6 +386,16 @@ def build_sections(work: Path, records, budget_chars=16000, allowed=None):
             summary = outline(text)
             if summary:
                 preface = "Outline:\n" + summary
+        elif (
+            language == "js"
+            and PurePosixPath(path).suffix in JS_SUFFIXES
+            and not complete
+            and not only_support
+            and index < 3
+        ):
+            summary = js_outline(text)
+            if summary:
+                preface = "Outline:\n" + summary
         remaining = budget_chars - used
         cap = min(remaining, int(budget_chars * 0.4)) if named_only else remaining
         if cap < 600:
@@ -330,7 +408,9 @@ def build_sections(work: Path, records, budget_chars=16000, allowed=None):
         sections.append(
             "Not shown for space (read if needed): " + ", ".join(omitted)
         )
-    tests, examples = related_tests(work, primary_symbols(records), allowed=allowed)
+    tests, examples = related_tests(
+        work, primary_symbols(records), allowed=allowed, language=language
+    )
     if tests:
         text = "Related tests: " + ", ".join(
             f"{name} ({hits} mentions)" for hits, name in tests

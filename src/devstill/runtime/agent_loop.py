@@ -15,7 +15,14 @@ import re
 import time
 
 from devstill.runtime.artifacts import write
+from devstill.runtime.jstest import (
+    failing_from_output,
+    parse_tsc,
+    run_test_module,
+    tsc_text,
+)
 from devstill.runtime.loop_context import is_test_path
+from devstill.runtime.toolchain import is_scratch, without_scratch_number
 from devstill.runtime.tools import (
     _FAILURE,
     ToolError,
@@ -232,6 +239,271 @@ EXAMPLE = [
 ]
 
 
+# --- JavaScript/TypeScript mode ---------------------------------------------------
+# Same structure and rules as SYSTEM; the check is a short test module run by
+# the project's own runner (vitest or jest). Built per run from the detected
+# toolchain (constant per repository, so prefix caching still applies).
+
+# The example's source (TypeScript, or plain JavaScript) and its edit.
+JS_EXAMPLE = {
+    True: (
+        "export function ratio(num: number, den: number): number {\n  return num / den\n}",
+        "number): number {\n  return num / den",
+        "number): number | null {\n  if (den === 0) return null\n  return num / den",
+    ),
+    False: (
+        "export function ratio(num, den) {\n  return num / den\n}",
+        "  return num / den",
+        "  if (den === 0) return null\n  return num / den",
+    ),
+}
+
+
+def _js_check_bullet(toolchain):
+    if not toolchain.runner:
+        return (
+            "- Check your change with bash: a short node script (node -e with "
+            "node:assert, 2-6 asserts) that imports the changed code and asserts the "
+            "requested behavior plus each behavior the request explicitly says to keep"
+            + (
+                ", and the type check (npx tsc --noEmit)"
+                if toolchain.typescript
+                else ""
+            )
+            + ". Only test what the request mentions."
+        )
+    where = toolchain.scratch_name(1).replace("_1.", "_<n>.")
+    folder = (
+        toolchain.test_dir + "/"
+        if toolchain.test_dir not in ("", ".")
+        else "the repository root"
+    )
+    framework = (
+        "describe, it and expect are globals"
+        if toolchain.globals
+        else "import describe, it and expect from 'vitest'"
+    )
+    bullet = (
+        f"- Check your change with the test tool: a short {toolchain.runner} test "
+        "module (2-6 expect calls) that imports the changed code the way the "
+        "project's tests do, calls it directly with minimal setup and asserts the "
+        "requested behavior plus each behavior the request explicitly says to keep. "
+        f"It runs alone with the project's test runner as {where} (relative imports "
+        f"start from {folder}; {framework}); a failing expect shows expected and "
+        "received values."
+    )
+    if toolchain.testing_library:
+        bullet += (
+            " React components and hooks can be rendered with "
+            "@testing-library/react (render, screen, act, renderHook)."
+        )
+    bullet += " Only test what the request mentions."
+    if toolchain.import_sample:
+        bullet += "\n  Existing tests import the project like this:\n" + "\n".join(
+            "  " + line for line in toolchain.import_sample
+        )
+    return bullet
+
+
+def js_system(toolchain):
+    check = "test(code with expects)" if toolchain.runner else "bash(check command)"
+    first = (
+        "related tests and the type check run first"
+        if toolchain.typescript
+        else "related tests run first"
+    )
+    lines = [
+        "You are Devstill Quick, a fast, careful coding agent working in a copy of the user's repository. Make the smallest correct change that fully satisfies the request.",
+        "",
+        "How to work:",
+        "- The request comes with source excerpts retrieved from the repository. They are the current file contents: edit from them directly. Read or search only for something you need that is not shown.",
+        "- Change files with edit (or write for a new file): give the path and edits, a list of {oldText, newText} blocks, and put all changes to one file in a single edit call. Each oldText must match the current file exactly and uniquely: copy it from the shown source, keep it short (the lines you change plus enough context to be unique) and never retype unchanged code.",
+        _js_check_bullet(toolchain),
+        (
+            "- Send several tool calls in one response whenever you can; they run in "
+            f"order. The fastest finish is a single response with three calls: "
+            f"edit(...), {check}, done(summary). If the check fails, done is ignored "
+            "and you see the failure. Make every change the request needs before that "
+            "check: once a check passes after your last edit and would have failed "
+            f"before your edits, the task finishes ({first})."
+        ),
+        "- A failing expect about requested or preserved behavior means the code is wrong: fix the code. Never delete or weaken an expectation to make it pass; change one only if it misstates the request.",
+        "- Keep behavior the request does not mention unchanged. Do not edit tests or docs unless asked, and do not add changelog or version notes unless asked.",
+    ]
+    if toolchain.typescript:
+        lines.append(
+            "- This is a TypeScript project: its type check (tsc --noEmit) must keep "
+            "passing, so keep types exact (declare new parameters and options in the "
+            "existing types)."
+        )
+    lines.append("- Finish by calling done with a one-line summary.")
+    return "\n".join(lines)
+
+
+def js_tools(toolchain):
+    """TOOLS for JS mode: the python tool becomes `test` (or is dropped)."""
+    runner = toolchain.runner
+    example = (
+        f"npx {runner} run {toolchain.scratch_name(1).replace('__devstill_check_1', 'file')}"
+        if runner == "vitest"
+        else f"npx {runner} {toolchain.scratch_name(1).replace('__devstill_check_1', 'file')}"
+        if runner
+        else 'node -e "..."'
+    )
+    tools = []
+    for tool in json.loads(json.dumps(TOOLS)):
+        name = tool["function"]["name"]
+        if name == "python":
+            if not runner:
+                continue
+            folder = (
+                toolchain.test_dir + "/"
+                if toolchain.test_dir not in ("", ".")
+                else "the root"
+            )
+            tool["function"] = {
+                "name": "test",
+                "description": f"Run a short {runner} test module against the current "
+                "code. Pass the module source with its own imports (describe/it/expect). "
+                f"It is written to a temporary file in {folder} (relative imports start "
+                "there), run alone with the project's test runner and deleted "
+                "afterwards; a test that runs no expect fails. Returns each failing "
+                "test with expected/received values and the failing check line, or "
+                "'N passed'.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "code": {"type": "string", "description": "Test module source"},
+                        "timeout": {
+                            "type": "number",
+                            "description": "Seconds (default 30)",
+                        },
+                    },
+                    "required": ["code"],
+                },
+            }
+        elif name == "bash":
+            tool["function"]["description"] = (
+                "Run a shell command in the repository root (e.g. grep -rn, "
+                + ("npx tsc --noEmit, " if toolchain.typescript else "")
+                + f"{example}). Returns output and exit code. Dependencies are "
+                "installed (node_modules): never install or reinstall packages. The "
+                "workspace is a copy without git history, so git commands do not work. "
+                "Files created by commands are not part of the change; create files "
+                "with write."
+            )
+        tools.append(tool)
+    return tools
+
+
+def js_example(toolchain):
+    """The finished example exchange for JS mode (TypeScript or JavaScript)."""
+    import posixpath
+
+    typed = toolchain.typescript or toolchain.test_suffix.endswith((".ts", ".tsx"))
+    source, old, new = JS_EXAMPLE[typed]
+    module = "src/ratio.ts" if typed else "src/ratio.js"
+    folder = toolchain.test_dir if toolchain.test_dir not in ("", ".") else "."
+    target = posixpath.relpath("src/ratio", folder)
+    if not target.startswith("."):
+        target = "./" + target
+    header = (
+        ""
+        if toolchain.globals or toolchain.runner != "vitest"
+        else "import { expect, it } from 'vitest'\n"
+    )
+    if toolchain.runner:
+        check_call = (
+            "test",
+            {
+                "code": header + f"import {{ ratio }} from '{target}'\n\n"
+                "it('returns null for a zero denominator', () => {\n"
+                "  expect(ratio(1, 0)).toBeNull()\n"
+                "  expect(ratio(3, 4)).toBe(0.75)\n"
+                "})\n"
+            },
+            "1 passed",
+        )
+    else:
+        check_call = (
+            "bash",
+            {
+                "command": 'node --input-type=module -e "import assert from '
+                "'node:assert'; "
+                f"import {{ ratio }} from './{module}'; "
+                "assert.strictEqual(ratio(1, 0), null); "
+                'assert.strictEqual(ratio(3, 4), 0.75)"'
+            },
+            "[exit code 0]",
+        )
+    return [
+        {
+            "role": "user",
+            "content": "Example task (already finished):\n\nRequest:\nMake ratio "
+            "return null for a zero denominator instead of Infinity. Keep normal "
+            "ratios.\n\nRepository context (current file contents):\n\n### "
+            f"{module} — 3 lines\nwhole file:\n```"
+            + ("typescript" if typed else "javascript")
+            + f"\n{source}\n```",
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "example_1",
+                    "type": "function",
+                    "function": {
+                        "name": "edit",
+                        "arguments": json.dumps(
+                            {
+                                "path": module,
+                                "edits": [{"oldText": old, "newText": new}],
+                            }
+                        ),
+                    },
+                },
+                {
+                    "id": "example_2",
+                    "type": "function",
+                    "function": {
+                        "name": check_call[0],
+                        "arguments": json.dumps(check_call[1]),
+                    },
+                },
+                {
+                    "id": "example_3",
+                    "type": "function",
+                    "function": {
+                        "name": "done",
+                        "arguments": json.dumps(
+                            {"summary": "ratio returns null for a zero denominator"}
+                        ),
+                    },
+                },
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "example_1",
+            "content": f"Edited {module}: replaced 1 block.",
+        },
+        {"role": "tool", "tool_call_id": "example_2", "content": check_call[2]},
+        {"role": "tool", "tool_call_id": "example_3", "content": "ok"},
+    ]
+
+
+def loop_prompt(toolchain=None):
+    """(system prompt, tools, example exchange) for the run's language.
+
+    Python projects (toolchain None or Python) get the module constants
+    SYSTEM, TOOLS and EXAMPLE themselves, unchanged.
+    """
+    if toolchain is None or not toolchain.js:
+        return SYSTEM, TOOLS, EXAMPLE
+    return js_system(toolchain), js_tools(toolchain), js_example(toolchain)
+
+
 def repair_json(text):
     """Parse tool arguments, tolerating raw control characters inside strings."""
     try:
@@ -416,17 +688,218 @@ TEST_RUNNER = re.compile(
     r"|(?:" + _PYTHON + r"\s+)?\S*(?:runtests\.py|manage\.py\s+test)\b)"
 )
 PY_SCRIPT = re.compile(_COMMAND_START + _PYTHON + r"\s+(?:-c\b|-\s*<<|<<)")
+# Python test runners for JS mode: TEST_RUNNER without `npm test`, which
+# JS mode resolves through package.json scripts instead.
+PY_TEST_RUNNER = re.compile(
+    _COMMAND_START
+    + r"(?:"
+    + _PYTHON
+    + r"\s+-m\s+(?:pytest|unittest|doctest|tox|nox|coverage\s+run\s+(?:-\S+\s+)*-m\s+(?:pytest|unittest))\b"
+    r"|(?:\S*/)?(?:pytest|py\.test|tox|nox)\b"
+    r"|coverage\s+run\s+(?:-\S+\s+)*-m\s+(?:pytest|unittest)\b"
+    r"|make\s+(?:test|check)\b"
+    r"|(?:" + _PYTHON + r"\s+)?\S*(?:runtests\.py|manage\.py\s+test)\b)"
+)
+# --- JS mode only: JavaScript commands -------------------------------------------
+# A flag token with a single parse ("--a" never splits as "-" + "-a"), so a
+# failing match cannot backtrack exponentially over many flags.
+_FLAG = r"-{1,2}[^\s-]\S*"
+_JS_END = r"(?![\w.-])"  # "vitest" but not "vitest-report.json"
+_JS_LAUNCH = (
+    r"(?:npx\s+(?:" + _FLAG + r"\s+)*|npm\s+exec\s+(?:--\s+)?"
+    r"|(?:pnpm|yarn)\s+(?:exec\s+|dlx\s+)?|bunx\s+|bun\s+(?:x\s+)?)?"
+)
+# vitest/jest/mocha at command position (directly, through npx/pnpm/yarn/bun
+# or node_modules/.bin), and node --test.
+JS_TEST_RUNNER = re.compile(
+    _COMMAND_START + _JS_LAUNCH + r"(?:\S*/)?(?P<runner>vitest|jest|mocha)" + _JS_END
+)
+NODE_TEST = re.compile(_COMMAND_START + r"(?:\S*/)?node\s+(?:-\S+\s+)*--test" + _JS_END)
+# A package.json script run: npm test, pnpm test:spec, yarn run test, ...
+PACKAGE_SCRIPT = re.compile(
+    _COMMAND_START
+    + r"(?:npm|pnpm|yarn|bun)\s+(?:run(?:-script)?\s+)?(?P<script>[^\s;&|()<>'\"]+)"
+)
+# Runner arguments (in the runner's own command) that list, describe or set
+# up instead of running tests.
+JS_NOT_A_RUN = re.compile(r"(?:^|\s)(?:--version|-v|--listTests|--showConfig)(?=\s|$)")
+VITEST_NOT_A_RUN = re.compile(r"\s+(?:list|init|bench|typecheck)" + _JS_END)
+_COMMAND_END = re.compile(r"[;&|\n]")
+# Inline node scripts (node -e/--eval/-p or a heredoc) that can fail on a
+# wrong result.
+NODE_SCRIPT = re.compile(
+    _COMMAND_START + r"(?:\S*/)?node(?:\s+-{1,2}\w[\w-]*(?:=\S+)?)*?\s+"
+    r"(?:-e\b|--eval\b|-p\b|--print\b|-\s*<<|<<)"
+)
+NODE_ASSERTING = re.compile(
+    r"(?<!console\.)\bassert\b|node:assert|\bthrow\b|process\.exit\(\s*1"
+)
+# A failing type check, node script or test run at command position is
+# evidence against the change, like a failing pytest.
+JS_CHECK_COMMAND = re.compile(
+    _COMMAND_START
+    + r"(?:"
+    + _JS_LAUNCH
+    + r"(?:\S*/)?(?:tsc|vue-tsc|node|vitest|jest|mocha|tsx|ts-node)"
+    + _JS_END
+    + r"|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|typecheck|type-check)"
+    + _JS_END
+    + r")"
+)
+# One type-check invocation (tsc, or a package.json script that only runs it).
+_TSC_CALL = re.compile(
+    r"(?:\w+=\S*\s+)*" + _JS_LAUNCH + r"(?:\S*/)?(?:tsc|vue-tsc)" + _JS_END
+)
+_SCRIPT_CALL = re.compile(
+    r"(?:\w+=\S*\s+)*(?:npm|pnpm|yarn|bun)\s+(?:run(?:-script)?\s+)?(?P<script>\S+)"
+)
+# A JS test module verifies only if it can fail on a wrong result
+# (expectTypeOf is a no-op at run time).
+JS_ASSERTING = re.compile(
+    r"\bexpect(?:\.\w+)?\s*\(|(?<!console\.)\bassert(?:\.\w+)?\s*\("
+)
 
 
-def bash_check_kind(command):
-    """'tests' for a test run, 'script' for an asserting inline script, else None."""
+def js_test_run(command, test_scripts=()):
+    """A JS test run at command position (JS mode).
+
+    Package-manager scripts count when they are `test` or run a test runner
+    (`test_scripts`, from package.json): `pnpm test:types` (tsc) does not.
+    """
+    for match in JS_TEST_RUNNER.finditer(command):
+        end = _COMMAND_END.search(command, match.end())
+        rest = command[match.end() : end.start() if end else len(command)]
+        if JS_NOT_A_RUN.search(rest) or (
+            match.group("runner") == "vitest" and VITEST_NOT_A_RUN.match(rest)
+        ):
+            continue
+        return True
+    if NODE_TEST.search(command):
+        return True
+    scripts = {"test", *test_scripts}
+    return any(m.group("script") in scripts for m in PACKAGE_SCRIPT.finditer(command))
+
+
+def is_type_check(command, type_scripts=()):
+    """The command only type-checks (tsc, or a script that runs just tsc)."""
+    found = False
+    for part in re.split(r"&&|\|\||;|\n", command):
+        part = part.split("|")[0].strip()
+        if not part or re.match(r"cd\s", part):
+            continue
+        if _TSC_CALL.match(part):
+            found = True
+            continue
+        script = _SCRIPT_CALL.match(part)
+        if script and script.group("script") in {
+            "typecheck",
+            "type-check",
+            *type_scripts,
+        }:
+            found = True
+            continue
+        return False
+    return found
+
+
+def bash_check_kind(command, js=False, test_scripts=()):
+    """'tests' for a test run, 'script' for an asserting inline script, else None.
+
+    JS commands count only in JS mode (`js`); `test_scripts` names the
+    package.json scripts that run the project's test runner.
+    """
     if re.search(r"--collect-only|--co\b|--fixtures|--help", command):
         return None  # lists tests without running them
-    if TEST_RUNNER.search(command):
+    if not js:
+        if TEST_RUNNER.search(command):
+            return "tests"
+        if PY_SCRIPT.search(command) and ASSERTING.search(command):
+            return "script"
+        return None
+    if PY_TEST_RUNNER.search(command) or js_test_run(command, test_scripts):
         return "tests"
     if PY_SCRIPT.search(command) and ASSERTING.search(command):
         return "script"
+    if NODE_SCRIPT.search(command) and NODE_ASSERTING.search(command):
+        return "script"
     return None
+
+
+def compare_tests(now, before):
+    """Per-test verdict of a failing JS test check against the original code.
+
+    Messages are compared without the scratch module's number: the run on
+    the original code uses another scratch file name.
+    """
+    if not now or not before:
+        return None
+    tests_now, tests_before = now.get("tests") or {}, before.get("tests") or {}
+
+    def said(record):
+        return {
+            f["name"]: without_scratch_number(f.get("message"))
+            for f in record.get("failures") or []
+        }
+
+    said_now, said_before = said(now), said(before)
+    load_now = without_scratch_number(now.get("load_error"))
+    failing = [name for name, status in tests_now.items() if status == "failed"]
+    both = [name for name in failing if tests_before.get(name) == "failed"]
+    return {
+        "broke": [name for name in failing if tests_before.get(name) == "passed"],
+        "same": [name for name in both if said_now.get(name) == said_before.get(name)],
+        "changed": [
+            name for name in both if said_now.get(name) != said_before.get(name)
+        ],
+        "fixed": [
+            name
+            for name, status in tests_now.items()
+            if status == "passed" and tests_before.get(name) == "failed"
+        ],
+        "load_same": bool(load_now)
+        and load_now == without_scratch_number(before.get("load_error")),
+    }
+
+
+def js_verdict_text(verdict):
+    if not verdict:
+        return ""
+
+    def names(items):
+        shown = ", ".join(f"'{name}'" for name in items[:6])
+        return shown + (f" and {len(items) - 6} more" if len(items) > 6 else "")
+
+    notes = []
+    if verdict["broke"]:
+        notes.append(
+            f"- {names(verdict['broke'])} passed on the original code and fail now: "
+            "if a test checks behavior the request keeps, your change broke it (fix "
+            "the code); if it checks old behavior the request changes, fix the test."
+        )
+    if verdict["changed"]:
+        notes.append(
+            f"- {names(verdict['changed'])} also failed on the original code, with "
+            "another message: your change reached it, but the result is still not "
+            "what the test expects."
+        )
+    if verdict["same"]:
+        notes.append(
+            f"- {names(verdict['same'])} fail the same way on the original code "
+            "(same message): either your change does not reach this scenario yet, or "
+            "the test does not set it up the way the program really runs."
+        )
+    if verdict["load_same"]:
+        notes.append(
+            "- the module fails to load the same way on the original code, so the "
+            "failure is in the test module, not in your change."
+        )
+    if verdict["fixed"]:
+        notes.append(
+            f"- {names(verdict['fixed'])} failed on the original code and pass now."
+        )
+    if not notes:
+        return ""
+    return "\nCompared with the original code (your edits undone):\n" + "\n".join(notes)
 
 
 MALFORMED_CALL = re.compile(r"<tool_call>|<function=|\{\s*\"name\"\s*:")
@@ -450,17 +923,22 @@ def agent_loop(
     before_tools=lambda: None,
     guard=None,
     originals=None,
+    toolchain=None,
 ):
     """Run the tool loop; return an outcome compatible with the structured editor.
 
     Cancellation (InterruptedError) propagates; the task deadline (TimeoutError)
     ends the loop as a failed outcome; the background test guard is always shut
-    down, whichever way the loop exits.
+    down, whichever way the loop exits. `toolchain` (a JS/TS Toolchain) selects
+    the JavaScript prompt, tools and checks; None keeps Python mode.
     """
+    if toolchain is not None and not toolchain.js:
+        toolchain = None
+    system, tools, example = loop_prompt(toolchain)
     state = {
         "messages": [
-            {"role": "system", "content": SYSTEM},
-            *json.loads(json.dumps(EXAMPLE)),
+            {"role": "system", "content": system},
+            *json.loads(json.dumps(example)),
             {
                 "role": "user",
                 "content": render_context(query, context_sections, requirements),
@@ -526,6 +1004,8 @@ def agent_loop(
             before_tools=before_tools,
             guard=guard,
             originals=originals,
+            toolchain=toolchain,
+            tools=tools,
         )
     except InterruptedError:
         raise
@@ -557,8 +1037,18 @@ def _loop(
     before_tools,
     guard,
     originals,
+    toolchain=None,
+    tools=TOOLS,
 ):
     messages = state["messages"]
+    js = toolchain is not None
+    # Recorded agent checks: "python:\n<code>" in Python mode, "test:\n<code>"
+    # (a scratch test module) in JS mode.
+    CHECK = "test:\n" if js else "python:\n"
+    # Guards that never run in the workspace need no pause around swaps.
+    shared_guard = guard is not None and not getattr(guard, "isolated", False)
+    tool_names = [t["function"]["name"] for t in tools]
+    test_scripts = tuple(toolchain.test_scripts) if js else ()
     commands = state["commands"]
     nudged = False
     step = 0
@@ -584,30 +1074,48 @@ def _loop(
         return check is not None and not check["ok"]
 
     original_runs = {}  # check source -> its result on the original sources
+    # JS mode: check source -> (limit, result) of a run on the original
+    # sources that timed out; it is not repeated with the same limit or less.
+    original_timeouts = {}
+
+    def run_check(code, timeout):
+        if js:
+            return run_test_module(workspace, toolchain, code, timeout, checkpoint)
+        return workspace.python(code, timeout, checkpoint)
 
     def on_original(code, timeout=None):
         """Run a check script against the original sources (no model call).
 
         The original state never changes, so each script runs there once
-        (a run that timed out is not kept: it says nothing).
+        (a run that timed out is not kept: it says nothing; in JS mode it is
+        repeated only with a longer time limit).
         """
         if originals is None or not workspace.changed:
             return None
         if code in original_runs:
             return original_runs[code]
-        if guard is not None:
+
+        def available():
+            limit = min(bash_timeout, max(1.0, deadline - time.perf_counter() - 1))
+            return limit if timeout is None else min(limit, timeout)
+
+        if js and code in original_timeouts:
+            tried, timed_out = original_timeouts[code]
+            if available() <= tried + 0.5:
+                return timed_out  # no more time than the run that timed out
+        if shared_guard:
             guard.close()  # background test runs must not see swapped files
-        limit = min(bash_timeout, max(1.0, deadline - time.perf_counter() - 1))
-        if timeout is not None:
-            limit = min(limit, timeout)
+        limit = available()
         try:
             with workspace.original_state(originals):
-                result = workspace.python(code, limit, checkpoint)
+                result = run_check(code, limit)
         finally:
-            if guard is not None:
+            if shared_guard:
                 guard.changed()  # restart runs for the restored current state
         if not result.meta.get("timed_out"):
             original_runs[code] = result
+        elif js:
+            original_timeouts[code] = (limit, result)
         return result
 
     def known(result):
@@ -768,10 +1276,33 @@ def _loop(
         verdict = compare_runs(record, before) if record and before else None
         return not (verdict and (verdict["broke"] or verdict["raised"]))
 
+    def beyond_original(errors, wait):
+        """Type errors of the agent's own tsc run that the original code does
+        not have (file, code and message; counted), or None if unknown."""
+        compare = getattr(guard, "type_errors_beyond_original", None)
+        if compare is None or not errors:
+            return None
+        return compare(errors, workspace.root, wait)
+
     def preexisting(check):
         """Failing test ids of a test command that all fail on the original too."""
         if guard is None or originals is None or not workspace.changed:
             return []
+        if js:
+            if check.get("type_errors"):
+                # The agent's own type check: errors the original code has too.
+                new = beyond_original(
+                    check["type_errors"],
+                    max(0.0, min(guard.timeout, deadline - time.perf_counter() - 2)),
+                )
+                return [tsc_text(e) for e in check["type_errors"]] if new == [] else []
+            known_failures = getattr(guard, "known_failures", None)
+            if known_failures is None or not check.get("failing"):
+                return []
+            return known_failures(
+                check["failing"],
+                max(0.0, min(guard.timeout, deadline - time.perf_counter() - 2)),
+            )
         failing = sorted(
             {m.group(2).strip() for m in _FAILURE.finditer(check.get("output") or "")}
         )
@@ -821,18 +1352,18 @@ def _loop(
         checked (e.g. deleting a helper it still uses) is caught here.
         """
         nonlocal step
-        python_checks = [c for c in commands if c["command"].startswith("python:\n")]
+        python_checks = [c for c in commands if c["command"].startswith(CHECK)]
         if not python_checks or python_checks[-1]["step"] > state["last_edit_step"]:
             return None
-        code = python_checks[-1]["command"][len("python:\n") :]
+        code = python_checks[-1]["command"][len(CHECK) :]
         timeout = min(bash_timeout, max(1.0, deadline - time.perf_counter() - 1))
         report("Re-running the latest check")
-        result = workspace.python(code, timeout, checkpoint)
+        result = run_check(code, timeout)
         record = result.meta.get("record")
         step += 1
         commands.append(
             {
-                "command": "python:\n" + code,
+                "command": CHECK + code,
                 "ok": result.ok,
                 "check": not result.changed,
                 "turn": state["calls"],
@@ -844,13 +1375,17 @@ def _loop(
         )
         if result.ok:
             return None
-        if progressed(code, record, result.text):
+        if not js and progressed(code, record, result.text):
             commands[-1]["check"] = False  # the check, not the change, is wrong
             commands[-1]["check_problem"] = True
             return None
         base = on_original(code)
         compared = (
-            verdict_text(compare_runs(record, base.meta.get("record")))
+            (
+                js_verdict_text(compare_tests(record, base.meta.get("record")))
+                if js
+                else verdict_text(compare_runs(record, base.meta.get("record")))
+            )
             if known(base)
             else ""
         )
@@ -882,7 +1417,11 @@ def _loop(
             # Slow suites must not dominate a quick task: wait briefly at most.
             wait = min(15.0, max(0.0, deadline - time.perf_counter() - 5))
             found = guard.regressions(wait, deadline)
-            failing = (found["regressions"] + found["added"]) if found else []
+            failing = (
+                (found["regressions"] + found["added"] + found.get("type_errors", []))
+                if found
+                else []
+            )
             state["regressions"] = failing
             if found and (guard_reports < 2 and not final):
                 guard_reports += 1
@@ -895,6 +1434,11 @@ def _loop(
                 if found["added"]:
                     parts.append(
                         "Tests you added fail:\n" + "\n".join(found["added"][:10])
+                    )
+                if found.get("type_errors"):
+                    parts.append(
+                        "The type check (tsc --noEmit) reports new errors:\n"
+                        + "\n".join(found["type_errors"][:10])
                     )
                 diff = guard.diff()
                 return (
@@ -920,7 +1464,7 @@ def _loop(
         """The newest passing python check after the last edit, if any."""
         for check in reversed(after_last_edit()):
             if (
-                check["command"].startswith("python:\n")
+                check["command"].startswith(CHECK)
                 and check.get("check", True)
                 and check["ok"]
             ):
@@ -933,7 +1477,7 @@ def _loop(
         return any(
             c["step"] > check["step"]
             and c["ok"]
-            and bash_check_kind(c["command"]) == "tests"
+            and bash_check_kind(c["command"], js, test_scripts) == "tests"
             and any(name in c["command"] for name in added)
             for c in after_last_edit()
         )
@@ -953,7 +1497,7 @@ def _loop(
             or proven_by_added_tests(check)
         ):
             return None
-        base = on_original(check["command"][len("python:\n") :])
+        base = on_original(check["command"][len(CHECK) :])
         if base is None or not base.ok or base.meta.get("timed_out"):
             return None
         discrimination_asked = state["last_edit_step"]
@@ -1009,12 +1553,21 @@ def _loop(
             return None
         failed_check_warned = state["last_edit_step"]
         if check.get("timed_out"):
-            return (
-                "Not finished: your latest test command did not finish. Run a "
-                "narrower command (one test file, -x or -k), then call done."
+            return "Not finished: your latest test command did not finish. Run a " + (
+                "narrower command (one test file, or -t with a test name), then "
+                "call done."
+                if js
+                else "narrower command (one test file, -x or -k), then call done."
             )
-        if not check["command"].startswith("python:\n"):
+        if not check["command"].startswith(CHECK):
             old = preexisting(check)
+            if old and check.get("type_errors"):
+                return (
+                    "Not finished: your latest type check failed, but only with errors "
+                    "the original code has too: " + "; ".join(old[:5]) + ". If they "
+                    "are not what the request is about, call done again; otherwise fix "
+                    "the code."
+                )
             if old:
                 return (
                     "Not finished: your latest test run failed, but these tests also "
@@ -1040,14 +1593,25 @@ def _loop(
             check is None
             or not check["ok"]
             or not check.get("check", True)
-            or not check["command"].startswith("python:\n")
+            or not check["command"].startswith(CHECK)
             or check.get("weakened")
             or any(not c["ok"] for c in after_last_edit() if c.get("check", True))
         ):
             return False
         record = check.get("record") or {}
-        code = check["command"][len("python:\n") :]
-        if (
+        code = check["command"][len(CHECK) :]
+        if js:
+            # At least one test passed, nothing failed or errored, and the
+            # runner required every test to run an expect.
+            if (
+                not JS_ASSERTING.search(code)
+                or not record.get("passed")
+                or record.get("failed")
+                or record.get("load_error")
+                or not record.get("assertions_required")
+            ):
+                return False
+        elif (
             not ASSERTING.search(code)
             or record.get("stop")
             or not any(ran for ran, _ in assert_counts(record).values())
@@ -1056,6 +1620,12 @@ def _loop(
         base = on_original(code)
         if base is None or base.ok or base.meta.get("timed_out"):
             return False
+        if js:
+            # A real failure there: a failing test or a module that does not
+            # load (not "all skipped" or a run that wrote no report).
+            before = base.meta.get("record") or {}
+            if not (before.get("failed") or before.get("load_error")):
+                return False
         return finish()
 
     last_batch_failed_edit = False
@@ -1085,7 +1655,7 @@ def _loop(
                 "failed", failure_stage="deadline", error="Editor deadline exhausted"
             )
         report(f"Model call {state['calls'] + 1}")
-        reply = chat(messages, TOOLS, deadline)
+        reply = chat(messages, tools, deadline)
         state["calls"] += 1
         calls = state["calls"]
         for key in state["usage"]:
@@ -1178,6 +1748,9 @@ def _loop(
             name = call["function"]["name"]
             step += 1
             result: ToolResult
+            # JS mode: a failing type check with only errors the original code
+            # has too says nothing against the change.
+            harmless = False
             if blocked:
                 result = ToolResult(
                     "Skipped: an earlier edit in this response failed.", ok=False
@@ -1194,6 +1767,16 @@ def _loop(
                         ) from None
                     if not isinstance(arguments, dict):
                         raise ToolError("Tool arguments must be a JSON object")
+                    if (
+                        js
+                        and name in ("read", "edit", "write")
+                        and is_scratch(str(arguments.get("path", "")))
+                    ):
+                        raise ToolError(
+                            f"{arguments.get('path')} was a temporary test module: "
+                            "it is deleted after each run. Call test again with the "
+                            "complete corrected module."
+                        )
                     if name == "read":
                         result = workspace.read(
                             str(arguments["path"]),
@@ -1216,7 +1799,70 @@ def _loop(
                         )
                         state["last_edit_step"] = step
                         changed()
-                    elif name in ("python", "bash"):
+                    elif name == "test" and "test" in tool_names:
+                        text = arguments.get("code")
+                        if not isinstance(text, str):
+                            raise ToolError("test needs string code")
+                        timeout = min(
+                            float(arguments.get("timeout") or bash_timeout),
+                            bash_timeout * 2,
+                            max(1.0, deadline - time.perf_counter()),
+                        )
+                        previous = next(
+                            (
+                                c
+                                for c in reversed(commands)
+                                if c["command"].startswith(CHECK)
+                            ),
+                            None,
+                        )
+                        if (
+                            previous is not None
+                            and previous["step"] > state["last_edit_step"]
+                            and previous["command"] == CHECK + text
+                        ):
+                            raise ToolError(
+                                "You already ran this exact check since your last edit "
+                                f"(it {'passed' if previous['ok'] else 'failed'}). Change "
+                                "the code or the check instead of re-running it."
+                            )
+                        report("Running check")
+                        started = time.perf_counter()
+                        result = run_check(text, timeout)
+                        elapsed = time.perf_counter() - started
+                        record = result.meta.get("record")
+                        counts = not result.changed and bool(JS_ASSERTING.search(text))
+                        if (
+                            counts
+                            and not result.ok
+                            and record is not None
+                            and workspace.changed
+                            and not result.meta.get("timed_out")
+                        ):
+                            # Which tests the change broke, fixed or never
+                            # reached: one run on the original code.
+                            base = on_original(text, timeout=max(5.0, 3 * elapsed))
+                            if base is not None and not base.meta.get("timed_out"):
+                                result.text += js_verdict_text(
+                                    compare_tests(record, base.meta.get("record"))
+                                )
+                        if result.changed:
+                            state["last_edit_step"] = step
+                            changed()
+                        commands.append(
+                            {
+                                "command": CHECK + text,
+                                "ok": result.ok,
+                                "check": counts,
+                                "turn": calls,
+                                "step": step,
+                                "output": result.text[-2000:],
+                                "record": record,
+                                "weakened": False,
+                                "timed_out": False,
+                            }
+                        )
+                    elif name == "bash" or (name == "python" and not js):
                         text = arguments.get("code" if name == "python" else "command")
                         if not isinstance(text, str):
                             raise ToolError(
@@ -1282,18 +1928,66 @@ def _loop(
                         else:
                             report("Running command")
                             result = workspace.bash(text, timeout, checkpoint)
-                            kind = bash_check_kind(text)
+                            kind = bash_check_kind(text, js, test_scripts)
                             if kind == "tests" and result.meta.get("timed_out"):
                                 timed_out = True
                                 result.text += (
                                     "\n[the test command did not finish, so it says "
                                     "nothing about your change: run a narrower command "
-                                    "(one test file, -x or -k)]"
+                                    + (
+                                        "(one test file, or -t with a test name)]"
+                                        if js
+                                        else "(one test file, -x or -k)]"
+                                    )
                                 )
                             counts = not result.changed and (
                                 kind is not None
-                                or (not result.ok and bool(CHECK_COMMAND.search(text)))
+                                or (
+                                    not result.ok
+                                    and bool(
+                                        CHECK_COMMAND.search(text)
+                                        or (js and JS_CHECK_COMMAND.search(text))
+                                    )
+                                )
                             )
+                        type_errors = None
+                        if (
+                            js
+                            and name == "bash"
+                            and counts
+                            and not result.ok
+                            and not result.meta.get("timed_out")
+                            and is_type_check(text, toolchain.type_scripts)
+                            and not result.text.startswith("[output truncated")
+                        ):
+                            # The agent's own type check: compare its errors
+                            # with the original code's (pristine baseline).
+                            type_errors = parse_tsc(result.text, workspace.root)
+                            new = beyond_original(
+                                type_errors,
+                                max(
+                                    0.0, min(10.0, deadline - time.perf_counter() - 10)
+                                ),
+                            )
+                            if new == []:
+                                counts = False  # not evidence against the change
+                                harmless = True
+                                result.text += (
+                                    "\n[this type error also occurs on the original "
+                                    "code: your change did not cause it]"
+                                    if len(type_errors) == 1
+                                    else f"\n[all {len(type_errors)} type errors also "
+                                    "occur on the original code: your change did not "
+                                    "cause them]"
+                                )
+                            elif new:
+                                result.text += (
+                                    f"\n[{len(type_errors) - len(new)} of these errors "
+                                    "also occur on the original code; new with your "
+                                    "change:\n"
+                                    + "\n".join(tsc_text(e) for e in new[:10])
+                                    + "]"
+                                )
                         if result.changed:
                             # The command edited files itself: that is an edit,
                             # not a check of the edited state.
@@ -1314,11 +2008,22 @@ def _loop(
                                 "timed_out": timed_out,
                             }
                         )
+                        if js and name == "bash" and not result.ok and counts:
+                            # Failing test ids, for "also fails on the original".
+                            commands[-1]["failing"] = failing_from_output(result.text)
+                            if type_errors:
+                                commands[-1]["type_errors"] = type_errors
                     elif name == "done":
                         done_summary = (
                             str(arguments.get("summary", "")).strip() or "done"
                         )
                         result = ToolResult("ok")
+                    elif js:
+                        raise ToolError(
+                            f"Unknown tool {name!r}. Available: "
+                            + ", ".join(tool_names)
+                            + "."
+                        )
                     else:
                         raise ToolError(
                             f"Unknown tool {name!r}. Available: read, python, bash, edit, write, done."
@@ -1336,7 +2041,7 @@ def _loop(
                     result = ToolResult(f"{name} refused: {exc}", ok=False)
                 except OSError as exc:
                     result = ToolResult(f"{name} failed: {exc}", ok=False)
-                if not result.ok:
+                if not result.ok and not harmless:
                     batch_failed = True
                     if name in MUTATING:
                         blocked = True
@@ -1344,7 +2049,11 @@ def _loop(
             messages.append(
                 {"role": "tool", "tool_call_id": call["id"], "content": result.text}
             )
-            if name in ("python", "bash") and commands and commands[-1]["step"] == step:
+            if (
+                name in ("python", "bash", "test")
+                and commands
+                and commands[-1]["step"] == step
+            ):
                 commands[-1]["message"] = len(messages) - 1
             if name == "done":
                 done_index = len(messages) - 1
