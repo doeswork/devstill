@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "id": "20261110T100311Z-b09dfad",
+  "status": "completed",
+  "started_at": "2026-11-10T10:03:11+00:00",
+  "finished_at": "2026-11-10T11:28:29+00:00",
+  "note": "react-dev after JS fixes 5c58680 (read-only store, per-trial audit)",
+  "command": [
+    "bench_suite.py",
+    "run",
+    "--suite",
+    "react-dev",
+    "--repeats",
+    "2",
+    "--note",
+    "react-dev after JS fixes 5c58680 (read-only store, per-trial audit)"
+  ],
+  "host": "USNBRosenbergJ",
+  "platform": "Linux-6.18.54.1-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+  "git": {
+    "sha": "b09dfad8d9778ba52f8aaea2298b26a3c1ccdeda",
+    "short": "b09dfad",
+    "branch": "bench-test-ui-ux",
+    "dirty": false,
+    "status": []
+  },
+  "model": {
+    "base_url": "https://llm.codemonkey.study/v1",
+    "configured_model": "vllm-qwen38-27b",
+    "served": [
+      [
+        "vllm-qwen38-27b",
+        "gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090",
+        262144
+      ]
+    ],
+    "served_sha256": "05a50541b75c9bee998e78c26a97e70deeb8c1da68a3150d6842d34ed586a6f1"
+  },
+  "pi": {
+    "version": "1.5.0",
+    "node": "v24.14.1",
+    "reason": null
+  },
+  "tools": {
+    "python": "Python 3.12.3",
+    "pytest": "pytest 8.3.5",
+    "ruff": "ruff 0.17.4",
+    "node": "v24.14.1",
+    "git": "git version 2.43.0"
+  },
+  "settings": {
+    "sampling": "default",
+    "endpoint_wait": 1800,
+    "max_hours": null,
+    "overrides": {
+      "repeats": 2,
+      "variants": null,
+      "timeout": null
+    }
+  },
+  "suites": [
+    {
+      "name": "react-dev",
+      "settings": {
+        "variants": "pi,runtime",
+        "repeats": 2,
+        "timeout": 120,
+        "purpose": "development",
+        "pi_disable_reasoning": true,
+        "acceptance_budget": 240,
+        "requires": [
+          "node"
+        ],
+        "name": "react-dev",
+        "dataset": "benchmarks/retrieval/zustand_dev.v1.json",
+        "tags": [
+          "react",
+          "dev"
+        ],
+        "description": "12 zustand (React/TypeScript) cases, vitest + tsc acceptance (development set)"
+      },
+      "dataset_sha256": "59d4d6ceac6a58a498995bfd44fa49139f1cde7d9652d4f84fc65a41b09c0b8a",
+      "status": "completed",
+      "reason": null,
+      "attempts": [
+        {
+          "started_at": "2026-11-10T10:03:12+00:00",
+          "finished_at": "2026-11-10T11:28:29+00:00",
+          "exit_code": 0,
+          "resume": false,
+          "trials_recorded": 48,
+          "suite_time_limit_hit": false,
+          "stray_processes_killed": 0,
+          "stopped": null
+        }
+      ],
+      "verified_cache": "/home/jeffyx/devstill/.devstill/bench-cache/verified/react-dev-59d4d6ceac6a-6a32e89d6b6e",
+      "excluded_cases": {},
+      "dataset_used": "/home/jeffyx/devstill/benchmarks/retrieval/zustand_dev.v1.json",
+      "verified_used": "/home/jeffyx/devstill/.devstill/bench-cache/verified/react-dev-59d4d6ceac6a-6a32e89d6b6e"
+    }
+  ]
+}
