@@ -160,6 +160,10 @@ def executable(path, text):
 @pytest.fixture
 def jsrepo(tmp_path):
     """A small JS project with fake vitest/tsc installs (outside the repo)."""
+    return make_jsrepo(tmp_path)
+
+
+def make_jsrepo(tmp_path):
     install = tmp_path / "install" / "node_modules"
     executable(install / ".bin" / "vitest", FAKE_VITEST)
     executable(install / ".bin" / "tsc", FAKE_TSC)
@@ -305,7 +309,9 @@ def test_js_mode_prompt_has_the_test_tool_and_project_imports():
     assert "tests/__devstill_check_<n>.test.tsx" in system
     assert "@testing-library/react" in system and "tsc --noEmit" in system
     bash = next(t for t in tools if t["function"]["name"] == "bash")
-    assert "never install or reinstall packages" in bash["function"]["description"]
+    assert (
+        "never install, reinstall or modify packages" in bash["function"]["description"]
+    )
     calls = [c["function"]["name"] for c in example[1]["tool_calls"]]
     assert calls == ["edit", "test", "done"]
     code = json.loads(example[1]["tool_calls"][1]["function"]["arguments"])["code"]
@@ -1055,7 +1061,8 @@ def test_failing_js_check_is_compared_with_the_original(jsrepo, tmp_path):
     )
     result, _ = js_loop(jsrepo, tmp_path, chat)
     shown = tool_results(chat, 1)[-1]
-    assert "Compared with the original code" in shown
+    assert "The results above are from your current, edited code" in shown
+    assert "ran on a pristine copy of the original code" in shown
     assert "'keeps export' passed on the original code and fail now" in shown
     assert "'adds' fail the same way on the original code" in shown
     assert result["status"] == "failed" or not result["verified"]
@@ -1130,9 +1137,7 @@ def test_js_check_timing_out_on_the_original_runs_there_once(jsrepo, tmp_path):
     assert time.perf_counter() - started < 15
 
 
-def test_failing_scratch_module_that_fails_to_load_the_same_on_the_original(
-    jsrepo, tmp_path
-):
+def test_scratch_module_that_does_not_parse_is_a_test_bug(jsrepo, tmp_path):
     chat = scripted(
         reply(EDIT, call("test", 1, code="SYNTAX ERROR expect(")),
         reply(call("test", 0, code=PROVES)),
@@ -1141,9 +1146,14 @@ def test_failing_scratch_module_that_fails_to_load_the_same_on_the_original(
     result, _ = js_loop(jsrepo, tmp_path, chat)
     shown = tool_results(chat, 1)[-1]
     assert "The test module failed to load" in shown
-    assert "fails to load the same way on the original code" in shown
-    # A failed check since the last edit rules out auto-finish (as in Python).
-    assert result["status"] == "applied_unvalidated" and result["model_calls"] == 3
+    # A module that does not parse is a test bug: no run on the original code,
+    # and it does not hold back the next passing check.
+    assert "the test module itself does not parse" in shown
+    assert "At your test module line 1, column 1:\n> 1 | SYNTAX ERROR expect(" in shown
+    assert result["commands"][0]["check_problem"] and not result["commands"][0]["check"]
+    assert result["finished"] == "verified_check" and result["model_calls"] == 2
+    runs = (tmp_path / "runs.jsonl").read_text().splitlines()
+    assert len(runs) == 3  # broken module, passing check, passing check's original
 
 
 def test_agent_type_check_with_only_old_errors_is_not_held_against_it(jsrepo, tmp_path):

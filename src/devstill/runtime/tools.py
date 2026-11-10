@@ -761,6 +761,47 @@ def _render_changed(before: str, after: str, limit: int = 24) -> str:
     return f"Lines {first + 1}-{last} now read:\n{body}"
 
 
+def render_hunks(
+    before: str, after: str, context: int = 1, limit: int = 60, region: int = 16
+) -> str:
+    """Every edited region of the new file, each with `context` lines around it
+    (JS mode's edit confirmation; at most `region` lines per region and
+    `limit` in all)."""
+    old_lines = before.split("\n")
+    new_lines = after.split("\n")
+    matcher = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
+    windows: list[list[int]] = []
+    for tag, _, _, start, end in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        first = max(0, start - context)
+        last = min(len(new_lines), max(end, start) + context)
+        if windows and first <= windows[-1][1]:
+            windows[-1][1] = max(windows[-1][1], last)
+        else:
+            windows.append([first, last])
+    parts, used = [], 0
+    for index, (first, last) in enumerate(windows):
+        if used >= limit:
+            parts.append(f"[{len(windows) - index} more changed regions not shown]")
+            break
+        shown = new_lines[first:last]
+        cut = ""
+        if len(shown) > region:
+            cut = f"\n[... {len(shown) - region} more lines of this region]"
+            shown = shown[:region]
+        used += len(shown)
+        if not shown:
+            parts.append(f"Lines removed at the end (now {len(new_lines)} lines).")
+            continue
+        parts.append(
+            f"Lines {first + 1}-{first + len(shown)} now read:\n"
+            + "\n".join(shown)
+            + cut
+        )
+    return "\n".join(parts)
+
+
 def _compiles(name: str, content: str) -> bool:
     if not name.endswith(".py"):
         return True
@@ -842,6 +883,12 @@ class Workspace:
         # Editable files whose modification by a command (e.g. sed -i) counts
         # as a proposed change, like an edit made with the edit tool.
         self.tracked = list(tracked)
+        # JS mode only (None otherwise, which keeps the Python behavior):
+        # content_gate(name, before, after) refuses a write with ToolError
+        # (before is None for a new file); change_view(before, after) renders
+        # an edit's confirmation.
+        self.content_gate = None
+        self.change_view = None
 
     def name(self, path: str) -> str:
         """Normalized repository-relative name ('./a//b.py' -> 'a/b.py')."""
@@ -949,10 +996,12 @@ class Workspace:
         if _compiles(name, text):
             # Files that already fail to compile (new syntax, fixtures) are not gated.
             _check_python(name, updated)
+        if self.content_gate is not None:
+            self.content_gate(name, text, updated)
         output = updated.replace("\n", "\r\n") if crlf else updated
         target.write_bytes((BOM if bom else b"") + output.encode("utf-8"))
         self._note(name)
-        shown = _render_changed(text, updated)
+        shown = (self.change_view or _render_changed)(text, updated)
         noun = "block" if len(edits) == 1 else "blocks"
         return ToolResult(
             f"Edited {name}: replaced {len(edits)} {noun}."
@@ -975,6 +1024,8 @@ class Workspace:
             combined += content
             if _compiles(name, original):
                 _check_python(name, combined)
+            if self.content_gate is not None:
+                self.content_gate(name, original, combined)
             # Keep the existing bytes (BOM, line endings) untouched; only add.
             separator = b"" if not raw or raw.endswith(b"\n") else b"\n"
             addition = content.replace("\n", "\r\n") if crlf else content
@@ -994,6 +1045,8 @@ class Workspace:
             )
         if not existed or _compiles(name, original):
             _check_python(name, content)
+        if self.content_gate is not None:
+            self.content_gate(name, original if existed else None, content)
         target.parent.mkdir(parents=True, exist_ok=True)
         output = content.replace("\n", "\r\n") if crlf else content
         bom = BOM if raw.startswith(BOM) else b""

@@ -26,7 +26,14 @@ import time
 from collections import Counter
 from pathlib import Path, PurePosixPath
 
-from devstill.runtime.toolchain import JS_SUFFIXES, is_scratch, link_dependencies
+from devstill.runtime.jssyntax import code_frame
+from devstill.runtime.toolchain import (
+    JS_SUFFIXES,
+    SCRATCH_PREFIX,
+    is_scratch,
+    link_dependencies,
+    tsconfig_for,
+)
 from devstill.runtime.tools import TestGuard, ToolError, ToolResult, _kill
 
 ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
@@ -172,6 +179,93 @@ def _frame_line(message, path):
         return None
     match = re.search(re.escape(str(path)) + r":(\d+):\d+", message or "")
     return int(match.group(1)) if match else None
+
+
+_LOCATED = re.compile(r"(?P<path>[\w./@$+-]+\.[cm]?[jt]sx?):(?P<line>\d+):(?P<col>\d+)")
+_SYNTAX = re.compile(r"Expected .+ but found|Unexpected|expected", re.IGNORECASE)
+
+
+def load_frame(message, name, lines, root):
+    """A code frame (with a caret) at the first location a load error names:
+    the scratch module `name` (source `lines`) or a repository file."""
+    for match in _LOCATED.finditer(message or ""):
+        path, line = match.group("path"), int(match.group("line"))
+        # esbuild (vite's transform) counts columns from 0.
+        column = int(match.group("col")) + (1 if "ERROR:" in message else 0)
+        if is_scratch(path):
+            source, label = lines, "your test module"
+        else:
+            file = Path(root) / path
+            if "node_modules" in PurePosixPath(path).parts or not file.is_file():
+                continue
+            try:
+                source = file.read_text(errors="replace").split("\n")
+            except OSError:
+                continue
+            label = path
+        frame = code_frame(source, line, column)
+        if not frame:
+            continue
+        hint = (
+            "\n[an unclosed ( [ { or a missing comma above the marked line is the "
+            "usual cause]"
+            if _SYNTAX.search(message)
+            else ""
+        )
+        return f"At {label} line {line}, column {column}:\n{frame}{hint}"
+    return ""
+
+
+_STACK_FRAME = re.compile(
+    r"^\s*at\s+(?:(?P<fn>[^()]*?)\s+\()?(?:file://)?(?P<path>[^()\s]+?)"
+    r":(?P<line>\d+):(?P<col>\d+)\)?\s*$"
+)
+
+
+def repo_frames(message, root, scratch, limit=2):
+    """The innermost stack frames of a failure that point into repository
+    source (not dependencies, not the test module), as one display line plus
+    the source line where it was thrown; "" when there are none."""
+    root = Path(root)
+    prefixes = {str(root) + "/"}
+    try:
+        prefixes.add(str(root.resolve()) + "/")
+    except OSError:
+        pass
+    frames = []
+    for raw in (message or "").split("\n"):
+        match = _STACK_FRAME.match(raw)
+        if not match:
+            continue
+        path = match.group("path")
+        relative = next((path[len(p) :] for p in prefixes if path.startswith(p)), None)
+        if relative is None:
+            continue  # outside the repository (node internals, other trees)
+        if is_scratch(relative) or relative == scratch:
+            break  # reached the test module: the rest are its callers
+        if "node_modules" in PurePosixPath(relative).parts:
+            continue
+        frames.append(
+            (relative, int(match.group("line")), (match.group("fn") or "").strip())
+        )
+        if len(frames) >= limit:
+            break
+    if not frames:
+        return ""
+
+    def label(frame):
+        file, line, function = frame
+        return f"{file}:{line}" + (f" ({function})" if function else "")
+
+    text = "thrown in " + label(frames[0])
+    if len(frames) > 1:
+        text += ", called from " + label(frames[1])
+    try:
+        source = (root / frames[0][0]).read_text(errors="replace").split("\n")
+        line = source[frames[0][1] - 1].strip()[:160]
+    except (OSError, IndexError):
+        line = ""
+    return text + (f"\n    {frames[0][1]} | {line}" if line else "")
 
 
 def _status(value):
@@ -430,14 +524,20 @@ def _read_report(path):
 # --- the test tool ---------------------------------------------------------------
 
 
-def run_test_module(workspace, toolchain, code, timeout, checkpoint=lambda: None):
+def run_test_module(
+    workspace, toolchain, code, timeout, checkpoint=lambda: None, type_check=None
+):
     """Write `code` to a scratch test file, run it alone, always delete it.
 
     ok only if at least one test passed and nothing failed (a module that
     fails to load is a failure); a test that runs no expect fails. Coverage
     is off. meta["record"] holds JSON-native per-test results: {"tests":
     {name: status}, "failures": [{"name","message","line"}], "passed": n,
-    "failed": n, "load_error": message or None, "assertions_required": True}.
+    "failed": n, "load_error": message or None, "assertions_required": True};
+    meta["scratch"] is the module's path. Modules without JSX use the
+    toolchain's plain suffix (.ts) when it has one. `type_check(name)`, if
+    given, runs after a failing run whose module loaded (the file still
+    exists) and returns text appended to the result.
     """
     if not isinstance(code, str) or not code.strip():
         raise ToolError("code must not be empty")
@@ -448,10 +548,12 @@ def run_test_module(workspace, toolchain, code, timeout, checkpoint=lambda: None
     directory = (
         root / toolchain.test_dir if toolchain.test_dir not in ("", ".") else root
     )
+    scratch_suffix = getattr(toolchain, "scratch_suffix", None)
+    suffix = scratch_suffix(code) if scratch_suffix else toolchain.test_suffix
     number = getattr(workspace, "_scratch_count", 0)
     while True:
         number += 1
-        name = toolchain.scratch_name(number)
+        name = toolchain.scratch_name(number, suffix)
         if not (root / name).exists():
             break
     workspace._scratch_count = number
@@ -467,6 +569,7 @@ def run_test_module(workspace, toolchain, code, timeout, checkpoint=lambda: None
         ),
         None,
     )
+    typed = None
     with tempfile.TemporaryDirectory(prefix="devstill-test-") as folder:
         report = Path(folder) / "report.json"
         try:
@@ -482,6 +585,13 @@ def run_test_module(workspace, toolchain, code, timeout, checkpoint=lambda: None
                 ignore=is_scratch,
                 env=runner_env(workspace.env),
             )
+            if (
+                type_check is not None
+                and not result.ok
+                and not result.meta.get("timed_out")
+                and not _load_failed(_read_report(report))
+            ):
+                typed = type_check(name)
         finally:
             path.unlink(missing_ok=True)
             for leftover in directory.glob(f"__snapshots__/{path.name}*"):
@@ -492,7 +602,107 @@ def run_test_module(workspace, toolchain, code, timeout, checkpoint=lambda: None
             if created_dir is not None:
                 shutil.rmtree(created_dir, ignore_errors=True)
         data = _read_report(report)
-    return describe_test_run(result, data, root, name, code, assertions_required=True)
+    described = describe_test_run(
+        result, data, root, name, code, assertions_required=True
+    )
+    if typed:
+        described.text += "\n\n" + typed
+    described.meta["scratch"] = name
+    return described
+
+
+def _load_failed(data):
+    """The report shows a module that never ran its tests (or no report)."""
+    if data is None:
+        return True
+    return any(
+        module.get("status") == "failed" and not module.get("assertionResults")
+        for module in data.get("testResults") or []
+    )
+
+
+# Runner globals a project tsconfig may not declare (vitest globals: true).
+_RUNNER_GLOBALS = re.compile(
+    r"Cannot find name '(?:describe|it|test|expect|vi|jest|beforeEach|afterEach|"
+    r"beforeAll|afterAll|suite)'"
+)
+
+
+# Errors about the configuration, not the test: module resolution (the
+# module loaded, so the runner resolves it), the JSX flag, options and
+# rootDir (TS5xxx/TS6xxx, also unused names), declaration files, and
+# runner globals the tsconfig may not declare (TS2582/TS2593).
+_CONFIG_LEVEL = re.compile(r"TS(?:2307|2792|7016|17004|6142|2582|2593|[56]\d{3})$")
+
+
+def scratch_type_errors(workspace, toolchain, name, code, timeout=4.0):
+    """Type errors inside the scratch module `name` alone (tsc with the
+    project's tsconfig, only that file as root), as text; None when there
+    are none, it is not a TypeScript project, or tsc does not finish in
+    `timeout` seconds (then "timeout")."""
+    root = Path(workspace.root)
+    if not toolchain.tsc_path or not (root / "tsconfig.json").is_file():
+        return None
+    if PurePosixPath(name).suffix not in (".ts", ".tsx", ".mts", ".cts"):
+        return None
+    # A solution-style tsconfig.json has no compiler options of its own:
+    # extend the referenced config that covers the module (none: no check).
+    project = tsconfig_for(root, name)
+    if project is None:
+        return None
+    config = root / f"{SCRATCH_PREFIX}tsconfig.json"
+    config.write_text(
+        json.dumps(
+            {
+                "extends": "./" + project,
+                "compilerOptions": {
+                    "noEmit": True,
+                    "incremental": False,
+                    "composite": False,
+                },
+                "files": [name],
+                "include": [],
+            }
+        )
+    )
+    try:
+        run = execute(
+            [str(root / toolchain.tsc_path), "-p", config.name, "--pretty", "false"],
+            root,
+            runner_env(workspace.env),
+            timeout,
+        )
+    finally:
+        config.unlink(missing_ok=True)
+    if run is None or run["timed_out"]:
+        return "timeout"
+    errors = [
+        e
+        for e in parse_tsc(run["output"], root)
+        if e["file"] == name
+        and not _CONFIG_LEVEL.match(e["code"])
+        and not _RUNNER_GLOBALS.search(e["message"])
+    ]
+    if not errors:
+        return None
+    lines = code.split("\n")
+    shown = []
+    for error in errors[:6]:
+        source = (
+            lines[error["line"] - 1].strip()[:120]
+            if 0 < error["line"] <= len(lines)
+            else ""
+        )
+        shown.append(
+            f"- check line {error['line']}: {error['code']} {error['message'][:240]}"
+            + (f"\n    {source}" if source else "")
+        )
+    more = f"\n[{len(errors) - 6} more]" if len(errors) > 6 else ""
+    return (
+        "Type errors in your test module (tsc): usually a bug in the test (a wrong "
+        "setup, a value read with the wrong shape), unless the test uses types "
+        "your change still has to declare:\n" + "\n".join(shown) + more
+    )
 
 
 def describe_test_run(result, data, root, name, code, assertions_required=False):
@@ -521,6 +731,7 @@ def describe_test_run(result, data, root, name, code, assertions_required=False)
     prefix = f"{name} > "
     tests, failures = {}, []
     load_error = None
+    shown_where = {}  # failure index -> display-only location details
     for test_id, status in parsed["tests"].items():
         short = test_id.removeprefix(prefix)
         if short == LOAD_FAILURE:
@@ -530,6 +741,7 @@ def describe_test_run(result, data, root, name, code, assertions_required=False)
                 (info.get("message") or message).replace(str(root) + "/", "")
             )
             line = location[1] if location and location[0].endswith(name) else None
+            shown_where[len(failures)] = load_frame(load_error, name, lines, root)
             failures.append({"name": LOAD_FAILURE, "message": load_error, "line": line})
             continue
         tests[short] = status
@@ -542,12 +754,21 @@ def describe_test_run(result, data, root, name, code, assertions_required=False)
             text = clean_message(
                 (message or info.get("message") or "").replace(str(root) + "/", "")
             )
+            failure = {"name": short, "message": text, "line": line}
             if NO_ASSERTION in text:
-                text = (
+                failure["message"] = (
                     "No expect ran in this test (an expect inside a callback that "
                     "never runs checks nothing): make it assert the behavior directly."
                 )
-            failures.append({"name": short, "message": text, "line": line})
+            else:
+                # Only display: line numbers in sources move with edits, and
+                # records are compared across code versions. The record keeps
+                # whether it was thrown inside repository source at all.
+                where = repo_frames(info.get("message"), root, name)
+                shown_where[len(failures)] = where
+                if where:
+                    failure["source"] = True
+            failures.append(failure)
     passed = sum(1 for s in tests.values() if s == "passed")
     failed = sum(1 for s in tests.values() if s == "failed")
     record = {
@@ -563,21 +784,26 @@ def describe_test_run(result, data, root, name, code, assertions_required=False)
     console = console_output(output)
     if console:
         parts.append(console)
-    for failure in failures[:8]:
+    for index, failure in enumerate(failures[:8]):
+        where = shown_where.get(index)
         if failure["name"] == LOAD_FAILURE:
             folder = str(PurePosixPath(name).parent)
             block = (
                 "The test module failed to load:\n"
                 + failure["message"]
+                + (f"\n{where}" if where else "")
                 + f"\n[the module runs as {name}: relative imports start from "
                 + ("the repository root" if folder == "." else folder + "/")
                 + "]"
             )
+            where = None
         else:
             block = f"FAIL {failure['name']}\n{failure['message']}"
         line = failure.get("line")
         if line and 0 < line <= len(lines):
             block += f"\n  at check line {line}: {lines[line - 1].strip()[:160]}"
+        if where:
+            block += "\n  " + where
         parts.append(block)
     if len(failures) > 8:
         parts.append(f"[{len(failures) - 8} more failing tests not shown]")
@@ -963,6 +1189,70 @@ class JsGuard:
         if not (found["regressions"] or found["added"] or found["type_errors"]):
             return None
         found["output"] = "\n\n".join(shown)
+        return found
+
+    def peek(self, wait=0.0, parts=None):
+        """What the current state's runs found so far (no confirming re-runs),
+        waiting up to `wait` seconds for the runs named in `parts` ("tsc",
+        "tests"; default all); None when nothing runs.
+
+        {"generation", "pending": parts still running, "type_errors": new
+        errors (None: unknown), "regressions"/"added": failing tests (None:
+        unknown), "messages": {test: message}}.
+        """
+        with self._lock:
+            runs = dict(self._runs)
+            generation = self._generation
+        if not runs:
+            return None
+        end = time.perf_counter() + max(0.0, wait)
+        for key, run in runs.items():
+            if parts is None or key in parts:
+                run["done"].wait(timeout=max(0.0, end - time.perf_counter()))
+        found = {
+            "generation": generation,
+            "pending": [],
+            "type_errors": None,
+            "regressions": None,
+            "added": None,
+            "messages": {},
+        }
+        types = runs.get("tsc")
+        if types is not None:
+            base = self._base["tsc"]
+            if not (types["done"].is_set() and base["done"].is_set()):
+                found["pending"].append("tsc")
+            elif _usable_tsc(types["result"]) and _usable_tsc(base["result"]):
+                fresh = excess_type_errors(
+                    base["result"]["errors"],
+                    types["result"]["errors"],
+                    self.pristine,
+                    self.current,
+                )
+                found["type_errors"] = [tsc_text(e) for e in fresh]
+        tests = runs.get("tests")
+        if tests is not None:
+            base = self._base["tests"]
+            if not (tests["done"].is_set() and base["done"].is_set()):
+                found["pending"].append("tests")
+            else:
+                now, before = tests["result"], base["result"]
+                if (
+                    _usable_tests(now)
+                    and not now.get("timed_out")
+                    and _usable_tests(before)
+                    and not before.get("timed_out")
+                ):
+                    failing = sorted(
+                        t for t, s in now["tests"].items() if s == "failed"
+                    )
+                    new, added = self._compare(failing, before["tests"])
+                    found["regressions"], found["added"] = new, added
+                    found["messages"] = {
+                        k: v
+                        for k, v in (now.get("failures") or {}).items()
+                        if k in new or k in added
+                    }
         return found
 
     def _compare(self, failing, baseline):

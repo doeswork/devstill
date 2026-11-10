@@ -91,15 +91,34 @@ class Toolchain:
     # package.json scripts that run the test runner, and that only type-check.
     test_scripts: list[str] = field(default_factory=list)
     type_scripts: list[str] = field(default_factory=list)
+    # The suffix without JSX (".test.ts" for ".test.tsx") when the runner
+    # discovers it in test_dir too: scratch modules without JSX use it, so
+    # TypeScript generics like `<T>(x: T) => x` parse.
+    plain_suffix: str | None = None
 
     @property
     def js(self) -> bool:
         return self.language == "js"
 
-    def scratch_name(self, number: int) -> str:
+    def scratch_name(self, number: int, suffix: str | None = None) -> str:
         """Repository-relative path of the scratch test module `number`."""
-        name = f"{SCRATCH_PREFIX}{number}{self.test_suffix}"
+        name = f"{SCRATCH_PREFIX}{number}{suffix or self.test_suffix}"
         return name if self.test_dir in ("", ".") else f"{self.test_dir}/{name}"
+
+    def scratch_suffix(self, code: str) -> str:
+        """The scratch module suffix for `code`: the plain one unless it has JSX."""
+        if self.plain_suffix and not has_jsx(code):
+            return self.plain_suffix
+        return self.test_suffix
+
+
+# A closing tag (</div>, </>) or a self-closing element: TypeScript generics
+# and comparisons never contain either.
+_JSX = re.compile(r"</\s*[A-Za-z_$]?[\w$.:-]*\s*>|/>")
+
+
+def has_jsx(code: str) -> bool:
+    return _JSX.search(code or "") is not None
 
 
 def is_scratch(name: str) -> bool:
@@ -235,6 +254,7 @@ def detect_js(repo: Path, path=None) -> Toolchain:
             for key, body in scripts.items()
             if isinstance(body, str) and TYPE_CHECK_SCRIPT.match(body)
         ),
+        plain_suffix=plain_suffix(config, directory, suffix),
     )
 
 
@@ -365,18 +385,101 @@ def parse_vitest_config(text: str) -> dict:
             found["include"] = patterns
     if re.search(r"\bglobals\s*:\s*true\b", top):
         found["globals"] = True
+    # Test files may run in different environments (or projects) by their
+    # path or suffix: a scratch module keeps the suffix the tests use.
+    if re.search(r"\b(?:environmentMatchGlobs|projects|workspace)\s*:", top):
+        found["environments"] = True
     return found
 
 
+# Vitest workspace/projects files (one config per group of test files).
+VITEST_WORKSPACES = tuple(
+    f"vitest.{base}.{ext}"
+    for base in ("workspace", "projects")
+    for ext in ("ts", "mts", "cts", "js", "mjs", "cjs", "json")
+)
+
+
 def vitest_config(repo: Path) -> dict:
+    found = {}
     for name in VITEST_CONFIGS:
         path = repo / name
         if path.is_file():
             try:
-                return parse_vitest_config(path.read_text(errors="ignore"))
+                found = parse_vitest_config(path.read_text(errors="ignore"))
             except (OSError, RecursionError):
-                return {}
-    return {}
+                found = {}
+            break
+    if any((repo / name).is_file() for name in VITEST_WORKSPACES):
+        found = dict(found, environments=True)
+    return found
+
+
+def read_jsonc(path):
+    """A JSON file that may have comments and trailing commas (tsconfig),
+    or None."""
+    try:
+        text = _strip_comments(Path(path).read_text(errors="ignore"))
+        data = json.loads(re.sub(r",(\s*[}\]])", r"\1", text))
+    except (OSError, ValueError, RecursionError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def tsconfig_for(repo: Path, name: str):
+    """The tsconfig (repository-relative) that type-checks the file `name`:
+    tsconfig.json, or for a solution-style one (no files of its own, only
+    references, as Vite's templates have) the referenced config whose
+    files/include cover `name`; None when none does."""
+    root = Path(repo)
+    data = read_jsonc(root / "tsconfig.json")
+    references = (data or {}).get("references")
+    if (
+        not data
+        or not isinstance(references, list)
+        or not references
+        or not ("files" in data or "include" in data)
+        or data.get("files")
+        or data.get("include")
+    ):
+        return "tsconfig.json"
+    for reference in references:
+        target = reference.get("path") if isinstance(reference, dict) else None
+        if not isinstance(target, str):
+            continue
+        path = root / target
+        if path.is_dir():
+            path = path / "tsconfig.json"
+        config = read_jsonc(path)
+        if config is None:
+            continue
+        try:
+            base = path.parent.resolve().relative_to(root.resolve()).as_posix()
+        except (OSError, ValueError):
+            continue
+        prefix = "" if base == "." else base + "/"
+        if not name.startswith(prefix):
+            continue
+        relative = name[len(prefix) :]
+        files = [str(f).removeprefix("./") for f in config.get("files") or []]
+        include = config.get("include")
+        if include is None:
+            include = [] if "files" in config else ["**/*"]
+        patterns = []
+        for pattern in include:
+            pattern = str(pattern).removeprefix("./").rstrip("/")
+            last = pattern.rsplit("/", 1)[-1]
+            if not GLOB_CHARS.search(pattern) and "." not in last:
+                pattern += "/**/*"  # a directory: everything under it
+            patterns.append(glob_regex(pattern))
+        if relative in files or any(
+            p is not None and p.match(relative) for p in patterns
+        ):
+            return path.relative_to(root).as_posix()
+    return None
+
+
+GLOB_CHARS = re.compile(r"[*?{\[]")
 
 
 def glob_regex(pattern: str):
@@ -479,17 +582,36 @@ def scratch_location(repo, tests, config, *, typescript, react):
         if directory not in (".", "") and not (repo / directory).is_dir():
             continue
         for suffix in dict.fromkeys(candidates):
-            name = f"{directory}/{SCRATCH_PREFIX}1{suffix}".removeprefix("./")
-            relative = name
-            if base:
-                if not (name + "/").startswith(base + "/"):
-                    continue
-                relative = name[len(base) + 1 :]
-            if all(p is None for p in patterns) or any(
-                p is not None and p.match(relative) for p in patterns
-            ):
+            if _discovered(directory, suffix, base, patterns):
                 return directory or ".", suffix
     return (counts.most_common(1)[0][0] if counts else "."), candidates[0]
+
+
+def _discovered(directory, suffix, base, patterns):
+    """The runner finds a scratch module with `suffix` in `directory`
+    (`base`: the vitest `dir`; `patterns`: include regexes)."""
+    name = f"{directory}/{SCRATCH_PREFIX}1{suffix}".removeprefix("./")
+    relative = name
+    if base:
+        if not (name + "/").startswith(base + "/"):
+            return False
+        relative = name[len(base) + 1 :]
+    return all(p is None for p in patterns) or any(
+        p is not None and p.match(relative) for p in patterns
+    )
+
+
+def plain_suffix(config, directory, suffix):
+    """`suffix` without its JSX "x" (.test.tsx -> .test.ts) when the runner
+    discovers that in `directory` too, else None (also when test files may
+    run in environments chosen by their path or suffix: a .test.ts module
+    could then run without the DOM a .test.tsx one gets)."""
+    if not suffix.endswith(("tsx", "jsx")) or config.get("environments"):
+        return None
+    base = str(config.get("dir", "")).strip("./") if config.get("dir") else ""
+    patterns = [glob_regex(p) for p in config.get("include") or [VITEST_INCLUDE]]
+    plain = suffix[:-1]
+    return plain if _discovered(directory, plain, base, patterns) else None
 
 
 # --- how existing tests import the project ------------------------------------

@@ -41,6 +41,38 @@ from devstill.search import HybridSearch
 
 DOC_SUFFIXES = {".rst", ".md", ".markdown", ".txt", ".adoc"}
 SECRET_ENV = re.compile(r"KEY|TOKEN|SECRET|PASSW|CREDENTIAL|AUTH", re.IGNORECASE)
+# A harness that stops the whole process at a fixed time (a benchmark's
+# worker timeout) passes that time here (Unix seconds). JS runs then end
+# their loop early enough to finish and deliver before it.
+DEADLINE_ENV = "DEVSTILL_DEADLINE"
+# Time kept after the loop for the proposal and its application.
+AFTER_LOOP_SECONDS = 4.0
+
+
+def process_deadline(deadline, environ=None, now=None, clock=None):
+    """`deadline` (a perf_counter time), moved earlier when DEADLINE_ENV
+    names an earlier stop for the whole process (less AFTER_LOOP_SECONDS)."""
+    raw = (os.environ if environ is None else environ).get(DEADLINE_ENV)
+    try:
+        stop = float(raw)
+    except (TypeError, ValueError):
+        return deadline
+    current = time.perf_counter() if now is None else now
+    wall = time.time() if clock is None else clock
+    return min(deadline, current + (stop - wall) - AFTER_LOOP_SECONDS)
+
+
+def command_environment(environ, api_key_env):
+    """The environment of the agent's commands: never credentials (API keys,
+    tokens) from this process, nor the harness's stop time (DEADLINE_ENV is
+    for this process only)."""
+    return {
+        key: value
+        for key, value in environ.items()
+        if not SECRET_ENV.search(key) and key != api_key_env and key != DEADLINE_ENV
+    }
+
+
 DOC_WORDS = re.compile(
     r"\b(docs?|documentation|readme|change ?log|release notes|sphinx|autodoc"
     r"|api reference|\.rst|\.md)\b",
@@ -523,12 +555,7 @@ class RuntimeSession:
                 path.read_text()
             ):
                 raise ValueError(f"Evidence no longer matches source: {record['path']}")
-        # Commands never see credentials (API keys, tokens) from this process.
-        env = {
-            key: value
-            for key, value in os.environ.items()
-            if not SECRET_ENV.search(key) and key != cfg.llm.api_key_env
-        }
+        env = command_environment(os.environ, cfg.llm.api_key_env)
         interpreter = (
             cfg.editing.python
             or shutil.which("python")
@@ -554,6 +581,10 @@ class RuntimeSession:
         if toolchain.js:
             # Installed dependencies are linked, never copied or proposed.
             link_dependencies(self.repo, work, toolchain.dependencies)
+            # Time already spent before this run (process startup, retrieval)
+            # counts against an outer stop; the loop then ends in time to
+            # deliver its best change (Python runs keep their own deadline).
+            deadline = process_deadline(deadline)
 
         def allowed(name):
             try:

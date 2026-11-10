@@ -852,6 +852,12 @@ def run(args):
                 )
                 with sandbox as extra, (directory / "worker.log").open("w") as log:
                     env.update(extra)
+                    # When the worker will be stopped (Unix time; see
+                    # devstill.runtime.service.DEADLINE_ENV): Devstill's JS
+                    # loop plans its final finish before it. Only JS cases
+                    # use it, so Python workers keep their exact environment.
+                    if case["corpus"] in campaign.JS_CORPORA:
+                        env["DEVSTILL_DEADLINE"] = f"{time.time() + args.timeout:.3f}"
                     try:
                         campaign.invoke_worker(command, env, log, args.timeout)
                     except (
