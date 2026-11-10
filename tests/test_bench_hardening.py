@@ -77,6 +77,30 @@ def test_one_crashing_trial_is_recorded_and_the_campaign_continues(tmp_path, cap
     assert "FAIL" in capsys.readouterr().out
 
 
+def test_a_trial_that_stalls_before_any_model_call_is_retried_once(tmp_path):
+    attempts = {}
+
+    def stalls_once(case, repeat, variant, directory):
+        key = (case["id"], variant)
+        attempts[key] = attempts.get(key, 0) + 1
+        if key == ("a", "pi") and attempts[key] == 1:
+            return {
+                **good_row(case, repeat, variant, passed=False),
+                "error": "TimeoutExpired",
+                "transport": {"model_calls": 0},
+                "startup_stall": True,
+            }
+        return good_row(case, repeat, variant)
+
+    rows = harness.run_trials(tmp_path, CASES, VARIANTS, 1, [], stalls_once)
+    retried = next(r for r in rows if (r["id"], r["variant"]) == ("a", "pi"))
+    assert retried["acceptance_pass"] and retried["attempt"] == 2
+    assert retried["retry_of"] == "retryable"
+    stalled = json.loads((tmp_path / "a-0-pi.discarded/result.json").read_text())
+    assert stalled["startup_stall"] and stalled["error"] == "TimeoutExpired"
+    assert attempts[("a", "pi")] == 2 and len(rows) == 4
+
+
 def test_retry_succeeds_and_resume_reruns_only_unfinished_or_infra_failed(tmp_path):
     attempts = {}
 

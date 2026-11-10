@@ -390,7 +390,10 @@ def summarize(rows, cases, variants, repeats):
 
 
 # Infrastructure failures, not agent outcomes: retried once, and again on --resume.
-RETRYABLE = ("harness_error", "endpoint_error")
+# startup_stall: the agent failed without a single generation request (seen
+# once as Pi hanging after GET /v1/models); that measures the machine, not
+# the agent, so the trial is retried once and the retry is recorded.
+RETRYABLE = ("harness_error", "endpoint_error", "startup_stall")
 
 
 class EndpointUnavailable(RuntimeError):
@@ -884,6 +887,8 @@ def run(args):
             row["transport"] = transport_metrics(directory / "transport")
             if row["transport"]["upstream_unreachable"]:
                 row["endpoint_error"] = True
+            if row.get("error") and not row["transport"]["model_calls"]:
+                row["startup_stall"] = True
             passed, validation = campaign.accept(
                 case,
                 repo,
