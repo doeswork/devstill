@@ -9,11 +9,14 @@
 # results) and benchmarks/history/ (git-tracked summary and HISTORY.md).
 #
 #   ./pi_vs_devstill_bench.sh                      every suite
-#   ./pi_vs_devstill_bench.sh --suite loop-dev     one suite (repeatable), or --tag core
+#   ./pi_vs_devstill_bench.sh --suite loop-dev     one suite (repeatable), or by tag:
+#   ./pi_vs_devstill_bench.sh --tag core           Python suites; --tag react for React/TS;
+#                                                  --tag core --tag react for both
 #   ./pi_vs_devstill_bench.sh --repeats 3 --sampling greedy --note "new model"
 #   ./pi_vs_devstill_bench.sh --max-hours 8        stop starting work after 8 hours
 #   ./pi_vs_devstill_bench.sh --dry-run            checks and plan only (no records)
 #   ./pi_vs_devstill_bench.sh --status             progress of the latest campaign
+#   ./pi_vs_devstill_bench.sh --peek               interim pass counts and times (safe while running)
 #   ./pi_vs_devstill_bench.sh --report             print the latest REPORT.md
 #   ./pi_vs_devstill_bench.sh --history            one line per past campaign
 #   ./pi_vs_devstill_bench.sh --stop               stop gracefully (resumable)
@@ -35,7 +38,11 @@ running_pid() {
 }
 
 case "${1:-}" in
+  -h|--help)
+    sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
+    exit 0 ;;
   --status) exec "$PY" -m benchmarks.bench_suite status ;;
+  --peek) exec "$PY" -m benchmarks.bench_peek "${@:2}" ;;
   --history) exec "$PY" -m benchmarks.bench_suite history ;;
   --report)
     cat "$HISTORY/latest/REPORT.md" 2>/dev/null || echo "No report yet (the campaign writes it when it finishes)."
