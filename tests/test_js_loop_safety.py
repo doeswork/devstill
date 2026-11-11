@@ -562,7 +562,7 @@ def fake_runner(monkeypatch, judge):
     (tests, failures, load_error) for a module, on the edited code as on the
     original."""
 
-    def run(workspace, toolchain, code, timeout, checkpoint=None, type_check=None):
+    def run(workspace, toolchain, code, timeout, checkpoint=None, type_check=None, **_):
         source = (Path(workspace.root) / "src" / "m.js").read_text()
         tests, failures, load_error = judge(code, source)
         passed = sum(s == "passed" for s in tests.values())
@@ -1252,7 +1252,7 @@ def test_scratch_modules_without_jsx_use_the_plain_suffix(jsrepo, tmp_path):
     assert (
         "tests/__devstill_check_<n>.test.js (.test.jsx when it contains JSX)" in system
     )
-    assert "one it() per scenario the request names" in system
+    assert "one short it() per scenario the request names" in system
 
 
 def test_scratch_suffix_keeps_the_jsx_one_when_environments_differ(tmp_path):

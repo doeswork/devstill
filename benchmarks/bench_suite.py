@@ -840,6 +840,10 @@ def suite_command(settings, dataset, verified, output, campaign_record, resume):
     ]
     if settings.get("pi_disable_reasoning"):
         command.append("--pi-disable-reasoning")
+    if settings.get("baseline_ref"):
+        command += ["--baseline-ref", settings["baseline_ref"]]
+        if settings.get("baseline_budget"):
+            command += ["--baseline-budget", settings["baseline_budget"]]
     if resume:
         command.append("--resume")
     return command
@@ -1016,6 +1020,8 @@ def overrides_from(args):
         "repeats": args.repeats,
         "variants": args.variants,
         "timeout": args.timeout,
+        "baseline_ref": getattr(args, "baseline_ref", None),
+        "baseline_budget": getattr(args, "baseline_budget", None),
     }
 
 
@@ -1225,6 +1231,17 @@ def main(argv=None):
     run.add_argument("--tag", action="append", help="suite tag (repeatable)")
     run.add_argument("--repeats", type=int, help="override every suite's repeats")
     run.add_argument("--variants", help="override arms, e.g. pi,runtime")
+    run.add_argument(
+        "--baseline-ref",
+        help="Devstill-only A/B: with --variants baseline,runtime the baseline "
+        "arm is the Devstill runtime at this git ref",
+    )
+    run.add_argument(
+        "--baseline-budget",
+        choices=("configured", "trial"),
+        help="with --baseline-ref: the baseline keeps its configured editing timeout "
+        "(default) or gets the trial budget like the current runtime",
+    )
     run.add_argument(
         "--timeout", type=float, help="override the per-trial agent timeout"
     )

@@ -284,6 +284,11 @@ def test_direct_pi_requires_normal_completion_and_uses_stock_tools(
         json.loads((output / "result.json").read_text())["execution"]["status"]
         == expected
     )
+    # Pi's private files live next to the repository, never inside it, and
+    # are kept with the trial.
+    assert not (repo / ".devstill").exists()
+    assert (tmp_path / "pi-private" / "pi-direct.jsonl").is_file()
+    assert (output / "artifacts" / "pi-direct.jsonl").is_file()
 
 
 def test_evaluator_restores_original_regressions_without_changing_generated_repo(

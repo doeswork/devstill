@@ -201,6 +201,96 @@ def related_tests(
     return counts[:limit], examples
 
 
+_JS_TEST_CALL = re.compile(r"^(?:describe|it|test|suite)(?:\.\w+)*\s*\(")
+_JS_TOP_BLOCK = re.compile(
+    r"^(?:export\s+)?(?:async\s+)?(?P<kind>function\*?|const|let|var|class|type|"
+    r"interface|enum)\s+(?P<name>[A-Za-z_$][\w$]*)"
+    r"|^(?P<hook>beforeEach|afterEach|beforeAll|afterAll)\s*\("
+)
+
+
+_STRINGS = re.compile(r"""'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`|//.*$""")
+
+
+def _bracket_depth(line: str) -> int:
+    code = _STRINGS.sub("", line)
+    return sum(code.count(c) for c in "([{") - sum(code.count(c) for c in ")]}")
+
+
+_IMPORT_LINES = 15  # js_test_setup: most import lines shown
+
+
+def js_test_setup(text: str, limit: int = 30) -> str:
+    """JS: how a test file sets things up: its import block plus whole
+    top-level helpers and hooks before its first test (column 0, no
+    parsing), the helpers within `limit` lines; types and helpers that do
+    not fit are named with their line. "" when there is nothing to show."""
+    lines = text.split("\n")
+    imports, blocks, index = [], [], 0
+    while index < len(lines):
+        line = lines[index]
+        if _JS_TEST_CALL.match(line):
+            break
+        if line.startswith("import "):
+            # One statement: it goes on only while a `{` it opened is still
+            # open and no `from '...'` ended it (`import x = require('y')`
+            # is one line), at most _IMPORT_LINES lines.
+            end, depth = index, _bracket_depth(line)
+            while (
+                depth > 0
+                and end + 1 < len(lines)
+                and end - index + 1 < _IMPORT_LINES
+                and not re.search(
+                    r"""from\s+['"][^'"]+['"]|^import\s+['"]""", lines[end]
+                )
+            ):
+                end += 1
+                depth += _bracket_depth(lines[end])
+            imports.extend(lines[index : end + 1])
+            index = end + 1
+            continue
+        match = _JS_TOP_BLOCK.match(line)
+        if match:
+            # Until the brackets it opens are closed again at a line end
+            # that the next column-0 line follows.
+            end, depth = index, 0
+            while True:
+                depth += _bracket_depth(lines[end])
+                following = lines[end + 1] if end + 1 < len(lines) else ""
+                if end + 1 >= len(lines) or (
+                    depth <= 0 and following.strip() and not following[:1].isspace()
+                ):
+                    break
+                end += 1
+            block = lines[index : end + 1]
+            while block and not block[-1].strip():
+                block.pop()
+            kind = match.group("kind") or ""
+            name = match.group("name") or match.group("hook")
+            blocks.append((index + 1, name, block, kind in ("type", "interface")))
+            index = end + 1
+            continue
+        index += 1
+    if not imports and not blocks:
+        return ""
+    if len(imports) > _IMPORT_LINES:
+        extra = len(imports) - _IMPORT_LINES
+        imports = imports[:_IMPORT_LINES] + [f"// [{extra} more import lines]"]
+    shown, used, named = list(imports), 0, []
+    for number, name, block, is_type in blocks:
+        if not is_type and used + len(block) <= limit:
+            shown.extend(block)
+            used += len(block)
+        else:
+            named.append(f"{name} (line {number})")
+    text = "\n".join(shown)
+    if named:
+        text += "\n// also defined at the top: " + ", ".join(named[:8])
+        if len(named) > 8:
+            text += f" and {len(named) - 8} more"
+    return text
+
+
 def primary_symbols(records):
     """Distinctive names of the primary (non-support) excerpts."""
     names = []
@@ -422,5 +512,16 @@ def build_sections(
             lines.pop()
         if lines:
             text += "\nExisting usage in tests:\n" + "\n".join(lines)
+        if language == "js":
+            # How the most related test file sets things up (imports,
+            # helpers): test modules reuse it instead of inventing a setup.
+            top = tests[0][1]
+            try:
+                setup = js_test_setup((work / top).read_text(errors="ignore"))
+            except OSError:
+                setup = ""
+            if setup:
+                fence = FENCES.get(PurePosixPath(top).suffix, "")
+                text += f"\nSetup of {top} (imports and helpers):\n```{fence}\n{setup}\n```"
         sections.append(text)
     return sections

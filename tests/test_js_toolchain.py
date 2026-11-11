@@ -924,7 +924,10 @@ def test_js_context_outlines_and_finds_js_tests(tmp_path):
     assert "```typescript" in sections[0]
     assert sections[-1] == (
         "Related tests: tests/m.test.ts (2 mentions)\nExisting usage in tests:\n"
-        "tests/m.test.ts:2: expect(subtract(3, 2)).toBe(1)"
+        "tests/m.test.ts:2: expect(subtract(3, 2)).toBe(1)\n"
+        # How the top related test file sets things up (JS only).
+        "Setup of tests/m.test.ts (imports and helpers):\n```typescript\n"
+        "import { subtract } from '../src/m'\n```"
     )
     assert "node_modules" not in "\n".join(sections)
     # Python output does not change for the same records.

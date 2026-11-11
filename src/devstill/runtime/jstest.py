@@ -15,6 +15,8 @@ original-state swaps in the workspace are therefore never seen by a guard run.
 
 from __future__ import annotations
 
+import difflib
+import hashlib
 import itertools
 import json
 import re
@@ -225,7 +227,12 @@ _STACK_FRAME = re.compile(
 def repo_frames(message, root, scratch, limit=2):
     """The innermost stack frames of a failure that point into repository
     source (not dependencies, not the test module), as one display line plus
-    the source line where it was thrown; "" when there are none."""
+    the source line where it was thrown; "" when there are none.
+
+    Test-module frames inside the innermost source frame (a callback of the
+    test that the source called) are skipped: the error still passed through
+    repository source. Test-module frames after a source frame are its
+    callers and end the search."""
     root = Path(root)
     prefixes = {str(root) + "/"}
     try:
@@ -233,6 +240,7 @@ def repo_frames(message, root, scratch, limit=2):
     except OSError:
         pass
     frames = []
+    callback = None  # the innermost test-module frame, when the source called it
     for raw in (message or "").split("\n"):
         match = _STACK_FRAME.match(raw)
         if not match:
@@ -242,7 +250,11 @@ def repo_frames(message, root, scratch, limit=2):
         if relative is None:
             continue  # outside the repository (node internals, other trees)
         if is_scratch(relative) or relative == scratch:
-            break  # reached the test module: the rest are its callers
+            if frames:
+                break  # reached the test module: the rest are its callers
+            if callback is None:
+                callback = int(match.group("line"))
+            continue  # a test callback: keep looking for the source that called it
         if "node_modules" in PurePosixPath(relative).parts:
             continue
         frames.append(
@@ -257,9 +269,14 @@ def repo_frames(message, root, scratch, limit=2):
         file, line, function = frame
         return f"{file}:{line}" + (f" ({function})" if function else "")
 
-    text = "thrown in " + label(frames[0])
-    if len(frames) > 1:
-        text += ", called from " + label(frames[1])
+    if callback is not None:
+        # Display only: where the source called back into the test module.
+        text = f"thrown in your test module (check line {callback}), called from "
+        text += label(frames[0])
+    else:
+        text = "thrown in " + label(frames[0])
+        if len(frames) > 1:
+            text += ", called from " + label(frames[1])
     try:
         source = (root / frames[0][0]).read_text(errors="replace").split("\n")
         line = source[frames[0][1] - 1].strip()[:160]
@@ -445,6 +462,139 @@ def tsc_text(error):
     return f"{location}error {error['code']}: {error['message']}"
 
 
+def tsc_brief(error, limit=300):
+    """JS display: an error's location, code and head line plus its last
+    elaboration line (the innermost mismatch), on one line."""
+    location = (
+        f"{error['file']}({error['line']},{error['col']}): " if error["file"] else ""
+    )
+    lines = [line.strip() for line in str(error["message"]).split("\n") if line.strip()]
+    text = lines[0] if lines else ""
+    if len(lines) > 1:
+        text += " … " + lines[-1]
+    if len(text) > limit:
+        text = text[: limit - 5] + " [..]"
+    return f"{location}error {error['code']}: {text}"
+
+
+_QUOTED_NAME = re.compile(r"'([A-Za-z_$][\w$]*)'")
+_IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]*")
+_DECLARED = re.compile(
+    r"(?:\b(?:function\*?|class|interface|type|enum|const|let|var)\s+([A-Za-z_$][\w$]*))"
+    # A member, property or parameter declaration: `name: Type`, `name?:`,
+    # or a method `name(...) {` / `name<T>(...): T`; never a call statement
+    # such as `set('a')`.
+    r"|^\s*(?:readonly\s+)?(?:(?:public|private|protected|static|async|abstract)\s+)*"
+    r"([A-Za-z_$][\w$]*)\??\s*(?::|(?:<[^>]*>\s*)?\(.*\)\s*[:{])"
+)
+_KEYWORDS = {
+    "if", "for", "while", "switch", "return", "const", "let", "var", "new",
+    "function", "typeof", "type", "string", "number", "boolean", "true",
+    "false", "null", "undefined", "void", "unknown", "any", "never", "this",
+    "export", "import", "from", "async", "await", "error", "Type", "Argument",
+}  # fmt: skip
+
+
+def _hunks(before, after):
+    """Changed regions of a file: (old start, old lines, new start, new lines),
+    1-based starts."""
+    import difflib
+
+    old, new = before.split("\n"), after.split("\n")
+    found = []
+    matcher = difflib.SequenceMatcher(None, old, new, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag != "equal":
+            found.append((i1 + 1, old[i1:i2], j1 + 1, new[j1:j2]))
+    return found
+
+
+def trace_type_errors(errors, root, originals, changed=(), limit=2):
+    """JS: for new type errors at lines the agent did not change, the changed
+    declaration they most likely come from: an identifier of the error line
+    or message declared in a changed region of a changed file. Display text
+    ("" when nothing is found) and the (file, new start) of each hunk shown."""
+    root = Path(root)
+    regions = {}  # file -> its hunks
+
+    def hunks_of(name):
+        if name not in regions:
+            try:
+                after = (root / name).read_text(errors="replace")
+                before = (originals(name) or b"").decode("utf-8", errors="replace")
+            except (OSError, ValueError):
+                regions[name] = []
+                return regions[name]
+            regions[name] = _hunks(before, after) if before != after else []
+        return regions[name]
+
+    shown, notes, kept = set(), [], []
+    for error in errors:
+        if len(notes) >= limit:
+            break
+        name = error.get("file") or ""
+        if not name or not error.get("line"):
+            continue
+        try:
+            source = (root / name).read_text(errors="replace").split("\n")
+        except OSError:
+            continue
+        own = hunks_of(name) if originals is not None else []
+        line = error["line"]
+        if any(
+            start <= line < start + max(1, len(lines)) for _, _, start, lines in own
+        ):
+            continue  # the agent changed this very line: the error is its own
+        text = source[line - 1] if 0 < line <= len(source) else ""
+        names = set(_QUOTED_NAME.findall(str(error["message"])))
+        names |= {n for n in _IDENTIFIER.findall(text) if n not in _KEYWORDS}
+        names = {n for n in names if len(n) >= 3}
+        if not names:
+            continue
+        found = None
+        for edited in [name, *sorted(set(changed) - {name})]:
+            if is_scratch(edited) or PurePosixPath(edited).suffix not in JS_SUFFIXES:
+                continue
+            for hunk in hunks_of(edited):
+                declared = set()
+                for added in hunk[3]:
+                    for match in _DECLARED.finditer(added):
+                        declared.add(match.group(1) or match.group(2))
+                hit = sorted(names & declared)
+                if hit:
+                    found = (edited, hunk, hit[0])
+                    break
+            if found:
+                break
+        if not found:
+            continue
+        where, (_, old_lines, new_start, new_lines), symbol = found
+        if (where, new_start) in shown:
+            notes.append(
+                f"- {tsc_brief(error, 200)}\n  comes from the same change to "
+                f"'{symbol}' ({where}:{new_start}) shown above."
+            )
+            continue
+        shown.add((where, new_start))
+        kept.append((where, new_start))
+
+        def block(lines, sign):
+            body = [f"{sign} {item}" for item in lines[:10]]
+            if len(lines) > 10:
+                body.append(f"{sign} [{len(lines) - 10} more lines]")
+            return "\n".join(body) if body else f"{sign} (nothing)"
+
+        notes.append(
+            f"- {tsc_brief(error, 200)}\n  This error is at a line you did not change; "
+            f"it comes from your change to '{symbol}' in {where} (line {new_start}): "
+            "restore or adapt that change.\n  before:\n"
+            + block(old_lines, "-")
+            + "\n  after:\n"
+            + block(new_lines, "+")
+        )
+    return "\n".join(notes), kept
+
+
 _JEST_FILE = re.compile(r"^\s*FAIL\s+(\S+\.[cm]?[jt]sx?)\s*(?:\(.*\))?$")
 _JEST_TEST = re.compile(r"^\s*●\s+(.+?)\s*$")
 
@@ -473,6 +623,84 @@ def failing_from_output(text):
             else:
                 found.append(f"{jest_file} > " + " > ".join(name.split(" › ")))
     return sorted(set(found))
+
+
+def state_key(contents, original):
+    """JS: identity of a workspace state from the changed files' bytes
+    ({name: bytes or None}): scratch files and files equal to the original
+    (`original(name)`) are left out, so equal states get equal keys."""
+    items = []
+    for name in sorted(contents):
+        if is_scratch(name):
+            continue
+        data = contents[name]
+        try:
+            before = original(name)
+        except (OSError, ValueError):
+            before = None
+        if data == before:
+            continue
+        items.append([name, None if data is None else hashlib.sha256(data).hexdigest()])
+    return hashlib.sha256(json.dumps(items).encode()).hexdigest()[:16]
+
+
+def js_diff(workspace, originals, keep=(), limit=3000):
+    """JS: unified diff (1 line of context) of the changed files, cut only at
+    hunk boundaries within `limit` characters; hunks starting at a (file,
+    new line) in `keep` are always shown (a note counts those left out)."""
+    keep = set(keep)
+    hunks = []  # (name, new start, text)
+    for name in list(workspace.changed):
+        if is_scratch(name):
+            continue
+        path = workspace.root / name
+        try:
+            before = (originals(name) or b"").decode("utf-8", errors="replace")
+            after = (
+                path.read_bytes().decode("utf-8", errors="replace")
+                if path.exists()
+                else ""
+            )
+        except (OSError, ValueError):
+            continue
+        lines = list(
+            difflib.unified_diff(
+                before.splitlines(keepends=True),
+                after.splitlines(keepends=True),
+                fromfile="a/" + name,
+                tofile="b/" + name,
+                n=1,
+            )
+        )
+        header, current, start = "".join(lines[:2]), [], None
+        for line in lines[2:]:
+            if line.startswith("@@"):
+                if current:
+                    hunks.append((name, start, header, "".join(current)))
+                current = [line]
+                match = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)", line)
+                start = int(match.group(1)) if match else 0
+            else:
+                current.append(line if line.endswith("\n") else line + "\n")
+        if current:
+            hunks.append((name, start, header, "".join(current)))
+    shown, used, left, files = [], 0, 0, set()
+    for name, start, header, text in hunks:
+        wanted = any(
+            name == file and start - 2 <= line <= start + text.count("\n")
+            for file, line in keep
+        )
+        if name not in files:
+            text = header + text
+        if wanted or used + len(text) <= limit:
+            shown.append(text)
+            used += len(text)
+            files.add(name)
+        else:
+            left += 1
+    return "".join(shown) + (
+        f"[{left} more changed region(s) not shown]\n" if left else ""
+    )
 
 
 # --- processes -------------------------------------------------------------------
@@ -525,7 +753,13 @@ def _read_report(path):
 
 
 def run_test_module(
-    workspace, toolchain, code, timeout, checkpoint=lambda: None, type_check=None
+    workspace,
+    toolchain,
+    code,
+    timeout,
+    checkpoint=lambda: None,
+    type_check=None,
+    type_start=None,
 ):
     """Write `code` to a scratch test file, run it alone, always delete it.
 
@@ -537,7 +771,9 @@ def run_test_module(
     meta["scratch"] is the module's path. Modules without JSX use the
     toolchain's plain suffix (.ts) when it has one. `type_check(name)`, if
     given, runs after a failing run whose module loaded (the file still
-    exists) and returns text appended to the result.
+    exists) and returns text appended to the result. `type_start(name)`
+    (JS mode) instead starts that type check alongside the run and returns
+    a handle whose finish(keep) gives its text (keep False: stop it).
     """
     if not isinstance(code, str) or not code.strip():
         raise ToolError("code must not be empty")
@@ -570,11 +806,14 @@ def run_test_module(
         None,
     )
     typed = None
+    pending = None
     with tempfile.TemporaryDirectory(prefix="devstill-test-") as folder:
         report = Path(folder) / "report.json"
         try:
             directory.mkdir(parents=True, exist_ok=True)
             path.write_text(source + (footer or ""))
+            if type_start is not None:
+                pending = type_start(name)
             result = workspace._run(
                 [str(root / runner.binary)]
                 + runner.files(
@@ -585,14 +824,19 @@ def run_test_module(
                 ignore=is_scratch,
                 env=runner_env(workspace.env),
             )
-            if (
-                type_check is not None
-                and not result.ok
+            wanted = (
+                not result.ok
                 and not result.meta.get("timed_out")
                 and not _load_failed(_read_report(report))
-            ):
+            )
+            if pending is not None:
+                typed = pending.finish(wanted)
+                pending = None
+            elif type_check is not None and wanted:
                 typed = type_check(name)
         finally:
+            if pending is not None:
+                pending.finish(False)
             path.unlink(missing_ok=True)
             for leftover in directory.glob(f"__snapshots__/{path.name}*"):
                 leftover.unlink(missing_ok=True)
@@ -609,6 +853,161 @@ def run_test_module(
         described.text += "\n\n" + typed
     described.meta["scratch"] = name
     return described
+
+
+_copy_numbers = itertools.count(1)
+_copy_lock = threading.Lock()
+
+
+def run_test_module_in(root, env, toolchain, code, timeout, register=None):
+    """JS: run_test_module in another tree `root` (the pristine copy of the
+    original sources) through execute(): the agent's workspace is never
+    touched. The same record and text as run_test_module; meta["scratch"]
+    is the module's name in that tree."""
+    runner = runner_for(toolchain)
+    if runner is None or not isinstance(code, str) or not code.strip():
+        return None
+    root = Path(root)
+    directory = (
+        root / toolchain.test_dir if toolchain.test_dir not in ("", ".") else root
+    )
+    scratch_suffix = getattr(toolchain, "scratch_suffix", None)
+    suffix = scratch_suffix(code) if scratch_suffix else toolchain.test_suffix
+    with _copy_lock:
+        while True:
+            name = toolchain.scratch_name(next(_copy_numbers), suffix)
+            if not (root / name).exists():
+                break
+        path = root / name
+        directory.mkdir(parents=True, exist_ok=True)
+        source = code if code.endswith("\n") else code + "\n"
+        path.write_text(source + (runner.footer() or ""))
+    processes = []
+
+    def track(process):
+        processes.append(process)
+        return register(process) if register is not None else True
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="devstill-test-") as folder:
+            report = Path(folder) / "report.json"
+            run = execute(
+                [str(root / runner.binary)]
+                + runner.files(
+                    [name], str(report), display=True, require_assertions=True
+                )[1:],
+                root,
+                runner_env(env),
+                timeout,
+                track,
+            )
+            data = _read_report(report) if run and not run["timed_out"] else None
+    finally:
+        path.unlink(missing_ok=True)
+        for leftover in directory.glob(f"__snapshots__/{path.name}*"):
+            leftover.unlink(missing_ok=True)
+    if run is None:
+        return None
+    text = run["output"][-OUTPUT_TAIL:]
+    if run["timed_out"]:
+        result = ToolResult(
+            (text + "\n" if text else "") + f"[command timed out after {timeout:.0f}s]",
+            ok=False,
+            meta={"timed_out": True},
+        )
+    else:
+        result = ToolResult(
+            (text.rstrip("\n") + "\n" if text.strip() else "")
+            + f"[exit code {run['code']}]",
+            ok=run["code"] == 0,
+        )
+    described = describe_test_run(
+        result, data, root, name, code, assertions_required=True
+    )
+    described.meta["scratch"] = name
+    return described
+
+
+OUTPUT_TAIL = 20000
+
+
+class ScratchTypes:
+    """A scratch module's type check started alongside its test run (JS)."""
+
+    def __init__(self, workspace, toolchain, name, code, timeout=4.0, on_timeout=None):
+        self.name, self.code, self.timeout = name, code, timeout
+        self.on_timeout = on_timeout
+        self.started = time.perf_counter()
+        self.process = None
+        self.run = None
+        self.done = threading.Event()
+        self.config = None
+        root = Path(workspace.root)
+        if (
+            not toolchain.tsc_path
+            or not (root / "tsconfig.json").is_file()
+            or PurePosixPath(name).suffix not in (".ts", ".tsx", ".mts", ".cts")
+        ):
+            self.done.set()
+            return
+        project = tsconfig_for(root, name)
+        if project is None:
+            self.done.set()
+            return
+        self.root = root
+        self.config = root / f"{SCRATCH_PREFIX}tsconfig.json"
+        self.config.write_text(_scratch_tsconfig(project, name))
+        argv = [
+            str(root / toolchain.tsc_path),
+            "-p",
+            self.config.name,
+            "--pretty",
+            "false",
+        ]
+        env = runner_env(workspace.env)
+
+        def register(process):
+            self.process = process
+            return True
+
+        def work():
+            try:
+                # finish() stops it; this limit only bounds a forgotten run.
+                self.run = execute(argv, root, env, timeout + self.HARD_LIMIT, register)
+            finally:
+                self.done.set()
+
+        threading.Thread(target=work, daemon=True).start()
+
+    # Seconds a run may go on beyond `timeout` while the test run lasts.
+    HARD_LIMIT = 120.0
+
+    def finish(self, keep):
+        """Its text (None: no errors, or not kept: the run is stopped). The
+        type check gets `timeout` seconds after the test run ends (finish is
+        called then), as the serial check after a failing run would, so the
+        test run's load never costs it its result; one that does not finish
+        by then calls on_timeout() (none given: the text is "timeout")."""
+        try:
+            if not keep:
+                if self.process is not None:
+                    _kill(self.process)
+                return None
+            run = self.run if self.done.wait(timeout=self.timeout + 0.2) else None
+            if self.config is None:
+                return None
+            if run is None or run["timed_out"]:
+                if self.process is not None:
+                    _kill(self.process)
+                if self.on_timeout is not None:
+                    self.on_timeout()
+                    return None
+                return "timeout"
+            return _scratch_errors_text(run["output"], self.root, self.name, self.code)
+        finally:
+            if self.config is not None:
+                self.done.wait(timeout=1.0)
+                self.config.unlink(missing_ok=True)
 
 
 def _load_failed(data):
@@ -651,20 +1050,7 @@ def scratch_type_errors(workspace, toolchain, name, code, timeout=4.0):
     if project is None:
         return None
     config = root / f"{SCRATCH_PREFIX}tsconfig.json"
-    config.write_text(
-        json.dumps(
-            {
-                "extends": "./" + project,
-                "compilerOptions": {
-                    "noEmit": True,
-                    "incremental": False,
-                    "composite": False,
-                },
-                "files": [name],
-                "include": [],
-            }
-        )
-    )
+    config.write_text(_scratch_tsconfig(project, name))
     try:
         run = execute(
             [str(root / toolchain.tsc_path), "-p", config.name, "--pretty", "false"],
@@ -676,9 +1062,28 @@ def scratch_type_errors(workspace, toolchain, name, code, timeout=4.0):
         config.unlink(missing_ok=True)
     if run is None or run["timed_out"]:
         return "timeout"
+    return _scratch_errors_text(run["output"], root, name, code)
+
+
+def _scratch_tsconfig(project, name):
+    return json.dumps(
+        {
+            "extends": "./" + project,
+            "compilerOptions": {
+                "noEmit": True,
+                "incremental": False,
+                "composite": False,
+            },
+            "files": [name],
+            "include": [],
+        }
+    )
+
+
+def _scratch_errors_text(output, root, name, code):
     errors = [
         e
-        for e in parse_tsc(run["output"], root)
+        for e in parse_tsc(output, root)
         if e["file"] == name
         and not _CONFIG_LEVEL.match(e["code"])
         and not _RUNNER_GLOBALS.search(e["message"])
@@ -883,8 +1288,24 @@ class JsGuard:
         }
         self._reports = Path(tempfile.mkdtemp(prefix="devstill-reports-"))
         self._count = itertools.count()
+        self.original = None  # pristine copy for the loop's original-code runs
+        self._original_ready = threading.Event()
+        # JS loop support: when the current generation started, the last
+        # measured duration of each current-state run, the contents last
+        # mirrored, and finished results per state (state_key).
+        self._generation_started = None
+        self._seconds = {}
+        self._mirrored = None
+        self._key = None
+        self._records = {}
 
     diff = TestGuard.diff
+
+    def js_diff(self, keep=(), limit=3000):
+        """JS: the changes so far as a unified diff (1 line of context), cut
+        only at hunk boundaries; hunks starting at a (file, new line) in
+        `keep` are always shown."""
+        return js_diff(self.workspace, self.originals, keep, limit)
 
     # process bookkeeping
 
@@ -988,6 +1409,16 @@ class JsGuard:
         shutil.copytree(pristine, current, symlinks=True)
         self.pristine, self.current = pristine, current
         self._ready.set()
+        # A second pristine copy where the loop runs test modules on the
+        # original code, at the same time as runs on the edited code.
+        original = pristine.with_name(pristine.name + "-original")
+        try:
+            shutil.copytree(pristine, original, symlinks=True)
+        except OSError:
+            shutil.rmtree(original, ignore_errors=True)
+        else:
+            self.original = original
+            self._original_ready.set()
         if self.runner is not None:
             self._background(
                 self._base["tests"],
@@ -1002,21 +1433,45 @@ class JsGuard:
         else:
             self._base["tsc"]["done"].set()
 
+    def original_root(self, wait=0.0):
+        """The pristine copy for original-code runs, None while not ready."""
+        if self._original_ready.wait(timeout=max(0.0, wait)):
+            return self.original
+        return None
+
+    def contents(self):
+        """Bytes of every changed file in the workspace now (None: absent)."""
+        found = {}
+        for name in list(self.workspace.changed):
+            path = self.workspace.root / name
+            try:
+                found[name] = path.read_bytes() if path.is_file() else None
+            except OSError:
+                found[name] = None
+        return found
+
+    def stale(self, contents=None):
+        """The mirror was last synced from other contents than the
+        workspace's now (a change the loop never reported)."""
+        with self._lock:
+            mirrored = self._mirrored
+        if mirrored is None:
+            return False
+        return mirrored != (self.contents() if contents is None else contents)
+
+    def key(self, contents):
+        return state_key(contents, self.originals)
+
     def changed(self):
         """(Re)start current-state runs for the workspace as it is now."""
         names = list(self.workspace.changed)
-        contents = {}
-        for name in names:
-            path = self.workspace.root / name
-            try:
-                contents[name] = path.read_bytes() if path.is_file() else None
-            except OSError:
-                contents[name] = None
+        contents = self.contents()
         code = [
             n
             for n in names
             if PurePosixPath(n).suffix in JS_SUFFIXES or n.endswith(".json")
         ]
+        key = self.key(contents)
         with self._lock:
             if self._closed:
                 return
@@ -1029,18 +1484,48 @@ class JsGuard:
             if self.toolchain.tsc_path and code:
                 runs["tsc"] = {"done": threading.Event(), "result": None}
             self._runs = runs
+            self._generation_started = time.perf_counter()
+            self._mirrored = contents
+            self._key = key
+            record = self._records.setdefault(
+                key, {"expected": set(runs), "results": {}, "files": set(names)}
+            )
+            record["expected"] |= set(runs)
         for process in stale:
             _kill(process)
         if runs:
             threading.Thread(
-                target=self._work, args=(generation, contents, runs), daemon=True
+                target=self._work, args=(generation, contents, runs, key), daemon=True
             ).start()
+
+    def eta(self, parts=("tsc",)):
+        """Seconds until the current state's runs in `parts` are expected to
+        finish (0.0: finished or none), from the last measured duration of
+        each (the pristine baseline's before any); None when unknown."""
+        with self._lock:
+            runs = dict(self._runs)
+            started = self._generation_started
+        waits = []
+        for part in parts:
+            run = runs.get(part)
+            if run is None or run["done"].is_set():
+                continue
+            base = self._base.get(part)
+            if base is None or not base["done"].is_set() or started is None:
+                return None
+            seconds = self._seconds.get(part)
+            if seconds is None:
+                seconds = (base["result"] or {}).get("seconds")
+            if seconds is None:
+                return None
+            waits.append(started + seconds - time.perf_counter())
+        return max([0.0, *waits])
 
     def _stale(self, generation):
         with self._lock:
             return self._closed or generation != self._generation
 
-    def _work(self, generation, contents, runs):
+    def _work(self, generation, contents, runs, state=None):
         if not self._ready.wait(timeout=self.timeout):
             return
         with self._mirror:
@@ -1068,7 +1553,7 @@ class JsGuard:
                     else (lambda: self._tsc(self.current, self.timeout, generation))
                 )
 
-                def target(run=run, work=work):
+                def target(run=run, work=work, part=key):
                     try:
                         result = work()
                     except Exception as exc:  # noqa: BLE001
@@ -1077,6 +1562,13 @@ class JsGuard:
                         if generation == self._generation and result is not None:
                             run["result"] = result
                             run["done"].set()
+                            if isinstance(result, dict):
+                                if state is not None and state in self._records:
+                                    self._records[state]["results"][part] = result
+                                if result.get("seconds") is not None and not result.get(
+                                    "timed_out"
+                                ):
+                                    self._seconds[part] = result["seconds"]
 
                 thread = threading.Thread(target=target, daemon=True)
                 thread.start()
@@ -1112,7 +1604,7 @@ class JsGuard:
 
     def cleanup(self):
         self.close()
-        for path in (self.current, self._reports):
+        for path in (self.current, self.original, self._reports):
             if path is not None:
                 shutil.rmtree(path, ignore_errors=True)
 
@@ -1181,6 +1673,7 @@ class JsGuard:
                         before["errors"], types["errors"], self.pristine, self.current
                     )
                     found["type_errors"] = [tsc_text(e) for e in fresh]
+                    found["type_error_items"] = fresh
                     if fresh:
                         shown.append(
                             "tsc --noEmit:\n"
@@ -1230,6 +1723,7 @@ class JsGuard:
                     self.current,
                 )
                 found["type_errors"] = [tsc_text(e) for e in fresh]
+                found["type_error_items"] = fresh
         tests = runs.get("tests")
         if tests is not None:
             base = self._base["tests"]
@@ -1255,7 +1749,57 @@ class JsGuard:
                     }
         return found
 
-    def _compare(self, failing, baseline):
+    def verdict(self, key):
+        """The recorded guard verdict of the state `key` (state_key), from
+        runs that finished while it was current: {"complete": every run
+        finished with a usable result and its baseline is known, "clean":
+        complete and nothing new fails, "type_errors", "regressions",
+        "added"}; None when no run was ever started for it."""
+        with self._lock:
+            record = self._records.get(key)
+            if record is None:
+                return None
+            expected = set(record["expected"])
+            results = dict(record["results"])
+            files = set(record["files"])
+        found = {
+            "complete": True,
+            "type_errors": [],
+            "regressions": [],
+            "added": [],
+            "runs": sorted(expected),
+        }
+        if "tsc" in expected:
+            now, base = results.get("tsc"), self._base["tsc"]
+            before = base["result"] if base["done"].is_set() else None
+            if _usable_tsc(now) and _usable_tsc(before):
+                fresh = excess_type_errors(
+                    before["errors"], now["errors"], self.pristine, self.current
+                )
+                found["type_errors"] = [tsc_text(e) for e in fresh]
+            else:
+                found["complete"] = False
+        if "tests" in expected:
+            now, base = results.get("tests"), self._base["tests"]
+            before = base["result"] if base["done"].is_set() else None
+            if (
+                _usable_tests(now)
+                and not now.get("timed_out")
+                and _usable_tests(before)
+                and not before.get("timed_out")
+            ):
+                failing = sorted(t for t, s in now["tests"].items() if s == "failed")
+                found["regressions"], found["added"] = self._compare(
+                    failing, before["tests"], files
+                )
+            else:
+                found["complete"] = False
+        found["clean"] = found["complete"] and not (
+            found["type_errors"] or found["regressions"] or found["added"]
+        )
+        return found
+
+    def _compare(self, failing, baseline, edited=None):
         def passed_before(test):
             if test.endswith(f" > {LOAD_FAILURE}"):
                 prefix = file_of(test) + " > "
@@ -1264,7 +1808,7 @@ class JsGuard:
                 )
             return baseline.get(test) == "passed"
 
-        edited = set(self.workspace.changed)
+        edited = set(self.workspace.changed if edited is None else edited)
         new = [t for t in failing if passed_before(t)]
         added = [
             t

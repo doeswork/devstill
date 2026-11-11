@@ -18,7 +18,12 @@ from uuid import uuid4
 import httpx
 
 from devstill.agent import AgentClient, completion_url
-from devstill.config import resolve_index_path, resolve_model_path, resolve_repo_root
+from devstill.config import (
+    js_turn_limit,
+    resolve_index_path,
+    resolve_model_path,
+    resolve_repo_root,
+)
 from devstill.context import (
     context_record,
     query_requests_tests,
@@ -599,6 +604,10 @@ class RuntimeSession:
             env=env,
             python=interpreter,
         )
+        if toolchain.js:
+            # A file the agent wrote and a command then changed or removed
+            # still counts as changed (the guard mirror follows it).
+            tools.track_changed = True
         sections = (
             build_sections(
                 self.repo,
@@ -699,7 +708,9 @@ class RuntimeSession:
                 requirements=requirements,
                 required_checks=delivery_checks(requirements),
                 check_runner=checks,
-                max_turns=cfg.editing.max_turns,
+                max_turns=js_turn_limit(cfg.editing)
+                if toolchain is not None and toolchain.js
+                else cfg.editing.max_turns,
                 bash_timeout=cfg.editing.bash_timeout_seconds,
                 report=emit,
                 before_tools=ready,

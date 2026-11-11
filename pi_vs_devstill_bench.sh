@@ -13,6 +13,10 @@
 #   ./pi_vs_devstill_bench.sh --tag core           Python suites; --tag react for React/TS;
 #                                                  --tag core --tag react for both
 #   ./pi_vs_devstill_bench.sh --repeats 3 --sampling greedy --note "new model"
+#   ./pi_vs_devstill_bench.sh --tag react --variants baseline,runtime --baseline-ref 5c58680
+#                                                  Devstill-only A/B against an earlier runtime
+#                                                  (add --baseline-budget trial to give the
+#                                                  baseline the trial budget too)
 #   ./pi_vs_devstill_bench.sh --max-hours 8        stop starting work after 8 hours
 #   ./pi_vs_devstill_bench.sh --dry-run            checks and plan only (no records)
 #   ./pi_vs_devstill_bench.sh --status             progress of the latest campaign

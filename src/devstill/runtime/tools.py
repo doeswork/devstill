@@ -889,6 +889,10 @@ class Workspace:
         # an edit's confirmation.
         self.content_gate = None
         self.change_view = None
+        # JS mode only: commands that modify or delete a file already in
+        # `changed` (e.g. one created with write, then edited or removed by
+        # bash) count as modifying it. False keeps the Python behavior.
+        self.track_changed = False
 
     def name(self, path: str) -> str:
         """Normalized repository-relative name ('./a//b.py' -> 'a/b.py')."""
@@ -900,7 +904,12 @@ class Workspace:
 
     def _stat_tracked(self) -> dict[str, tuple[int, int] | None]:
         states = {}
-        for name in self.tracked:
+        names = (
+            list(dict.fromkeys([*self.tracked, *self.changed]))
+            if self.track_changed
+            else self.tracked
+        )
+        for name in names:
             try:
                 info = (self.root / name).stat()
                 states[name] = (info.st_mtime_ns, info.st_size)
@@ -1143,7 +1152,12 @@ class Workspace:
         after = self._stat_tracked()
         modified = []
         for name, state in after.items():
-            if state is None or state == before.get(name):
+            if state == before.get(name):
+                continue
+            if state is None and not (
+                # JS: a changed file the command deleted.
+                self.track_changed and name in self.changed
+            ):
                 continue
             try:
                 self.guard(name)

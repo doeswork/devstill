@@ -46,6 +46,11 @@ VARIANTS = (
 )
 
 
+# Pi's trial-private files (config, event log, stderr): a sibling of the
+# repository in the trial workspace, outside the working copy Pi's commands see.
+PI_PRIVATE = "pi-private"
+
+
 def write(path, value):
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, indent=2) + "\n")
@@ -173,7 +178,9 @@ def direct_pi(case, repo, output, runtime):
     )
 
     cfg = DevstillConfig.model_validate(runtime)
-    artifacts = repo / ".devstill"
+    # Pi's trial-private files live next to the repository, never inside the
+    # working copy its own commands see (e.g. git stash -u, git status).
+    artifacts = repo.parent / PI_PRIVATE
     artifacts.mkdir()
     row = {
         "id": case["id"],
@@ -267,7 +274,11 @@ def direct_pi(case, repo, output, runtime):
 
 
 def worker(args):
-    if args.variant == "runtime":
+    if args.variant == "runtime" or (
+        args.variant == "baseline" and getattr(args, "baseline_ref", None)
+    ):
+        # "baseline" with a git ref: the same runtime worker, importing the
+        # Devstill runtime materialized at that ref (PYTHONPATH).
         from benchmarks.retrieval.runtime_candidate import runtime_worker
 
         return runtime_worker(args)
@@ -386,7 +397,75 @@ def summarize(rows, cases, variants, repeats):
                 ),
             }
         report["workloads"][workload] = {"variants": arms, "versus_pi": comparisons}
+        if {"baseline", "runtime"} <= set(variants):
+            report["workloads"][workload]["versus_baseline"] = versus_baseline(
+                group, complete
+            )
     return report
+
+
+def versus_baseline(group, complete):
+    """Devstill-only A/B: the runtime arm against the baseline arm (the
+    runtime at an earlier git ref), paired by case and repeat."""
+    pairs = [
+        (p, q)
+        for p in group
+        if p["variant"] == "baseline"
+        for q in group
+        if q["variant"] == "runtime"
+        and (p["id"], p["repeat"]) == (q["id"], q["repeat"])
+    ]
+    passed = [(p, q) for p, q in pairs if p["acceptance_pass"] and q["acceptance_pass"]]
+    ratios = [
+        q["worker_wall_seconds"] / p["worker_wall_seconds"]
+        for p, q in passed
+        if p["worker_wall_seconds"] > 0
+    ]
+    return {
+        "complete": complete,
+        "paired_trials": len(pairs),
+        "baseline_passes": sum(bool(p["acceptance_pass"]) for p, _ in pairs),
+        "runtime_passes": sum(bool(q["acceptance_pass"]) for _, q in pairs),
+        "shared_passes": len(passed),
+        "runtime_only_passes": sum(
+            bool(q["acceptance_pass"] and not p["acceptance_pass"]) for p, q in pairs
+        ),
+        "baseline_only_passes": sum(
+            bool(p["acceptance_pass"] and not q["acceptance_pass"]) for p, q in pairs
+        ),
+        "median_runtime_over_baseline_wall_ratio": statistics.median(ratios)
+        if ratios
+        else None,
+        "geometric_mean_runtime_over_baseline_wall_ratio": statistics.geometric_mean(
+            ratios
+        )
+        if ratios
+        else None,
+    }
+
+
+def materialize_baseline(ref, destination):
+    """The Devstill runtime (src/devstill) at git `ref`, extracted read-only
+    into `destination`; (commit sha, {name: sha256})."""
+    commit = subprocess.check_output(
+        ["git", "rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=ROOT, text=True
+    ).strip()
+    destination.mkdir(parents=True, exist_ok=False)
+    archive = subprocess.run(
+        ["git", "archive", "--format=tar", commit, "src/devstill"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["tar", "-x", "-C", str(destination)], input=archive.stdout, check=True
+    )
+    manifest = {}
+    for path in sorted(destination.rglob("*")):
+        if path.is_file():
+            manifest[path.relative_to(destination).as_posix()] = digest(path)
+            path.chmod(0o444)
+    return commit, manifest
 
 
 # Infrastructure failures, not agent outcomes: retried once, and again on --resume.
@@ -596,12 +675,16 @@ def run(args):
         tool_environment = prepared_tool_environment(node=True)
     tool_versions = check_tool_environment(tool_environment, need_rust, need_node)
     variants = args.variants.split(",")
+    baseline_ref = getattr(args, "baseline_ref", None)
+    if baseline_ref and "baseline" not in variants:
+        raise ValueError("--baseline-ref needs the baseline variant")
     if (
         not cases
         or args.repeats < 1
         or len(set(variants)) != len(variants)
         or not set(variants) <= set(VARIANTS)
-        or "pi" not in variants
+        # A Devstill-only A/B (a baseline at a git ref) needs no Pi arm.
+        or ("pi" not in variants and not baseline_ref)
         or len(variants) < 2
     ):
         raise ValueError(
@@ -643,6 +726,13 @@ def run(args):
             "max_model_calls_per_attempt": args.max_model_calls or None,
             "coding_tool_versions": tool_versions,
         }
+        if baseline_ref:
+            expected["baseline_ref"] = subprocess.check_output(
+                ["git", "rev-parse", "--verify", f"{baseline_ref}^{{commit}}"],
+                cwd=ROOT,
+                text=True,
+            ).strip()
+            expected["baseline_budget"] = getattr(args, "baseline_budget", "configured")
         if mismatched := resume_mismatches(protocol, expected):
             raise ValueError(f"Cannot resume: {', '.join(mismatched)} changed")
         runtime = json.loads((source / "devstill.json").read_text())
@@ -680,7 +770,15 @@ def run(args):
             shutil.copyfile(ROOT / name, path)
         write(output / "source-manifest.json", manifest)
         baseline_manifest = None
-        if "baseline" in variants:
+        baseline_commit = None
+        if baseline_ref:
+            # The Devstill runtime at an earlier git ref, read-only; the
+            # benchmark harness itself is the current one for both arms.
+            baseline_commit, baseline_manifest = materialize_baseline(
+                baseline_ref, output / "baseline"
+            )
+            write(output / "baseline-manifest.json", baseline_manifest)
+        elif "baseline" in variants:
             baseline_manifest = json.loads(
                 (args.baseline / "manifest.json").read_text()
             )
@@ -738,7 +836,28 @@ def run(args):
             "created_at": datetime.now(UTC).isoformat(),
             "purpose": args.purpose,
             "variants": variants,
-            "baseline": str(args.baseline) if baseline_manifest else None,
+            "baseline": f"git {baseline_commit}"
+            if baseline_commit
+            else str(args.baseline)
+            if baseline_manifest
+            else None,
+            **(
+                {
+                    "baseline_ref": baseline_commit,
+                    "baseline_budget": getattr(args, "baseline_budget", "configured"),
+                    "baseline_budget_rule": "configured: the baseline runtime keeps "
+                    "its configured editing timeout (the JS trial budget rule applies "
+                    "to the current runtime only); trial: both get the trial budget",
+                }
+                if baseline_commit
+                else {}
+            ),
+            "devstill_js_budget": "JS corpora: editing.timeout_seconds is set to the "
+            "time left until the worker stop (DEVSTILL_DEADLINE), so Devstill gets the "
+            "trial's whole wall budget; each Devstill trial records its effective budget "
+            "in result.json (editing_budget)",
+            "pi_private_files": "pi-config, pi-direct.jsonl and pi-stderr.log live next "
+            "to the repository (outside Pi's working copy) and are copied to artifacts/",
             "review_policy": "Saved review reloaded and accepted unchanged automatically; no human think time or intervention",
             "coding_tool_environment": tool_environment,
             "corpus_test_environment": campaign.CORPUS_TEST_ENV,
@@ -842,6 +961,13 @@ def run(args):
                     "--query",
                     str(directory / "query.txt"),
                 ]
+                if variant == "baseline" and protocol.get("baseline_ref"):
+                    command += [
+                        "--baseline-ref",
+                        protocol["baseline_ref"],
+                        "--baseline-budget",
+                        protocol.get("baseline_budget", "configured"),
+                    ]
                 started = time.perf_counter()
                 failure = None
                 # SWE-bench: python/pytest run inside the instance's image.
@@ -882,6 +1008,11 @@ def run(args):
             row.setdefault("coding_seconds", elapsed)
             if failure:
                 row["error"] = failure
+            private = repo.parent / PI_PRIVATE
+            if private.exists() and not (directory / "artifacts").exists():
+                # Pi's private files (the worker may have been stopped
+                # before copying them itself).
+                shutil.copytree(private, directory / "artifacts")
             if (repo / ".devstill").exists() and not (directory / "artifacts").exists():
                 shutil.copytree(
                     repo / ".devstill",
@@ -1037,6 +1168,19 @@ def build_parser():
         "--purpose",
         choices=["smoke", "development", "evaluation"],
         default="development",
+    )
+    parser.add_argument(
+        "--baseline-ref",
+        help="Devstill-only A/B: the baseline variant is the Devstill runtime at "
+        "this git ref (pi is then optional)",
+    )
+    parser.add_argument(
+        "--baseline-budget",
+        choices=("configured", "trial"),
+        default="configured",
+        help="with --baseline-ref: the baseline runtime keeps its configured "
+        "editing timeout (default; its historical behaviour) or, like the current "
+        "runtime on JS corpora, gets the trial's whole wall budget",
     )
     parser.add_argument("--variant", choices=VARIANTS)
     parser.add_argument("--corpus", choices=campaign.CORPORA)

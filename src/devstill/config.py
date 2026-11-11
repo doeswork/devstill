@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import stat
@@ -260,11 +261,28 @@ class EditingConfig(StrictModel):
     # Loop engine limits: model calls, output tokens per call, command timeout
     # and the first-turn context budget (smaller context = faster first token).
     max_turns: int = Field(default=20, ge=1, le=50)
+    # JS/TS runs: model-call cap. None derives it from the time budget
+    # (js_turn_limit): the deadline, not a call count, ends a JS run.
+    js_max_turns: int | None = Field(default=None, ge=1, le=100)
     turn_output_tokens: int = Field(default=2048, ge=128, le=65536)
     bash_timeout_seconds: float = Field(default=30, ge=1, le=600)
     loop_context_chars: int = Field(default=16000, ge=2000)
     # Re-run related existing tests after loop edits; report new failures.
     regression_tests: bool = True
+
+
+# A JS model call plus its tools takes about 4 s at least.
+JS_SECONDS_PER_TURN = 4.0
+JS_MAX_DERIVED_TURNS = 60
+
+
+def js_turn_limit(editing: EditingConfig) -> int:
+    """Model-call cap of a JS/TS run: editing.js_max_turns, or derived from
+    the time budget (at least max_turns, at most JS_MAX_DERIVED_TURNS)."""
+    if editing.js_max_turns is not None:
+        return editing.js_max_turns
+    derived = math.ceil(editing.timeout_seconds / JS_SECONDS_PER_TURN)
+    return max(editing.max_turns, min(JS_MAX_DERIVED_TURNS, derived))
 
 
 class DevstillConfig(StrictModel):

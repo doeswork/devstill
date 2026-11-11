@@ -10,11 +10,13 @@ separate gate, and their results are recorded for review.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import re
 import shlex
+import threading
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from devstill.runtime.artifacts import write
 from devstill.runtime.jsdeps import (
@@ -27,16 +29,27 @@ from devstill.runtime.jsdeps import (
     mentions_dependencies,
     refusal_text,
 )
-from devstill.runtime.jssyntax import SyntaxGate
+from devstill.runtime.jssyntax import (
+    SyntaxGate,
+    boundary_candidates,
+    close_brackets,
+    empty_bodies,
+)
 from devstill.runtime.jstest import (
+    LOAD_FAILURE,
+    ScratchTypes,
     failing_from_output,
     parse_tsc,
     run_test_module,
-    scratch_type_errors,
+    run_test_module_in,
+    state_key,
+    trace_type_errors,
+    tsc_brief,
     tsc_text,
 )
 from devstill.runtime.loop_context import is_test_path
 from devstill.runtime.toolchain import (
+    JS_SUFFIXES,
     SCRATCH_PREFIX,
     is_scratch,
     without_scratch_number,
@@ -47,6 +60,7 @@ from devstill.runtime.tools import (
     ToolResult,
     Workspace,
     _decode,
+    _kill,
     apply_text_edits,
     check_failure_line,
     render_hunks,
@@ -312,11 +326,11 @@ def _js_check_bullet(toolchain):
     )
     bullet = (
         f"- Check your change with the test tool: a short {toolchain.runner} test "
-        "module (under about 40 lines) that imports the changed code the way the "
-        "project's tests do, calls it directly with minimal setup and asserts the "
-        "requested behavior plus each behavior the request explicitly says to keep: "
-        "one it() per scenario the request names, covering each alternative it "
-        "lists (every value of an 'X or Y'). "
+        "module (under about 30 lines, no comments) that imports the changed code "
+        "the way the project's tests do, sets things up once, calls the code "
+        "directly and asserts the requested behavior plus each behavior the "
+        "request explicitly says to keep: one short it() per scenario the request "
+        "names, covering each alternative it lists (every value of an 'X or Y'). "
         f"It runs alone with the project's test runner as {where} (relative imports "
         f"start from {folder}; {framework}); a failing expect shows expected and "
         "received values."
@@ -363,7 +377,10 @@ def js_system(toolchain):
         lines.append(
             "- This is a TypeScript project: its type check (tsc --noEmit) must keep "
             "passing, so keep types exact (declare new parameters and options in the "
-            "existing types)."
+            "existing types). Do not widen existing exported types to make a test "
+            "compile (cast in the test instead); make a new runtime check a type "
+            "predicate (value is T); if type errors appear at lines you did not "
+            "change, fix the declaration you changed."
         )
     lines.append("- Finish by calling done with a one-line summary.")
     return "\n".join(lines)
@@ -562,6 +579,18 @@ def repair_json(text):
             in_string = True
         out.append(char)
     return json.loads("".join(out))
+
+
+def js_arguments(text):
+    """JS mode: repair_json, then once more with the closing brackets the
+    text lacks at its end (a call cut short after its last value)."""
+    try:
+        return repair_json(text)
+    except (TypeError, ValueError):
+        closed = close_brackets(text or "")
+        if closed is None:
+            raise
+        return repair_json(closed)
 
 
 def normalize_edits(arguments):
@@ -998,6 +1027,34 @@ def uninformative(record, verdict):
     )
 
 
+_ERROR_HEAD = re.compile(r"\b([A-Z]\w*(?:Error|Exception))\b:?[ \t]*([^\n]*)")
+
+
+def named_in_request(message, request):
+    """JS: a failure's error is one the request itself names: its error type
+    (TypeError, ...) or the leading phrase of its message ("Cannot read
+    properties of undefined") appears in the request text."""
+    if not message or not request:
+        return False
+    match = _ERROR_HEAD.search(message)
+    if not match:
+        return False
+    kind, text = match.group(1), match.group(2)
+    if re.search(r"\b" + re.escape(kind) + r"\b", request):
+        return True
+    phrase = re.split(r"[(\[{'\"`:]", text, maxsplit=1)[0].strip()
+    return len(phrase) >= 12 and phrase.lower() in request.lower()
+
+
+def named_failures(record, request):
+    """Names of a record's failing tests whose error the request names."""
+    return [
+        failure.get("name")
+        for failure in (record or {}).get("failures") or []
+        if named_in_request(failure.get("message"), request)
+    ]
+
+
 def scratch_never_transforms(record):
     """The scratch module itself has a syntax error (a test bug, whatever the
     code under test does)."""
@@ -1166,6 +1223,26 @@ def agent_loop(
         "last_edit_step": -1,
         "regressions": [],
     }
+    if toolchain is not None:
+        # JS mode only: the request (named errors are never excused), work
+        # to stop when the loop ends, and counters of the JS mechanisms.
+        state["request"] = query
+        state["stops"] = []
+        state["js_stats"] = {
+            "guard_wait_seconds": 0.0,
+            "guard_waits": 0,
+            "original_runs_parallel": 0,
+            "original_runs_swapped": 0,
+            "scratch_reads": 0,
+            "module_patches": 0,
+            "insensitive_flags": 0,
+            "traced_type_errors": 0,
+            "mirror_resyncs": 0,
+            "named_error_blocks": 0,
+            "boundary_repairs": 0,
+            "resend_refusals": 0,
+            "empty_body_flags": 0,
+        }
 
     def outcome(status, **extra):
         commands = state["commands"]
@@ -1212,6 +1289,7 @@ def agent_loop(
                 if state.get("dependencies_changed")
                 else {}
             ),
+            **({"js_stats": state["js_stats"]} if "js_stats" in state else {}),
             **extra,
         }
 
@@ -1244,6 +1322,8 @@ def agent_loop(
             error=str(exc) or "Editor deadline exhausted",
         )
     finally:
+        for stop in state.get("stops", ()):
+            stop()
         if guard is not None:
             guard.close()
         if gate is not None:
@@ -1259,8 +1339,12 @@ JS_FINISH_RESERVE = 15.0
 JS_CALL_RESERVE = 8.0
 JS_TOOL_RESERVE = 6.0
 # After a response with edits, wait this long at most for the background
-# type check and related tests before the next model call.
+# type check and related tests before the next model call (guards without
+# timing estimates; JsGuard waits only when the type check is expected
+# within JS_GUARD_SOON seconds, plus JS_GUARD_MARGIN).
 JS_GUARD_WAIT = 4.0
+JS_GUARD_SOON = 1.0
+JS_GUARD_MARGIN = 0.3
 # Earlier edit snapshots tried when the final state fails (JS mode).
 JS_SALVAGE_CANDIDATES = 6
 BROKE_TESTS = (
@@ -1323,6 +1407,32 @@ def _loop(
         else None
     )
     manifest = {"enabled": True}
+    stats = state.get("js_stats", {})  # JS mode counters (empty in Python mode)
+    if js:
+        # The budget this loop really has, from its start: until its
+        # deadline (the final finish ends by then) and until the last model
+        # call may start.
+        loop_start = time.perf_counter()
+        stats["loop_budget"] = {
+            "deadline_seconds": round(deadline - loop_start, 3),
+            "model_stop_seconds": round(model_stop - loop_start, 3),
+            "max_model_calls": max_turns,
+        }
+    request = state.get("request") or ""
+    insensitive_flagged = set()  # JS: test names already flagged as insensitive
+    rejected_edits = {}  # JS: (path, edits, file sha) -> why the gate refused it
+    background = {"processes": set(), "closed": False}
+
+    def stop_background():
+        with original_lock:
+            background["closed"] = True
+            processes = list(background["processes"])
+        for process in processes:
+            _kill(process)
+
+    original_lock = threading.Lock()
+    if js:
+        state["stops"].append(stop_background)
 
     def trace():
         write(output / "agent-trace.json", {"messages": messages, "commands": commands})
@@ -1343,6 +1453,84 @@ def _loop(
     # JS mode: check source -> (limit, result) of a run on the original
     # sources that timed out; it is not repeated with the same limit or less.
     original_timeouts = {}
+    # JS mode: check source -> a run on the original code in a pristine copy
+    # that is still running ({"done", "result", "limit"}).
+    original_pending = {}
+
+    def original_copy():
+        """JS: the guard's pristine copy for original-code runs (None: not
+        available, then the workspace's files are swapped as in Python)."""
+        root_of = getattr(guard, "original_root", None) if guard is not None else None
+        return root_of() if root_of is not None else None
+
+    def start_original(code, limit):
+        """JS: start running `code` on the original code in the pristine
+        copy, alongside whatever runs now (no-op when known or running)."""
+        if code in original_runs or code in original_pending:
+            return original_pending.get(code)
+        root = original_copy()
+        if root is None:
+            return None
+        handle = {
+            "done": threading.Event(),
+            "result": None,
+            "limit": limit,
+            "started": time.perf_counter(),
+            "processes": [],
+            "killed": False,
+        }
+
+        def register(process):
+            with original_lock:
+                if background["closed"] or handle["killed"]:
+                    return False
+                background["processes"].add(process)
+                handle["processes"].append(process)
+            return True
+
+        def work():
+            try:
+                result = run_test_module_in(
+                    root, workspace.env, toolchain, code, limit, register
+                )
+            except Exception:  # noqa: BLE001 - unknown: the swap path runs it
+                result = None
+            # A stopped run's output says nothing about the original code.
+            handle["result"] = None if handle["killed"] else result
+            handle["done"].set()
+
+        original_pending[code] = handle
+        stats["original_runs_parallel"] = stats.get("original_runs_parallel", 0) + 1
+        threading.Thread(target=work, daemon=True).start()
+        return handle
+
+    def stop_original(code, handle):
+        """JS: give up on a pending original-code run and stop its processes
+        (a comparison that does not wait for it no longer needs it)."""
+        with original_lock:
+            handle["killed"] = True
+            processes = list(handle["processes"])
+        if original_pending.get(code) is handle:
+            original_pending.pop(code, None)
+        for process in processes:
+            _kill(process)
+        stats["original_runs_stopped"] = stats.get("original_runs_stopped", 0) + 1
+
+    def wait_original(code, handle, seconds):
+        """JS: wait up to `seconds` for a pending original-code run, in short
+        slices that honour cancellation (which stops the run)."""
+        stop = time.perf_counter() + seconds
+        while not handle["done"].wait(
+            timeout=max(0.0, min(0.1, stop - time.perf_counter()))
+        ):
+            try:
+                checkpoint()
+            except BaseException:
+                stop_original(code, handle)
+                raise
+            if time.perf_counter() >= stop:
+                return False
+        return True
 
     def run_check(code, timeout, typed=False):
         if js:
@@ -1352,24 +1540,26 @@ def _loop(
                 code,
                 timeout,
                 checkpoint,
-                type_check=scratch_type_check(code) if typed else None,
+                type_start=scratch_type_start(code) if typed else None,
             )
         return workspace.python(code, timeout, checkpoint)
 
-    def scratch_type_check(code):
-        """JS (TypeScript): type errors inside a failing test module, when
-        that is cheap (a type check that takes over 4 s is not tried again)."""
+    def scratch_type_start(code):
+        """JS (TypeScript): the scratch module's type check, started with
+        its test run and kept only when the run fails (a type check that
+        takes over 4 s is not tried again)."""
 
-        def check(name):
+        def disable():
+            scratch_types["enabled"] = False
+
+        def start(name):
             if not scratch_types["enabled"] or time.perf_counter() > model_stop:
                 return None
-            found = scratch_type_errors(workspace, toolchain, name, code, timeout=4.0)
-            if found == "timeout":
-                scratch_types["enabled"] = False
-                return None
-            return found
+            return ScratchTypes(
+                workspace, toolchain, name, code, timeout=4.0, on_timeout=disable
+            )
 
-        return check
+        return start
 
     def on_original(code, timeout=None):
         """Run a check script against the original sources (no model call).
@@ -1391,6 +1581,33 @@ def _loop(
             tried, timed_out = original_timeouts[code]
             if available() <= tried + 0.5:
                 return timed_out  # no more time than the run that timed out
+        if js:
+            # Run (or finish waiting for) it in the pristine copy: the
+            # workspace keeps the agent's files.
+            handle = original_pending.get(code) or start_original(code, available())
+            if handle is not None:
+                if not wait_original(code, handle, available() + 0.5):
+                    # Still running after the time this comparison allows:
+                    # stopped (as a timed-out run), repeated only with a
+                    # longer limit.
+                    waited = time.perf_counter() - handle["started"]
+                    stop_original(code, handle)
+                    result = ToolResult(
+                        "[the run on the original code has not finished]",
+                        ok=False,
+                        meta={"timed_out": True, "record": None, "pending": True},
+                    )
+                    original_timeouts[code] = (waited, result)
+                    return result
+                original_pending.pop(code, None)
+                result = handle["result"]
+                if result is not None:
+                    if not result.meta.get("timed_out"):
+                        original_runs[code] = result
+                    else:
+                        original_timeouts[code] = (handle["limit"], result)
+                    return result
+            stats["original_runs_swapped"] = stats.get("original_runs_swapped", 0) + 1
         if shared_guard:
             guard.close()  # background test runs must not see swapped files
         limit = available()
@@ -1667,6 +1884,7 @@ def _loop(
                 "output": result.text[-2000:],
                 "record": record,
                 "automatic": True,
+                **({"state": state_now()} if js else {}),
             }
         )
         if result.ok:
@@ -1721,6 +1939,11 @@ def _loop(
             )
         if guard is not None:
             report("Running related tests")
+            if js and getattr(guard, "stale", None) is not None and guard.stale():
+                # A change the loop never reported (e.g. a command removed a
+                # file): resync the guard before reading its verdict.
+                stats["mirror_resyncs"] = stats.get("mirror_resyncs", 0) + 1
+                changed()
             # Slow suites must not dominate a quick task: wait briefly at most.
             wait = min(15.0, max(0.0, deadline - time.perf_counter() - 5))
             found = guard.regressions(wait, deadline)
@@ -1730,6 +1953,9 @@ def _loop(
                 else []
             )
             state["regressions"] = failing
+            if found and (guard_reports < 2 and not final) and js:
+                guard_reports += 1
+                return js_guard_feedback(found)
             if found and (guard_reports < 2 and not final):
                 guard_reports += 1
                 parts = []
@@ -1763,6 +1989,71 @@ def _loop(
             if found:
                 return "Tests still fail: " + ", ".join(failing[:10])
         return discriminate()
+
+    # JS: type errors shown by the latest background note, and the message
+    # it went into (the finish feedback then does not repeat them there).
+    note_errors = {"message": None, "errors": set()}
+    appending = {"last": False}  # JS: finish feedback goes into messages[-1]
+
+    def type_error_lines(found, here):
+        """JS: compact lines for the new type errors of `found` (each once
+        per tool result), plus traces to the changed declarations."""
+        items = found.get("type_error_items")
+        if items is None:
+            lines = list(found.get("type_errors") or [])
+            return lines, "", []
+        lines = [tsc_brief(error) for error in items]
+        traced, kept = trace_type_errors(
+            items[:6], workspace.root, original_of, list(workspace.changed)
+        )
+        if traced:
+            stats["traced_type_errors"] = stats.get("traced_type_errors", 0) + len(kept)
+        if here:
+            lines = [line for line in lines if line not in note_errors["errors"]]
+        return lines, traced, kept
+
+    def js_guard_feedback(found):
+        """JS: finish() feedback for guard findings: failing tests, each new
+        type error once (compact, traced to a changed declaration when it is
+        at a line the agent did not change) and the changes so far."""
+        here = appending["last"] and note_errors["message"] == len(messages) - 1
+        parts = []
+        if found["regressions"]:
+            parts.append(
+                "Existing tests that passed before your change now fail:\n"
+                + "\n".join(found["regressions"][:10])
+            )
+        if found["added"]:
+            parts.append("Tests you added fail:\n" + "\n".join(found["added"][:10]))
+        kept = []
+        if found.get("type_errors"):
+            lines, traced, kept = type_error_lines(found, here)
+            if lines:
+                parts.append(
+                    "The type check (tsc --noEmit) reports new errors:\n"
+                    + "\n".join(lines[:10])
+                    + (f"\n[{len(lines) - 10} more]" if len(lines) > 10 else "")
+                )
+            else:
+                parts.append(
+                    "The type check (tsc --noEmit) reports the new errors shown above."
+                )
+            if traced:
+                parts.append(traced)
+        tail = found.get("output") or ""
+        cut = tail.find("tsc --noEmit:\n")
+        if cut >= 0:
+            tail = tail[:cut]
+        tail = tail.strip()
+        js_diff = getattr(guard, "js_diff", None)
+        diff = js_diff(kept) if js_diff is not None else guard.diff()
+        return (
+            "\n\n".join(parts)
+            + (f"\n\nOutput (tail):\n{tail[-2500:]}" if tail else "")
+            + (f"\n\nYour changes so far:\n```diff\n{diff}\n```" if diff else "")
+            + "\nFix the code (or a test you added, if it is wrong) so they pass, "
+            "unless the request explicitly asks to change that behavior."
+        )
 
     def after_last_edit():
         return [c for c in commands if c["step"] > state["last_edit_step"]]
@@ -1862,11 +2153,37 @@ def _loop(
             return True
         return False
 
-    def says_nothing(code, record, verdict):
+    def excused_before_named(check):
+        """JS, shadow only: excused() without the named-error guard and
+        without marking the check."""
+        if check.get("timed_out"):
+            return True
+        if check["command"].startswith("python:\n") and progressed(
+            check["command"][len("python:\n") :], check.get("record"), check["output"]
+        ):
+            return True
+        return bool(
+            check["command"].startswith(CHECK)
+            and says_nothing(
+                check["command"][len(CHECK) :],
+                check.get("record"),
+                check.get("verdict"),
+                named=False,
+            )
+        )
+
+    def says_nothing(code, record, verdict, named=True):
         """JS: a failing test check that says nothing against the change
         (uninformative) and whose failing tests never passed in an earlier
-        run of the same module (then a later edit broke what it checks)."""
+        run of the same module (then a later edit broke what it checks).
+        With `named`, never when a failure's error is one the request names
+        (the test reproduces the reported error, so it may well judge the
+        change)."""
         if not uninformative(record, verdict):
+            return False
+        if named and named_failures(record, request):
+            if says_nothing(code, record, verdict, named=False):
+                stats["named_error_blocks"] = stats.get("named_error_blocks", 0) + 1
             return False
         failing = [
             name for name, s in (record.get("tests") or {}).items() if s == "failed"
@@ -2043,7 +2360,51 @@ def _loop(
                 return False
         return finish()
 
-    def test_call(text, requested, calls):
+    def state_now():
+        """JS: the state_key of the workspace as it is now."""
+        return state_key(capture(), original_of)
+
+    def insensitive(record, verdict, key):
+        """JS: notes for failing tests that fail with the same message on
+        the original code and on 2 or more distinct edited states: their
+        assertion does not observe the edits."""
+        notes = []
+        if not verdict or not record:
+            return ""
+        said = {
+            f.get("name"): without_scratch_number(f.get("message"))
+            for f in record.get("failures") or []
+        }
+        for name in verdict.get("same") or []:
+            if name in insensitive_flagged or name == LOAD_FAILURE:
+                continue
+            states = {key}
+            for command in commands:
+                if not command["command"].startswith(CHECK) or command.get("salvage"):
+                    continue
+                earlier = command.get("record") or {}
+                if name not in ((command.get("verdict") or {}).get("same") or ()):
+                    continue
+                if any(
+                    f.get("name") == name
+                    and without_scratch_number(f.get("message")) == said.get(name)
+                    for f in earlier.get("failures") or []
+                ):
+                    states.add(command.get("state"))
+            states.discard(None)
+            if len(states) >= 2:
+                insensitive_flagged.add(name)
+                notes.append(
+                    f"- '{name}' fails with the same message on the original code and "
+                    f"on {len(states)} different versions of your change: its "
+                    "assertion does not observe your edits. Compare what it measures "
+                    "with what the request asks for."
+                )
+        if notes:
+            stats["insensitive_flags"] = stats.get("insensitive_flags", 0) + len(notes)
+        return ("\n" + "\n".join(notes)) if notes else ""
+
+    def test_call(text, requested, calls, patched=False):
         """JS: run a test module the agent sent (the test tool) and record it."""
         timeout = min(
             float(requested or bash_timeout),
@@ -2070,11 +2431,19 @@ def _loop(
                 "run). Change the code or the check instead of re-running it."
             )
         report("Running check")
+        if workspace.changed and JS_ASSERTING.search(text):
+            # Its run on the original code starts now, alongside this one:
+            # needed after a failure (the comparison) and after a pass
+            # (auto_finish).
+            start_original(
+                text, min(bash_timeout, max(1.0, deadline - time.perf_counter() - 1))
+            )
         started = time.perf_counter()
         result = run_check(text, timeout, typed=True)
         elapsed = time.perf_counter() - started
         record = result.meta.get("record")
         last_module.update(code=text, name=result.meta.get("scratch"))
+        key = state_now()
         counts = not result.changed and bool(JS_ASSERTING.search(text))
         verdict, problem = None, False
         if (
@@ -2101,6 +2470,14 @@ def _loop(
                     # refused once, and only the final finish excuses it.
                     verdict = compare_tests(record, base.meta.get("record"))
                     result.text += js_verdict_text(verdict)
+                    result.text += insensitive(record, verdict, key)
+        if not result.ok and record is not None and not patched:
+            name = result.meta.get("scratch")
+            if name:
+                result.text += (
+                    f"\n[to change this test module, edit {name} with only the lines "
+                    "that need it (it is patched and run again; read shows it)]"
+                )
         if result.changed:
             state["last_edit_step"] = step
             changed()
@@ -2117,6 +2494,7 @@ def _loop(
                 "weakened": False,
                 "timed_out": False,
                 "verdict": verdict,
+                "state": key,
                 **({"check_problem": True} if problem else {}),
             }
         )
@@ -2128,7 +2506,8 @@ def _loop(
         edits = normalize_edits(arguments)
         label = last_module.get("name") or str(arguments.get("path"))
         code = apply_text_edits(last_module["code"], edits, label)
-        result = test_call(code, arguments.get("timeout"), calls)
+        stats["module_patches"] = stats.get("module_patches", 0) + 1
+        result = test_call(code, arguments.get("timeout"), calls, patched=True)
         noun = "block" if len(edits) == 1 else "blocks"
         result.text = (
             f"Patched your last test module ({len(edits)} {noun}) and ran it again:\n"
@@ -2147,9 +2526,88 @@ def _loop(
         path = str(arguments["path"])
         edits = normalize_edits(arguments)
         try:
-            return workspace.edit(path, edits)
+            name = workspace.name(path)
+            current = workspace.resolve(name).read_bytes()
+        except (OSError, ValueError):
+            name, current = path, None
+        sent = (name, json.dumps(edits), hashlib.sha256(current or b"").hexdigest())
+        if current is not None and sent in rejected_edits:
+            stats["resend_refusals"] = stats.get("resend_refusals", 0) + 1
+            raise ToolError(
+                "Rejected again: this is the same edit the syntax check already "
+                f"refused ({rejected_edits[sent]}), and {name} has not changed since. "
+                "Nothing was written. Change newText (or oldText) so the result parses."
+            )
+        try:
+            result = workspace.edit(path, edits)
         except ToolError as exc:
-            raise ToolError(str(exc) + unapplied(path, edits)) from None
+            message = str(exc)
+            repaired = (
+                repair_boundaries(name, current, edits)
+                if message.startswith("Rejected:") and current is not None
+                else None
+            )
+            if repaired is None:
+                if message.startswith("Rejected:") and current is not None:
+                    rejected_edits[sent] = message.split("\n", 1)[0][
+                        len("Rejected: ") :
+                    ]
+                raise ToolError(message + unapplied(path, edits)) from None
+            fixed, notes = repaired
+            result = workspace.edit(path, fixed)
+            stats["boundary_repairs"] = stats.get("boundary_repairs", 0) + 1
+            result.text = (
+                "[As sent, this edit would not parse; "
+                + "; ".join(notes)
+                + ". The result parses: check the change below.]\n"
+                + result.text
+            )
+        empty = [line for edit in edits for line in empty_bodies(edit["newText"])]
+        if empty:
+            stats["empty_body_flags"] = stats.get("empty_body_flags", 0) + 1
+            result.text += (
+                "\n[note: "
+                + "; ".join(f"`{line[:80]}`" for line in empty[:3])
+                + " has an empty body, so it controls nothing: the code after it "
+                "always runs]"
+            )
+        return result
+
+    def repair_boundaries(name, raw, edits):
+        """JS: an edit the syntax check refused, with oldText boundaries
+        repaired (see boundary_candidates): (edits, notes) when exactly one
+        combination of repaired blocks parses, else None. All blocks still
+        apply together or not at all."""
+        gate_errors = getattr(workspace.content_gate, "errors", None)
+        if gate_errors is None:
+            return None
+        text, _ = _decode(raw, name)
+        options = []
+        for edit in edits:
+            choices = [(edit, None)]
+            for extended, reason in boundary_candidates(
+                text, edit["oldText"], edit["newText"]
+            ):
+                choices.append(
+                    ({"oldText": extended, "newText": edit["newText"]}, reason)
+                )
+            options.append(choices)
+        if all(len(choices) == 1 for choices in options):
+            return None
+        parsing = {}
+        for index, choices in enumerate(options):
+            for edit, reason in choices[1:]:
+                trial = [options[i][0][0] for i in range(len(edits))]
+                trial[index] = edit
+                try:
+                    updated = apply_text_edits(text, trial, name)
+                except ToolError:
+                    continue
+                if gate_errors(name, updated) == []:
+                    parsing.setdefault(updated, (trial, [f"edits[{index}]: {reason}"]))
+        if len(parsing) != 1:
+            return None
+        return next(iter(parsing.values()))
 
     def unapplied(path, edits):
         if len(edits) < 2:
@@ -2278,6 +2736,7 @@ def _loop(
                 "automatic": True,
                 "verdict": verdict,
                 "message": len(messages) - 1,
+                "state": state_now(),
             }
         )
         if result.changed:
@@ -2288,16 +2747,39 @@ def _loop(
         """No model call is left (the turn limit; in JS mode also the
         deadline): deliver the change if nothing speaks against it. In JS
         mode an earlier edit snapshot is delivered when the final state fails."""
+        if not js:
+            return judge_final(stage, failed_edit)
+        started = time.perf_counter()
+        result = judge_final(stage, failed_edit)
+        result["final_finish_seconds"] = round(time.perf_counter() - started, 3)
+        result["stop_reason"] = stage
+        return result
+
+    def judge_final(stage, failed_edit):
         failed = check_failed()
         let_through = False  # the latest check failed, but was excused
+        # JS: the policy before the recorded tier and the named-error guard
+        # would have excused the failing checks and judged the final state
+        # (shadow attribution only; never changes what is delivered).
+        old_excused = False
         if failed:
             failing = [
                 c for c in after_last_edit() if c.get("check", True) and not c["ok"]
             ]
+            if js:
+                old_excused = all(excused_before_named(c) for c in failing)
             failed = not all(excused(c) for c in failing)
             let_through = not failed
+        old_judged_final = (
+            js and failed and old_excused and workspace.changed and not failed_edit
+        )
         problem = None
         judged = False
+        # JS, recorded tier: the final state is a candidate unless its last
+        # response had a failed edit; when finish() judges it below, its
+        # result counts, otherwise its recorded guard verdict alone (waiting
+        # for the guard here would take the time salvage needs).
+        final_problem = "not judged" if failed_edit else None
         if workspace.changed and not failed_edit and not failed:
             # Judged first, while the guard's results for this state are
             # complete (salvage restarts them for other states).
@@ -2314,15 +2796,252 @@ def _loop(
                 return rescued
         if judged and problem is None:
             return outcome("applied_unvalidated", finished=stage)
-        if problem is not None:
-            return outcome("failed", failure_stage=stage, error=problem[:500])
-        return outcome(
-            "failed",
-            failure_stage=stage,
-            error=f"No verified change within {max_turns} model calls"
+        error = (
+            problem[:500]
+            if problem is not None
+            else f"No verified change within {max_turns} model calls"
             if stage == "turn_limit"
-            else "No verified change before the deadline",
+            else "No verified change before the deadline"
         )
+        if js and workspace.changed:
+            # JS: the earlier tiers deliver nothing. A state with a clean,
+            # complete recorded guard verdict whose own checks say nothing
+            # against it is delivered (unvalidated), preferring one with
+            # positive evidence.
+            tiered = recorded_tier(
+                stage,
+                problem if judged else final_problem,
+                old_shadow(stage) if old_judged_final else None,
+            )
+            if tiered is not None:
+                return tiered
+        if old_judged_final:
+            # The named-error guard kept a failure the old policy excused:
+            # that policy would have judged (and maybe delivered) the final
+            # state, so this failure may be a lost delivery.
+            return outcome(
+                "failed", failure_stage=stage, error=error, shadow=old_shadow(stage)
+            )
+        return outcome("failed", failure_stage=stage, error=error)
+
+    def old_shadow(stage):
+        """JS: what the old policy did where the named-error guard blocked an
+        excuse: it judged the final state with finish(final=True) and
+        delivered it when that found nothing. Not re-run here: the final
+        state's recorded guard verdict is the estimate."""
+        verdict_of = getattr(guard, "verdict", None) if guard is not None else None
+        key = state_key(capture(), original_of) if originals is not None else None
+        found = verdict_of(key) if verdict_of is not None and key else None
+        return {
+            "old_policy": "final_state",
+            "failure_stage": stage,
+            "state": key,
+            "final_guard": (
+                None
+                if not found
+                else "clean"
+                if found["clean"]
+                else "incomplete"
+                if not found["complete"]
+                else "problems"
+            ),
+        }
+
+    def edits_source(files):
+        """JS: a non-test JS/TS source file differs from the original."""
+        return any(
+            not is_scratch(name)
+            and not is_test_path(name)
+            and PurePosixPath(name).suffix in JS_SUFFIXES
+            and data != original_of(name)
+            for name, data in files.items()
+        )
+
+    def against(command):
+        """JS: a check that ran on a state speaks against it: a failing test
+        check whose comparison is unknown, that broke a test passing on the
+        original code, crashed inside repository source, fails to load only
+        with the change, or fails with an error the request names; or any
+        other failing check that counts."""
+        if command["ok"] or command.get("timed_out"):
+            return False
+        if not command["command"].startswith(CHECK):
+            return bool(command.get("check")) and not command["ok"]
+        record, verdict = command.get("record"), command.get("verdict")
+        if record is None:
+            return bool(command.get("check"))
+        if scratch_never_transforms(record):
+            return False  # the module itself does not parse: a test bug
+        if verdict is None:
+            return True
+        if verdict.get("broke") or any(
+            f.get("source") for f in record.get("failures") or []
+        ):
+            return True
+        if record.get("load_error") and not verdict.get("load_same"):
+            return True
+        return bool(named_failures(record, request))
+
+    def evidence(command):
+        """JS: a check on a state shows the change working: a passing test
+        check that fails on the original code, a test the change fixed, or
+        a test that now fails at a later expect line than on the original
+        code (it progressed)."""
+        if not command["command"].startswith(CHECK):
+            return False
+        record = command.get("record") or {}
+        base = original_runs.get(command["command"][len(CHECK) :])
+        if command["ok"]:
+            before = (base.meta.get("record") if base is not None else None) or {}
+            return bool(
+                record.get("passed")
+                and base is not None
+                and not base.ok
+                and (before.get("failed") or before.get("load_error"))
+            )
+        verdict = command.get("verdict") or {}
+        if verdict.get("fixed"):
+            return True
+        before = {
+            f.get("name"): f.get("line")
+            for f in ((base.meta.get("record") if base else None) or {}).get("failures")
+            or []
+        }
+        return any(
+            isinstance(f.get("line"), int)
+            and isinstance(before.get(f.get("name")), int)
+            and f["line"] > before[f["name"]]
+            for f in record.get("failures") or []
+        )
+
+    def recorded_tier(stage, final_problem, shadow=None):
+        """JS: the final state or an earlier snapshot (newest first) whose
+        recorded guard verdict is complete and clean, whose checks say
+        nothing against it and that changes a source file, once the agent's
+        own test module has loaded and run at all; one with positive
+        evidence first. Nothing is re-run; None when there is none."""
+        verdict_of = getattr(guard, "verdict", None) if guard is not None else None
+        if verdict_of is None or originals is None:
+            return None
+        final = capture()
+        candidates, seen = [], set()
+        for files, turn in [(final, None)] + [
+            (snapshot["files"], snapshot["turn"]) for snapshot in reversed(snapshots)
+        ]:
+            key = state_key(files, original_of)
+            if key not in seen:
+                seen.add(key)
+                candidates.append((key, files, turn))
+        # Why each candidate was passed over (instrumentation only).
+        skipped = stats.setdefault("tier_candidates", [])
+        if not any(
+            c["command"].startswith(CHECK)
+            and not c.get("salvage")
+            and c.get("record") is not None
+            and not c["record"].get("load_error")
+            for c in commands
+        ):
+            # The agent's own test module never loaded and ran: nothing it
+            # wrote exercised the change (the tier is for code whose test
+            # cannot judge it, not for code no test reached).
+            skipped.append(["all", "no test module of the agent ever ran"])
+            return None
+        chosen = {}
+        for key, files, turn in candidates:
+            label = "final" if turn is None else turn
+            if not edits_source(files):
+                skipped.append([label, "no source change"])
+                continue
+            if turn is None and final_problem is not None:
+                skipped.append([label, "final finish problem"])
+                continue  # the final state's own finish found a problem
+            found = verdict_of(key)
+            if not found or not found["clean"]:
+                reason = (
+                    "no guard verdict"
+                    if not found
+                    else "guard incomplete"
+                    if not found["complete"]
+                    else "guard found problems"
+                )
+                skipped.append([label, reason])
+                continue
+            ran = [
+                c for c in commands if c.get("state") == key and not c.get("salvage")
+            ]
+            if any(against(c) for c in ran):
+                skipped.append([label, "a check speaks against it"])
+                continue
+            # Salvage re-ran the agent's check on this very state: a strong
+            # signal there (a crash in source, a break) counts too.
+            if any(
+                salvage_against(c)
+                for c in commands
+                if c.get("salvage") is not None and c.get("state") == key
+            ):
+                skipped.append([label, "a salvage run speaks against it"])
+                continue
+            tier = "progress" if any(evidence(c) for c in ran) else "guard_clean"
+            chosen.setdefault(tier, (files, turn))
+            if tier == "progress":
+                break
+        pick = next((t for t in ("progress", "guard_clean") if t in chosen), None)
+        if pick is None:
+            return None
+        files, turn = chosen[pick]
+        if turn is not None:
+            restore(files)
+            state["last_edit_step"] = step
+            changed()
+        if required_checks:
+            failures = [
+                r
+                for r in (check_runner or (lambda *a: []))(
+                    workspace.root, list(required_checks), deadline
+                )
+                if r.get("returncode") != 0
+            ]
+            if failures:
+                if turn is not None:
+                    restore(final)
+                    changed()
+                return None
+        return outcome(
+            "applied_unvalidated",
+            finished=pick,
+            snapshot_turn=turn if turn is not None else state["calls"],
+            final_stage=stage,
+            # What the policy without this tier delivered: nothing, unless
+            # the named-error guard blocked its excuse of the final state.
+            shadow=shadow or {"old_policy": "failed", "failure_stage": stage},
+        )
+
+    def salvage_against(command):
+        """JS: a salvage run of the agent's check on a state (no comparison
+        verdict of its own) speaks against that state: it crashed inside
+        repository source, broke a test that passes on the original code,
+        fails to load where the original loads, or fails with an error the
+        request names. A missing verdict alone does not count."""
+        if (
+            command["ok"]
+            or command.get("timed_out")
+            or not command["command"].startswith(CHECK)
+        ):
+            return False
+        record = command.get("record")
+        if record is None or scratch_never_transforms(record):
+            return False
+        if any(f.get("source") for f in record.get("failures") or []):
+            return True
+        if named_failures(record, request):
+            return True
+        base = original_runs.get(command["command"][len(CHECK) :])
+        before = base.meta.get("record") if base is not None else None
+        if before is None:
+            return False
+        if record.get("load_error") and not before.get("load_error"):
+            return True
+        return bool((compare_tests(record, before) or {}).get("broke"))
 
     original_bytes = {}
 
@@ -2413,6 +3132,7 @@ def _loop(
             if deadline - time.perf_counter() < 6.0:
                 break
             start = len(commands)
+            snapshot_key = state_key(snapshot["files"], original_of)
             restore(snapshot["files"])
             step += 1
             state["last_edit_step"] = step
@@ -2432,6 +3152,7 @@ def _loop(
                     "record": result.meta.get("record"),
                     "automatic": True,
                     "salvage": snapshot["turn"],
+                    "state": snapshot_key,
                 }
             )
             accepted = False
@@ -2449,6 +3170,7 @@ def _loop(
             for command in commands[start:]:
                 # Runs on this snapshot (recheck's too) judge another state.
                 command.setdefault("salvage", snapshot["turn"])
+                command.setdefault("state", snapshot_key)
                 if not accepted:
                     command["check"] = False
             if accepted:
@@ -2465,9 +3187,10 @@ def _loop(
         changed()
         return None
 
-    def guard_note(wait=0.0):
+    def guard_note(wait=0.0, target=None):
         """JS: the background type check and tests of the latest edit, each
-        part once, as soon as it is ready (waits up to `wait` seconds)."""
+        part once, as soon as it is ready (waits up to `wait` seconds).
+        `target`: index of the message it goes into."""
         if not js or guard is None or not guard_due["edited"]:
             return ""
         peek = getattr(guard, "peek", None)
@@ -2482,11 +3205,17 @@ def _loop(
             guard_shown.add((generation, "tsc"))
             errors = found["type_errors"]
             if errors:
+                lines, traced, _ = type_error_lines(found, False)
+                note_errors.update(
+                    message=len(messages) if target is None else target,
+                    errors=set(lines[:6]),
+                )
                 parts.append(
                     f"- tsc --noEmit: {len(errors)} new error(s) vs the original "
                     "code:\n  "
-                    + "\n  ".join(errors[:6])
-                    + (f"\n  [{len(errors) - 6} more]" if len(errors) > 6 else "")
+                    + "\n  ".join(lines[:6])
+                    + (f"\n  [{len(lines) - 6} more]" if len(lines) > 6 else "")
+                    + (f"\n{traced}" if traced else "")
                 )
             elif errors == []:
                 parts.append("- tsc --noEmit: no new errors")
@@ -2518,6 +3247,18 @@ def _loop(
             return ""
         return "\n[Background checks of your edited code:\n" + "\n".join(parts) + "]"
 
+    def guard_wait():
+        """JS: how long to hold the next model call for the type check of
+        the latest edit: only when it is expected within JS_GUARD_SOON
+        seconds (its results otherwise come with a later tool result)."""
+        eta = getattr(guard, "eta", None) if guard is not None else None
+        if eta is None:
+            return JS_GUARD_WAIT  # a guard without timing estimates
+        expected = eta(("tsc",))
+        if expected is None or expected > JS_GUARD_SOON:
+            return 0.0
+        return expected + JS_GUARD_MARGIN
+
     def budget_note():
         """JS: the remaining model calls and time, when they run short."""
         notes = []
@@ -2547,8 +3288,15 @@ def _loop(
         if js and state["calls"] > 0:
             wait = 0.0
             if guard_due["edited"] and guard_due.get("turn") == state["calls"]:
-                wait = max(0.0, min(JS_GUARD_WAIT, model_stop - time.perf_counter()))
-            notes = guard_note(wait) + budget_note()
+                wait = max(0.0, min(guard_wait(), model_stop - time.perf_counter()))
+            waited = time.perf_counter()
+            notes = guard_note(wait, len(messages) - 1) + budget_note()
+            if wait:
+                stats["guard_waits"] = stats.get("guard_waits", 0) + 1
+                stats["guard_wait_seconds"] = round(
+                    stats.get("guard_wait_seconds", 0.0) + time.perf_counter() - waited,
+                    3,
+                )
             if notes:
                 messages[-1]["content"] += notes
         report(f"Model call {state['calls'] + 1}")
@@ -2674,7 +3422,9 @@ def _loop(
                 try:
                     checkpoint()
                     try:
-                        arguments = repair_json(call["function"]["arguments"])
+                        arguments = (js_arguments if js else repair_json)(
+                            call["function"]["arguments"]
+                        )
                     except ValueError as exc:
                         raise ToolError(
                             f"Could not parse {name} arguments as JSON ({exc}). "
@@ -2683,6 +3433,26 @@ def _loop(
                     if not isinstance(arguments, dict):
                         raise ToolError("Tool arguments must be a JSON object")
                     if (
+                        js
+                        and name == "read"
+                        and is_scratch(str(arguments.get("path", "")))
+                        and last_module.get("code")
+                    ):
+                        # The last test module (deleted after its run), with
+                        # line numbers, to patch it with edit.
+                        stats["scratch_reads"] = stats.get("scratch_reads", 0) + 1
+                        shown = last_module["code"].rstrip("\n").split("\n")
+                        width = len(str(len(shown)))
+                        result = ToolResult(
+                            f"[your last test module ({last_module.get('name')}), "
+                            f"{len(shown)} lines; edit this path to patch it and run "
+                            "it again]\n"
+                            + "\n".join(
+                                f"{number:>{width}} | {line}"
+                                for number, line in enumerate(shown, 1)
+                            )
+                        )
+                    elif (
                         js
                         and name in ("read", "edit", "write")
                         and is_scratch(str(arguments.get("path", "")))
@@ -2958,6 +3728,8 @@ def _loop(
                 and commands[-1]["step"] == step
             ):
                 commands[-1]["message"] = len(messages) - 1
+                if js and "state" not in commands[-1]:
+                    commands[-1]["state"] = state_now()
             if name == "done":
                 done_index = len(messages) - 1
         trace()
@@ -2975,11 +3747,17 @@ def _loop(
             # A passing check that fails on the original code proves the
             # change: finish now instead of spending a model call on done.
             last = commands[-1] if commands else None
-            problem = auto_finish(
-                last
-                if last is not None and last["turn"] == calls and last["step"] == step
-                else None
-            )
+            appending["last"] = js  # its feedback goes into the newest message
+            try:
+                problem = auto_finish(
+                    last
+                    if last is not None
+                    and last["turn"] == calls
+                    and last["step"] == step
+                    else None
+                )
+            finally:
+                appending["last"] = False
             if problem is None:
                 summary = assistant["content"].strip() or "Changed " + ", ".join(
                     sorted(set(workspace.changed))

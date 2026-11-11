@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import queue
+import re
 import shutil
 import subprocess
 import threading
@@ -209,3 +210,167 @@ class SyntaxGate:
             except OSError:
                 pass
             _kill(process)
+
+
+# --- edit boundary repairs (JS mode) -------------------------------------------
+
+_OPEN, _CLOSE = "([{", ")]}"
+
+
+def bracket_balance(text):
+    """Opening minus closing brackets outside string literals and comments
+    (a rough count: template literals and regexes are not parsed)."""
+    balance, quote, index = 0, None, 0
+    while index < len(text):
+        char = text[index]
+        if quote:
+            if char == "\\":
+                index += 2
+                continue
+            if char == quote or (char == "\n" and quote != "`"):
+                quote = None
+        elif text.startswith("//", index):
+            end = text.find("\n", index)
+            index = len(text) if end < 0 else end
+            continue
+        elif text.startswith("/*", index):
+            end = text.find("*/", index + 2)
+            index = len(text) if end < 0 else end + 2
+            continue
+        elif char in "'\"`":
+            quote = char
+        elif char in _OPEN:
+            balance += 1
+        elif char in _CLOSE:
+            balance -= 1
+        index += 1
+    return balance
+
+
+def _line_bounds(text, start, end):
+    """Start of the line holding `start` and end (after the newline) of the
+    line holding `end - 1`."""
+    first = text.rfind("\n", 0, start) + 1
+    last = text.find("\n", max(start, end - 1))
+    return first, len(text) if last < 0 else last + 1
+
+
+def boundary_candidates(text, old, new, most=6):
+    """Repairs of one edit block whose boundary is likely off, as (oldText,
+    reason) pairs; `old` must occur exactly once in `text`.
+
+    * newText closes more brackets than oldText: oldText is extended forward
+      line by line until both balance the same (the closing lines newText
+      already contains).
+    * newText ends (starts) with lines that already follow (precede)
+      oldText: oldText is extended over them.
+
+    An extended oldText keeps whether oldText ended with a newline.
+    """
+    if not old or text.count(old) != 1:
+        return []
+    start = text.index(old)
+    end = start + len(old)
+    newline = old.endswith("\n")
+    found = []
+
+    def add(extended, reason):
+        if (
+            extended != old
+            and text.count(extended) == 1
+            and all(extended != item for item, _ in found)
+        ):
+            found.append((extended, reason))
+
+    rest = text[end:]
+    lead = 1 if not newline and rest.startswith("\n") else 0
+    following = rest[lead:].split("\n")
+    if following and following[-1] == "" and rest.endswith("\n"):
+        following.pop()
+
+    def forward(count):
+        stop = end + lead + len("\n".join(following[:count]))
+        if newline:
+            stop += 1
+        return text[start : min(stop, len(text))]
+
+    if bracket_balance(new) < bracket_balance(old):
+        for count in range(1, min(most, len(following)) + 1):
+            extended = forward(count)
+            if bracket_balance(extended) == bracket_balance(new):
+                shown = " ".join(line.strip() for line in following[:count])[:60]
+                add(
+                    extended,
+                    f"its oldText was extended over the next {count} line(s) "
+                    f"({shown!r}), which newText already closes",
+                )
+                break
+    new_lines = new.rstrip("\n").split("\n")
+    at_line_start = start == 0 or text[start - 1] == "\n"
+    # The non-blank lines before oldText, newest last, with their offsets
+    # (blank lines between them and oldText are covered by the extension).
+    before, offset = [], start
+    while at_line_start and offset > 0 and len(before) < 4:
+        line_start = text.rfind("\n", 0, offset - 1) + 1
+        line = text[line_start : offset - 1]
+        if line.strip():
+            before.insert(0, (line, line_start))
+        offset = line_start
+    for count in range(1, min(4, len(new_lines)) + 1):
+        tail = [line.strip() for line in new_lines[-count:]]
+        if any(tail) and [line.strip() for line in following[:count]] == tail:
+            add(
+                forward(count),
+                f"its oldText was extended over the next {count} line(s), which "
+                "newText repeats",
+            )
+        head = [line.strip() for line in new_lines[:count]]
+        if (
+            at_line_start
+            and any(head)
+            and len(before) >= count
+            and [line.strip() for line, _ in before[-count:]] == head
+        ):
+            first = before[-count][1]
+            if first >= 0 and text[first:start].endswith("\n"):
+                add(
+                    text[first:end],
+                    f"its oldText was extended over the {count} line(s) before it, "
+                    "which newText repeats",
+                )
+    return found
+
+
+_EMPTY_BODY = re.compile(
+    r"^\s*(?:\}\s*else\s+)?(?:if|for|while)\s*\(.*\)\s*(?:;|\{\s*\})\s*(?://.*)?$"
+)
+
+
+def empty_bodies(new):
+    """Lines of newText that are an if/for/while with an empty body."""
+    return [line.strip() for line in new.split("\n") if _EMPTY_BODY.match(line)]
+
+
+def close_brackets(text):
+    """`text` plus the closing brackets it lacks at its end (strings and
+    escapes respected); None when it ends inside a string or closes a
+    bracket it never opened."""
+    stack, in_string, escaped = [], False, False
+    pairs = {"{": "}", "[": "]"}
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in pairs:
+            stack.append(pairs[char])
+        elif char in "}]" and (not stack or stack.pop() != char):
+            return None
+    if in_string or not stack:
+        return None
+    return text.rstrip() + "".join(reversed(stack))
