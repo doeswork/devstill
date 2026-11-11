@@ -1,0 +1,83 @@
+{
+  "complete": true,
+  "attempts": 96,
+  "expected_attempts": 96,
+  "workloads": {
+    "small": {
+      "variants": {
+        "baseline": {
+          "attempts": 48,
+          "behavior_passes": 26,
+          "workflow_passes": 26,
+          "model_calls": 571,
+          "all_attempt_worker_seconds": 3599.602260411979
+        },
+        "runtime": {
+          "attempts": 48,
+          "behavior_passes": 32,
+          "workflow_passes": 32,
+          "model_calls": 723,
+          "all_attempt_worker_seconds": 3401.1481411689892
+        }
+      },
+      "versus_pi": {
+        "baseline": {
+          "paired_trials": 0,
+          "shared_successes": 0,
+          "candidate_only_passes": 0,
+          "pi_only_passes": 0,
+          "median_candidate_over_pi_wall_ratio": null,
+          "shared_success_medians": {
+            "coding_seconds": {
+              "pi": null,
+              "baseline": null
+            },
+            "worker_wall_seconds": {
+              "pi": null,
+              "baseline": null
+            },
+            "end_to_end_seconds": {
+              "pi": null,
+              "baseline": null
+            }
+          },
+          "descriptive_target_met": false
+        },
+        "runtime": {
+          "paired_trials": 0,
+          "shared_successes": 0,
+          "candidate_only_passes": 0,
+          "pi_only_passes": 0,
+          "median_candidate_over_pi_wall_ratio": null,
+          "shared_success_medians": {
+            "coding_seconds": {
+              "pi": null,
+              "runtime": null
+            },
+            "worker_wall_seconds": {
+              "pi": null,
+              "runtime": null
+            },
+            "end_to_end_seconds": {
+              "pi": null,
+              "runtime": null
+            }
+          },
+          "descriptive_target_met": false
+        }
+      },
+      "versus_baseline": {
+        "complete": true,
+        "paired_trials": 48,
+        "baseline_passes": 26,
+        "runtime_passes": 32,
+        "shared_passes": 22,
+        "runtime_only_passes": 10,
+        "baseline_only_passes": 4,
+        "median_runtime_over_baseline_wall_ratio": 1.1401779221167003,
+        "geometric_mean_runtime_over_baseline_wall_ratio": 0.9452149072600847
+      }
+    }
+  },
+  "promotion": "diagnostic only; fresh cases and repeated frozen-version evidence required"
+}
