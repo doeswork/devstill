@@ -1,0 +1,562 @@
+{
+  "campaign": {
+    "command": [
+      "bench_suite.py",
+      "run",
+      "--suite",
+      "react-holdout",
+      "--repeats",
+      "2",
+      "--timeout",
+      "240",
+      "--note",
+      "holdout after round 2 (b0f9490), 240 s; Devstill gets the trial budget"
+    ],
+    "finished_at": "2026-11-11T09:41:24+00:00",
+    "git": {
+      "branch": "bench-test-ui-ux",
+      "dirty": false,
+      "sha": "32f350a5ecb406f85e55dcc23cbd04557d965a59",
+      "short": "32f350a",
+      "status": []
+    },
+    "host": "USNBRosenbergJ",
+    "hours": 1.9,
+    "id": "20261111T074709Z-32f350a",
+    "model": "vllm-qwen38-27b",
+    "model_endpoint": "https://llm.codemonkey.study/v1",
+    "note": "holdout after round 2 (b0f9490), 240 s; Devstill gets the trial budget",
+    "pi_version": "1.5.0",
+    "reason": null,
+    "sampling": "default",
+    "served_models": [
+      [
+        "vllm-qwen38-27b",
+        "gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090",
+        262144
+      ]
+    ],
+    "started_at": "2026-11-11T07:47:09+00:00",
+    "status": "completed",
+    "tools": {
+      "git": "git version 2.43.0",
+      "node": "v24.14.1",
+      "pytest": "pytest 8.3.5",
+      "python": "Python 3.12.3",
+      "ruff": "ruff 0.17.4"
+    }
+  },
+  "generated_at": "2026-11-11T09:41:24+00:00",
+  "previous": {
+    "git": "32f350a",
+    "id": "20261111T062627Z-32f350a",
+    "model": "vllm-qwen38-27b",
+    "started_at": "2026-11-11T06:26:27+00:00",
+    "suites": {
+      "react-holdout": {
+        "arms": {
+          "pi": {
+            "before": "9/24",
+            "now": "16/24"
+          },
+          "runtime": {
+            "before": "17/24",
+            "now": "18/24"
+          }
+        },
+        "flips": [
+          {
+            "before": "1/2",
+            "id": "zh01",
+            "now": "2/2",
+            "variant": "runtime"
+          },
+          {
+            "before": "1/2",
+            "id": "zh02",
+            "now": "2/2",
+            "variant": "pi"
+          },
+          {
+            "before": "2/2",
+            "id": "zh03",
+            "now": "1/2",
+            "variant": "runtime"
+          },
+          {
+            "before": "0/2",
+            "id": "zh04",
+            "now": "1/2",
+            "variant": "pi"
+          },
+          {
+            "before": "0/2",
+            "id": "zh04",
+            "now": "1/2",
+            "variant": "runtime"
+          },
+          {
+            "before": "1/2",
+            "id": "zh05",
+            "now": "2/2",
+            "variant": "pi"
+          },
+          {
+            "before": "1/2",
+            "id": "zh06",
+            "now": "0/2",
+            "variant": "runtime"
+          },
+          {
+            "before": "0/2",
+            "id": "zh08",
+            "now": "1/2",
+            "variant": "pi"
+          },
+          {
+            "before": "0/2",
+            "id": "zh09",
+            "now": "2/2",
+            "variant": "pi"
+          },
+          {
+            "before": "0/2",
+            "id": "zh10",
+            "now": "1/2",
+            "variant": "pi"
+          },
+          {
+            "before": "1/2",
+            "id": "zh12",
+            "now": "2/2",
+            "variant": "runtime"
+          }
+        ],
+        "median_ratio": {
+          "before": 0.61,
+          "now": 0.84
+        }
+      }
+    }
+  },
+  "schema_version": 1,
+  "suites": [
+    {
+      "arms": {
+        "pi": {
+          "acceptance_passes": 17,
+          "attempts": 24,
+          "failures": {
+            "timeout": 5,
+            "timeout_after_correct_edit": 1,
+            "wrong_fix:behavior_check": 1,
+            "wrong_fix:regression_tests": 1
+          },
+          "median_pass_seconds": 86.7,
+          "passes": 16
+        },
+        "runtime": {
+          "acceptance_passes": 18,
+          "attempts": 24,
+          "failures": {
+            "no_change": 3,
+            "wrong_fix:behavior_check": 1,
+            "wrong_fix:regression_tests": 2
+          },
+          "median_pass_seconds": 81.8,
+          "passes": 18
+        }
+      },
+      "audit": {
+        "baseline_unchanged": null,
+        "coding_toolchain_unchanged": true,
+        "complete": true,
+        "frozen_runtime_unchanged": true,
+        "frozen_source_unchanged": true,
+        "pi_unchanged": true,
+        "retrieval_inputs_unchanged": true,
+        "working_tree_source_changed": false
+      },
+      "cases": [
+        {
+          "id": "zh01",
+          "median_seconds": {
+            "pi": 21.9,
+            "runtime": 38.1
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "zh02",
+          "median_seconds": {
+            "pi": 69.4,
+            "runtime": 67.2
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "zh03",
+          "median_seconds": {
+            "pi": 63.6,
+            "runtime": 25.6
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "1/2"
+          }
+        },
+        {
+          "id": "zh04",
+          "median_seconds": {
+            "pi": 157.7,
+            "runtime": 213.7
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "1/2"
+          }
+        },
+        {
+          "id": "zh05",
+          "median_seconds": {
+            "pi": 101.4,
+            "runtime": 39.9
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "zh06",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "0/2"
+          }
+        },
+        {
+          "id": "zh07",
+          "median_seconds": {
+            "pi": 31.9,
+            "runtime": 20.7
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "zh08",
+          "median_seconds": {
+            "pi": 78.7,
+            "runtime": 86.3
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "zh09",
+          "median_seconds": {
+            "pi": 150.2,
+            "runtime": 102.9
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "1/2"
+          }
+        },
+        {
+          "id": "zh10",
+          "median_seconds": {
+            "pi": 183.9,
+            "runtime": 85.2
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "1/2"
+          }
+        },
+        {
+          "id": "zh11",
+          "median_seconds": {
+            "pi": 49.8,
+            "runtime": 96.9
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "zh12",
+          "median_seconds": {
+            "pi": 137.0,
+            "runtime": 106.1
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "2/2"
+          }
+        }
+      ],
+      "description": "12 zustand (React/TypeScript) cases authored with react-dev; not read while tuning Devstill",
+      "excluded_cases": {},
+      "expected_trials": 48,
+      "failures": [
+        {
+          "category": "wrong_fix:behavior_check",
+          "detail": "No index signature with a parameter of type 'string' was found on type '{}'.",
+          "id": "zh01",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh01-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "wrong_fix:behavior_check",
+          "detail": "tests/vanilla/basic.test.ts(77,10): error TS2722: Cannot invoke an object which is possibly 'undefined'.",
+          "id": "zh03",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh03-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh04",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh04-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: Tests still fail: tests/basic.test.tsx > can throw an error in selector, tests/basic.test.tsx > only re-renders if selected state has changed, tests/shallow.test.tsx > useShallow \u2026",
+          "id": "zh04",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh04-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh06",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh06-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: Tests still fail: tests/basic.test.tsx > can call useBoundStore with progressively more arguments, tests/basic.test.tsx > can throw an error in equality checker, tests/basic.test.\u2026",
+          "id": "zh06",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh06-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh06",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh06-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: Tests still fail: tests/basic.test.tsx > can call useBoundStore with progressively more arguments, tests/basic.test.tsx > can throw an error in equality checker, tests/basic.test.\u2026",
+          "id": "zh06",
+          "repeat": 1,
+          "trial": "suites/react-holdout/zh06-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh08",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh08-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-bspab3l5/vitest-report.json",
+          "id": "zh09",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh09-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-n0u12tuq/vitest-report.json",
+          "id": "zh10",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh10-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-ur2zv1w4/vitest-report.json",
+          "id": "zh10",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh10-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh11",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh11-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "zh12",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh12-0-pi",
+          "variant": "pi"
+        }
+      ],
+      "name": "react-holdout",
+      "paired": {
+        "runtime": {
+          "both": 14,
+          "candidate_faster": 10,
+          "candidate_only": 4,
+          "median_ratio": 0.84,
+          "median_shared_seconds": {
+            "pi": 86.7,
+            "runtime": 65.5
+          },
+          "neither": 4,
+          "pairs": 24,
+          "pi_only": 2,
+          "shared_seconds": [
+            [
+              21.93,
+              52.56
+            ],
+            [
+              52.09,
+              30.32
+            ],
+            [
+              86.7,
+              104.12
+            ],
+            [
+              86.65,
+              25.55
+            ],
+            [
+              157.7,
+              213.67
+            ],
+            [
+              96.12,
+              41.06
+            ],
+            [
+              106.66,
+              38.73
+            ],
+            [
+              35.11,
+              30.97
+            ],
+            [
+              28.64,
+              10.49
+            ],
+            [
+              78.73,
+              78.34
+            ],
+            [
+              117.03,
+              102.94
+            ],
+            [
+              183.93,
+              85.19
+            ],
+            [
+              49.81,
+              96.9
+            ],
+            [
+              137.01,
+              109.44
+            ]
+          ]
+        }
+      },
+      "quality": {
+        "pi": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 59.0,
+          "median_size_ratio": 5.63,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 2,
+          "trials_touching_tests": 13,
+          "trials_with_change": 24
+        },
+        "runtime": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 12,
+          "median_size_ratio": 1.2,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 1,
+          "trials_touching_tests": 1,
+          "trials_with_change": 21
+        },
+        "tool": "ruff 0.17.4"
+      },
+      "reason": null,
+      "settings": {
+        "dataset": "benchmarks/retrieval/zustand_holdout.v1.json",
+        "repeats": 2,
+        "timeout": 240.0,
+        "variants": "pi,runtime"
+      },
+      "status": "completed",
+      "trials": 48
+    }
+  ],
+  "totals": {
+    "pi": {
+      "attempts": 24,
+      "passes": 16
+    },
+    "runtime": {
+      "attempts": 24,
+      "passes": 18
+    }
+  },
+  "totals_paired": {
+    "runtime": {
+      "both": 14,
+      "candidate_faster": 10,
+      "candidate_only": 4,
+      "median_ratio": 0.84,
+      "median_shared_seconds": {
+        "candidate": 65.5,
+        "pi": 86.7
+      },
+      "neither": 4,
+      "pairs": 24,
+      "pi_only": 2
+    }
+  }
+}
