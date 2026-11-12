@@ -1687,7 +1687,7 @@ class JsGuard:
     def peek(self, wait=0.0, parts=None):
         """What the current state's runs found so far (no confirming re-runs),
         waiting up to `wait` seconds for the runs named in `parts` ("tsc",
-        "tests"; default all); None when nothing runs.
+        "tests"; default all) and their baselines; None when nothing runs.
 
         {"generation", "pending": parts still running, "type_errors": new
         errors (None: unknown), "regressions"/"added": failing tests (None:
@@ -1702,6 +1702,9 @@ class JsGuard:
         for key, run in runs.items():
             if parts is None or key in parts:
                 run["done"].wait(timeout=max(0.0, end - time.perf_counter()))
+                self._base[key]["done"].wait(
+                    timeout=max(0.0, end - time.perf_counter())
+                )
         found = {
             "generation": generation,
             "pending": [],

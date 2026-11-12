@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -321,6 +322,36 @@ def started_guard(jsrepo, tmp_path):
     return guard, tools
 
 
+@pytest.mark.parametrize("part", ["tsc", "tests"])
+def test_guard_peek_waits_for_the_baseline_after_current_finishes(jsrepo, monkeypatch, part):
+    guard = JsGuard(js_tools(jsrepo), toolchain_for(), originals_from(jsrepo))
+    try:
+        result = (
+            {"errors": []}
+            if part == "tsc"
+            else {"tests": {}, "failures": {}, "timed_out": False}
+        )
+        done = threading.Event()
+        done.set()
+        guard._runs = {part: {"done": done, "result": result}}
+        baseline = guard._base[part]
+        baseline["result"] = result
+        waits = []
+
+        def finish_baseline(timeout):
+            waits.append(timeout)
+            baseline["done"].set()
+            return True
+
+        monkeypatch.setattr(baseline["done"], "wait", finish_baseline)
+        found = guard.peek(30, parts=(part,))
+        assert len(waits) == 1 and 0 < waits[0] <= 30
+        assert found["pending"] == []
+        assert found["type_errors" if part == "tsc" else "regressions"] == []
+    finally:
+        guard.cleanup()
+
+
 def test_guard_peek_reports_new_type_errors_and_regressions(jsrepo, tmp_path):
     guard, tools = started_guard(jsrepo, tmp_path)
     try:
@@ -381,7 +412,9 @@ def test_guard_results_are_shown_after_an_edit(jsrepo, tmp_path):
         )
     finally:
         guard.cleanup()
-    shown = tool_results(script, 1)[-1]  # the edit's result: tsc is waited for
+    # Adaptive waiting may defer the checks until the following read when
+    # the baseline has not finished at the time of the edit.
+    shown = "".join(tool_results(script, 2))
     assert "[Background checks of your edited code:" in shown
     assert "tsc --noEmit: 1 new error(s) vs the original code" in shown
     assert "src/m.js(2,1): error TS2322: Type 'new' is wrong." in shown
