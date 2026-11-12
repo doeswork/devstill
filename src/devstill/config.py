@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import stat
@@ -39,6 +40,9 @@ class IndexConfig(StrictModel):
     max_chunk_chars: int = Field(default=8000, ge=256)
     max_chunk_lines: int = Field(default=400, ge=1)
     fallback_overlap_lines: int = Field(default=20, ge=0)
+    # False keeps only the lexical/exact index: no embedding model is loaded,
+    # so large repositories index in seconds on a CPU-only machine.
+    vectors: bool = True
 
     @model_validator(mode="after")
     def validate_overlap(self) -> IndexConfig:
@@ -139,6 +143,8 @@ class LlmConfig(StrictModel):
     max_output_tokens: int = Field(default=2048, ge=64, le=65536)
     planning_max_output_tokens: int = Field(default=6144, ge=64, le=65536)
     planning_reasoning: Literal["off", "auto"] = "off"
+    context_window: int | None = Field(default=None, ge=4096)
+    planning_input_tokens: int | None = Field(default=None, ge=1024)
 
     @field_validator("base_url")
     @classmethod
@@ -176,6 +182,8 @@ class LlmConfig(StrictModel):
     def validate_enabled_model(self) -> LlmConfig:
         if self.enabled and not self.model:
             raise ValueError("model is required when the agent is enabled")
+        if self.planning_input_tokens is not None and self.context_window is None:
+            raise ValueError("planning_input_tokens requires context_window")
         return self
 
 
@@ -188,6 +196,8 @@ class ExecutorConfig(StrictModel):
     max_output_tokens: int = Field(default=4096, ge=64, le=65536)
     max_tool_calls: int = Field(default=12, ge=1, le=256)
     validation_commands: list[str] = Field(default_factory=list)
+    task_validation_commands: list[str] = Field(default_factory=list)
+    task_concurrency: int = Field(default=1, ge=1, le=4)
 
     @field_validator("backend")
     @classmethod
@@ -199,14 +209,16 @@ class ExecutorConfig(StrictModel):
 
     @field_validator("context_window")
     @classmethod
-    def validate_context_window(cls, value: Literal["auto"] | int) -> Literal["auto"] | int:
+    def validate_context_window(
+        cls, value: Literal["auto"] | int
+    ) -> Literal["auto"] | int:
         if value == "auto":
             return value
         if isinstance(value, bool) or value < 4096:
             raise ValueError("context_window must be auto or at least 4096")
         return value
 
-    @field_validator("validation_commands")
+    @field_validator("validation_commands", "task_validation_commands")
     @classmethod
     def validate_commands(cls, value: list[str]) -> list[str]:
         commands: list[str] = []
@@ -218,6 +230,61 @@ class ExecutorConfig(StrictModel):
         return commands
 
 
+class FeatureConfig(StrictModel):
+    timeout_seconds: float = Field(default=180, ge=1, le=3600)
+    checks: dict[str, list[str]] = Field(default_factory=dict)
+    task_checks: list[str] | None = None
+    final_checks: list[str] | None = None
+
+    @model_validator(mode="after")
+    def validate_checks(self):
+        for name, commands in self.checks.items():
+            if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", name):
+                raise ValueError("Feature check IDs must be simple names")
+            self.checks[name] = ExecutorConfig.validate_commands(commands)
+        for names in (self.task_checks, self.final_checks):
+            if names is not None and set(names) - self.checks.keys():
+                raise ValueError("Unknown configured feature check ID")
+        return self
+
+
+class EditingConfig(StrictModel):
+    # Quick uses the native Devstill editor; false explicitly selects legacy Quick.
+    enabled: bool = True
+    # "loop": retrieval-primed tool loop (read/bash/edit/write/done).
+    # "structured": the earlier two-response JSON editor with mandatory checks.
+    engine: Literal["loop", "structured"] = "loop"
+    timeout_seconds: float = Field(default=120, ge=1, le=3600)
+    max_output_tokens: int = Field(default=4096, ge=64, le=65536)
+    max_context_chars: int = Field(default=48000, ge=1024)
+    python: str | None = None
+    # Loop engine limits: model calls, output tokens per call, command timeout
+    # and the first-turn context budget (smaller context = faster first token).
+    max_turns: int = Field(default=20, ge=1, le=50)
+    # JS/TS runs: model-call cap. None derives it from the time budget
+    # (js_turn_limit): the deadline, not a call count, ends a JS run.
+    js_max_turns: int | None = Field(default=None, ge=1, le=100)
+    turn_output_tokens: int = Field(default=2048, ge=128, le=65536)
+    bash_timeout_seconds: float = Field(default=30, ge=1, le=600)
+    loop_context_chars: int = Field(default=16000, ge=2000)
+    # Re-run related existing tests after loop edits; report new failures.
+    regression_tests: bool = True
+
+
+# A JS model call plus its tools takes about 4 s at least.
+JS_SECONDS_PER_TURN = 4.0
+JS_MAX_DERIVED_TURNS = 60
+
+
+def js_turn_limit(editing: EditingConfig) -> int:
+    """Model-call cap of a JS/TS run: editing.js_max_turns, or derived from
+    the time budget (at least max_turns, at most JS_MAX_DERIVED_TURNS)."""
+    if editing.js_max_turns is not None:
+        return editing.js_max_turns
+    derived = math.ceil(editing.timeout_seconds / JS_SECONDS_PER_TURN)
+    return max(editing.max_turns, min(JS_MAX_DERIVED_TURNS, derived))
+
+
 class DevstillConfig(StrictModel):
     version: int = 1
     repo: RepoConfig = Field(default_factory=RepoConfig)
@@ -227,6 +294,8 @@ class DevstillConfig(StrictModel):
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
     executor: ExecutorConfig = Field(default_factory=ExecutorConfig)
+    feature: FeatureConfig = Field(default_factory=FeatureConfig)
+    editing: EditingConfig = Field(default_factory=EditingConfig)
 
 
 def default_model_path() -> Path:

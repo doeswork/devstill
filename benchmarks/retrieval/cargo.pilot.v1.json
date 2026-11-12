@@ -1,0 +1,317 @@
+{
+  "schema_version": 1,
+  "name": "cargo-pilot-v1",
+  "corpus_commit": "8f40fc59fb0c8df91c97405785197f3c630304ea",
+  "cases": [
+    {
+      "id": "workspace_error",
+      "family": "workspace",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": "Source-inspected pilot; independent review pending",
+      "query": "Where does a workspace report that a virtual manifest cannot provide the current package?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/cargo/core/workspace.rs",
+            "lines": [
+              347,
+              355
+            ],
+            "sha256": "2f34d02ba962293dffe8d1d694398c843b83b504f8c3cbad724ee5dbc1114829"
+          }
+        ]
+      ],
+      "rationale": "Source-inspected minimal implementation span; development pilot only, not a held-out acceptance task."
+    },
+    {
+      "id": "workspace_optional",
+      "family": "workspace",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": "Source-inspected pilot; independent review pending",
+      "query": "Locate the optional current package lookup that returns None for a virtual manifest.",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/cargo/core/workspace.rs",
+            "lines": [
+              372,
+              375
+            ],
+            "sha256": "2979a526dfeabde5c0cde515263033ad69b9d105d4f6333940a95968fed4c278"
+          }
+        ]
+      ],
+      "rationale": "Source-inspected minimal implementation span; development pilot only, not a held-out acceptance task."
+    },
+    {
+      "id": "workspace_root",
+      "family": "workspace",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": "Source-inspected pilot; independent review pending",
+      "query": "Where is the workspace root manifest path selected, including the fallback to the current manifest?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/cargo/core/workspace.rs",
+            "lines": [
+              415,
+              419
+            ],
+            "sha256": "25e99428245b53ffe28d07e02930d0a2c1bb35adc25222b6c18970424425858a"
+          }
+        ]
+      ],
+      "rationale": "Source-inspected minimal implementation span; development pilot only, not a held-out acceptance task."
+    },
+    {
+      "id": "workspace_target",
+      "family": "workspace",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": "Source-inspected pilot; independent review pending",
+      "query": "Find the target output directory override and its fallback to the default directory.",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/cargo/core/workspace.rs",
+            "lines": [
+              426,
+              429
+            ],
+            "sha256": "340195f66f84ba1025bef32031c2990e448126a4c696416d11058595a4c13920"
+          }
+        ]
+      ],
+      "rationale": "Source-inspected minimal implementation span; development pilot only, not a held-out acceptance task."
+    },
+    {
+      "id": "workspace_embedded",
+      "family": "workspace",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": "Source-inspected pilot; independent review pending",
+      "query": "Where is the target path for an embedded manifest built from a short hash?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/cargo/core/workspace.rs",
+            "lines": [
+              432,
+              439
+            ],
+            "sha256": "766bd4e695ceaf3f65b0cbe35c833507623aed70703296663f44826bf557ffa0"
+          }
+        ]
+      ],
+      "rationale": "Source-inspected minimal implementation span; development pilot only, not a held-out acceptance task."
+    },
+    {
+      "id": "dependency_version",
+      "family": "dependency",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": "Source-inspected pilot; independent review pending",
+      "query": "Locate the accessor returning the version requirement of a dependency.",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/cargo/core/dependency.rs",
+            "lines": [
+              185,
+              187
+            ],
+            "sha256": "8732b4e1fa2c9e800829756e7dd399409bc9e1516eb03068b541358b77dfb8b1"
+          }
+        ]
+      ],
+      "rationale": "Source-inspected minimal implementation span; development pilot only, not a held-out acceptance task."
+    },
+    {
+      "id": "dependency_alias",
+      "family": "dependency",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": "Source-inspected pilot; independent review pending",
+      "query": "Where does a dependency choose the TOML alias name rather than the actual package name?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/cargo/core/dependency.rs",
+            "lines": [
+              209,
+              211
+            ],
+            "sha256": "064b36357f0d86b7d726903fa174a3d293520ccce6acf8bb67ef619c649544ba"
+          }
+        ]
+      ],
+      "rationale": "Source-inspected minimal implementation span; development pilot only, not a held-out acceptance task."
+    },
+    {
+      "id": "dependency_optional",
+      "family": "dependency",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": "Source-inspected pilot; independent review pending",
+      "query": "Locate the implementation that checks whether a dependency is optional.",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/cargo/core/dependency.rs",
+            "lines": [
+              387,
+              389
+            ],
+            "sha256": "7ed20d3e08eb9a29abe0dac7c72343b168d800d0941454d8b617adccd60f787a"
+          }
+        ]
+      ],
+      "rationale": "Source-inspected minimal implementation span; development pilot only, not a held-out acceptance task."
+    },
+    {
+      "id": "dependency_tables",
+      "family": "dependency",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": "Source-inspected pilot; independent review pending",
+      "query": "Where are normal, development, and build dependency kinds mapped to manifest table names?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/cargo/core/dependency.rs",
+            "lines": [
+              110,
+              115
+            ],
+            "sha256": "8caf6658f491d1de372e3602a07b640213fa1e634c58b06a6b89bce8b5816195"
+          }
+        ]
+      ],
+      "rationale": "Source-inspected minimal implementation span; development pilot only, not a held-out acceptance task."
+    },
+    {
+      "id": "http_timeout",
+      "family": "network_timeout",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": "Source-inspected pilot; independent review pending",
+      "query": "Find the timeout configuration precedence between Cargo HTTP settings, HTTP_TIMEOUT and the default duration.",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/cargo/util/network/http.rs",
+            "lines": [
+              199,
+              211
+            ],
+            "sha256": "d882fbddbaf11898f3f1f9ae07414c7fde1cec74119607bfd12aca05608a5d7e"
+          }
+        ]
+      ],
+      "rationale": "Source-inspected minimal implementation span; development pilot only, not a held-out acceptance task."
+    },
+    {
+      "id": "http_curl",
+      "family": "network_timeout",
+      "category": "natural_language",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": "Source-inspected pilot; independent review pending",
+      "query": "Where are connect timeouts and low-speed timeouts applied to the curl handle?",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/cargo/util/network/http.rs",
+            "lines": [
+              221,
+              223
+            ],
+            "sha256": "bb695d2ae21966917db52bf1992196d30d9e6a93620940fe7a9f7e99baeff564"
+          }
+        ]
+      ],
+      "rationale": "Source-inspected minimal implementation span; development pilot only, not a held-out acceptance task."
+    },
+    {
+      "id": "feature_timeout",
+      "family": "network_timeout",
+      "category": "multi_file",
+      "split": "dev",
+      "label_status": "seed",
+      "reviewer": "Source-inspected pilot; independent review pending",
+      "query": "Add a per-operation HTTP timeout override: find the current configuration fallback and where durations and low-speed limits reach the curl handle.",
+      "answerable": true,
+      "include_tests": false,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/cargo/util/network/http.rs",
+            "lines": [
+              199,
+              211
+            ],
+            "sha256": "d882fbddbaf11898f3f1f9ae07414c7fde1cec74119607bfd12aca05608a5d7e"
+          }
+        ],
+        [
+          {
+            "path": "src/cargo/util/network/http.rs",
+            "lines": [
+              221,
+              223
+            ],
+            "sha256": "bb695d2ae21966917db52bf1992196d30d9e6a93620940fe7a9f7e99baeff564"
+          }
+        ]
+      ],
+      "rationale": "Source-inspected minimal implementation span; development pilot only, not a held-out acceptance task."
+    }
+  ]
+}

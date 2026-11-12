@@ -1,0 +1,583 @@
+{
+  "tool": "ruff 0.17.4",
+  "rules": "ruff default rules, --isolated",
+  "trials": [
+    {
+      "id": "zh01",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 52,
+      "tests_touched": [
+        "tests/vanilla/shallow.test.tsx"
+      ],
+      "reference_lines": 10,
+      "size_ratio": 5.2,
+      "extra_files": []
+    },
+    {
+      "id": "zh01",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 26,
+      "tests_touched": [],
+      "reference_lines": 10,
+      "size_ratio": 2.6,
+      "extra_files": []
+    },
+    {
+      "id": "zh02",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 6,
+      "tests_touched": [],
+      "reference_lines": 8,
+      "size_ratio": 0.75,
+      "extra_files": []
+    },
+    {
+      "id": "zh02",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 94,
+      "tests_touched": [
+        "tests/vanilla/subscribe.test.tsx"
+      ],
+      "reference_lines": 8,
+      "size_ratio": 11.75,
+      "extra_files": []
+    },
+    {
+      "id": "zh03",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 3,
+      "changed_lines": 79,
+      "tests_touched": [
+        "tests/external-store-ssr.test.tsx"
+      ],
+      "reference_lines": 12,
+      "size_ratio": 6.58,
+      "extra_files": [
+        "src/traditional.ts"
+      ]
+    },
+    {
+      "id": "zh03",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 3,
+      "changed_lines": 42,
+      "tests_touched": [],
+      "reference_lines": 12,
+      "size_ratio": 3.5,
+      "extra_files": [
+        ".tmpcheck/t.ts",
+        "src/traditional.ts"
+      ]
+    },
+    {
+      "id": "zh04",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 27,
+      "tests_touched": [],
+      "reference_lines": 23,
+      "size_ratio": 1.17,
+      "extra_files": []
+    },
+    {
+      "id": "zh04",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 48,
+      "tests_touched": [],
+      "reference_lines": 23,
+      "size_ratio": 2.09,
+      "extra_files": []
+    },
+    {
+      "id": "zh05",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 14,
+      "tests_touched": [],
+      "reference_lines": 13,
+      "size_ratio": 1.08,
+      "extra_files": []
+    },
+    {
+      "id": "zh05",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 14,
+      "tests_touched": [],
+      "reference_lines": 13,
+      "size_ratio": 1.08,
+      "extra_files": []
+    },
+    {
+      "id": "zh06",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 0,
+      "changed_lines": 0,
+      "tests_touched": [],
+      "reference_lines": 9,
+      "size_ratio": 0.0,
+      "extra_files": []
+    },
+    {
+      "id": "zh06",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 48,
+      "tests_touched": [
+        "tests/zz-eql-probe.test.tsx"
+      ],
+      "reference_lines": 9,
+      "size_ratio": 5.33,
+      "extra_files": []
+    },
+    {
+      "id": "zh07",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 3,
+      "changed_lines": 145,
+      "tests_touched": [
+        "tests/persistAsync.test.tsx",
+        "tests/persistSync.test.tsx"
+      ],
+      "reference_lines": 7,
+      "size_ratio": 20.71,
+      "extra_files": []
+    },
+    {
+      "id": "zh07",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 6,
+      "tests_touched": [],
+      "reference_lines": 7,
+      "size_ratio": 0.86,
+      "extra_files": []
+    },
+    {
+      "id": "zh08",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 17,
+      "tests_touched": [],
+      "reference_lines": 24,
+      "size_ratio": 0.71,
+      "extra_files": []
+    },
+    {
+      "id": "zh08",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 75,
+      "tests_touched": [
+        "tests/tmpcheck/persist-fail.test.ts"
+      ],
+      "reference_lines": 24,
+      "size_ratio": 3.12,
+      "extra_files": []
+    },
+    {
+      "id": "zh09",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 50,
+      "tests_touched": [
+        "tests/vanilla/subscribe.test.tsx"
+      ],
+      "reference_lines": 3,
+      "size_ratio": 16.67,
+      "extra_files": []
+    },
+    {
+      "id": "zh09",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 11,
+      "tests_touched": [],
+      "reference_lines": 3,
+      "size_ratio": 3.67,
+      "extra_files": []
+    },
+    {
+      "id": "zh10",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 39,
+      "tests_touched": [],
+      "reference_lines": 22,
+      "size_ratio": 1.77,
+      "extra_files": []
+    },
+    {
+      "id": "zh10",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 19,
+      "tests_touched": [],
+      "reference_lines": 22,
+      "size_ratio": 0.86,
+      "extra_files": []
+    },
+    {
+      "id": "zh11",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 134,
+      "tests_touched": [
+        "tests/devtools.test.tsx"
+      ],
+      "reference_lines": 6,
+      "size_ratio": 22.33,
+      "extra_files": []
+    },
+    {
+      "id": "zh11",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 8,
+      "tests_touched": [],
+      "reference_lines": 6,
+      "size_ratio": 1.33,
+      "extra_files": []
+    },
+    {
+      "id": "zh12",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 11,
+      "tests_touched": [],
+      "reference_lines": 10,
+      "size_ratio": 1.1,
+      "extra_files": []
+    },
+    {
+      "id": "zh12",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 16,
+      "tests_touched": [],
+      "reference_lines": 10,
+      "size_ratio": 1.6,
+      "extra_files": []
+    },
+    {
+      "id": "zh01",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 25,
+      "tests_touched": [],
+      "reference_lines": 10,
+      "size_ratio": 2.5,
+      "extra_files": []
+    },
+    {
+      "id": "zh01",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 37,
+      "tests_touched": [
+        "tests/vanilla/shallow.test.tsx"
+      ],
+      "reference_lines": 10,
+      "size_ratio": 3.7,
+      "extra_files": []
+    },
+    {
+      "id": "zh02",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 6,
+      "changed_lines": 86,
+      "tests_touched": [
+        "tests/debug-mi.test.tsx",
+        "tests/debug4.test.tsx",
+        "tests/debug5.test.tsx",
+        "tests/inspect.test.tsx",
+        "tests/verify-mid-notification.test.tsx"
+      ],
+      "reference_lines": 8,
+      "size_ratio": 10.75,
+      "extra_files": []
+    },
+    {
+      "id": "zh02",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 18,
+      "tests_touched": [],
+      "reference_lines": 8,
+      "size_ratio": 2.25,
+      "extra_files": []
+    },
+    {
+      "id": "zh03",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 14,
+      "tests_touched": [],
+      "reference_lines": 12,
+      "size_ratio": 1.17,
+      "extra_files": []
+    },
+    {
+      "id": "zh03",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 3,
+      "changed_lines": 51,
+      "tests_touched": [
+        "tests/ssrExternal.test.tsx"
+      ],
+      "reference_lines": 12,
+      "size_ratio": 4.25,
+      "extra_files": [
+        "src/traditional.ts"
+      ]
+    },
+    {
+      "id": "zh04",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 33,
+      "tests_touched": [],
+      "reference_lines": 23,
+      "size_ratio": 1.43,
+      "extra_files": []
+    },
+    {
+      "id": "zh04",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 0,
+      "changed_lines": 0,
+      "tests_touched": [],
+      "reference_lines": 23,
+      "size_ratio": 0.0,
+      "extra_files": []
+    },
+    {
+      "id": "zh05",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 14,
+      "tests_touched": [],
+      "reference_lines": 13,
+      "size_ratio": 1.08,
+      "extra_files": []
+    },
+    {
+      "id": "zh05",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 86,
+      "tests_touched": [
+        "tests/basic.test.tsx"
+      ],
+      "reference_lines": 13,
+      "size_ratio": 6.62,
+      "extra_files": []
+    },
+    {
+      "id": "zh06",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 221,
+      "tests_touched": [
+        "tests/traditional-equality-fn.test.tsx"
+      ],
+      "reference_lines": 9,
+      "size_ratio": 24.56,
+      "extra_files": []
+    },
+    {
+      "id": "zh06",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 0,
+      "changed_lines": 0,
+      "tests_touched": [],
+      "reference_lines": 9,
+      "size_ratio": 0.0,
+      "extra_files": []
+    },
+    {
+      "id": "zh07",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 9,
+      "tests_touched": [],
+      "reference_lines": 7,
+      "size_ratio": 1.29,
+      "extra_files": []
+    },
+    {
+      "id": "zh07",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 10,
+      "tests_touched": [],
+      "reference_lines": 7,
+      "size_ratio": 1.43,
+      "extra_files": []
+    },
+    {
+      "id": "zh08",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 66,
+      "tests_touched": [],
+      "reference_lines": 24,
+      "size_ratio": 2.75,
+      "extra_files": []
+    },
+    {
+      "id": "zh08",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 23,
+      "tests_touched": [],
+      "reference_lines": 24,
+      "size_ratio": 0.96,
+      "extra_files": []
+    },
+    {
+      "id": "zh09",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 22,
+      "tests_touched": [],
+      "reference_lines": 3,
+      "size_ratio": 7.33,
+      "extra_files": []
+    },
+    {
+      "id": "zh09",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 69,
+      "tests_touched": [
+        "tests/vanilla/subscribe.test.tsx"
+      ],
+      "reference_lines": 3,
+      "size_ratio": 23.0,
+      "extra_files": []
+    },
+    {
+      "id": "zh10",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 5,
+      "changed_lines": 253,
+      "tests_touched": [
+        "tests/persist-unavailable.test.tsx",
+        "tests/scratch-repro.test.ts",
+        "tests/scratch2.test.ts",
+        "tests/scratch3.ts"
+      ],
+      "reference_lines": 22,
+      "size_ratio": 11.5,
+      "extra_files": []
+    },
+    {
+      "id": "zh10",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 21,
+      "tests_touched": [],
+      "reference_lines": 22,
+      "size_ratio": 0.95,
+      "extra_files": []
+    },
+    {
+      "id": "zh11",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 5,
+      "tests_touched": [],
+      "reference_lines": 6,
+      "size_ratio": 0.83,
+      "extra_files": []
+    },
+    {
+      "id": "zh11",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 3,
+      "changed_lines": 106,
+      "tests_touched": [
+        "tests/devtools.test.tsx"
+      ],
+      "reference_lines": 6,
+      "size_ratio": 17.67,
+      "extra_files": [
+        "docs/middlewares/devtools.md"
+      ]
+    },
+    {
+      "id": "zh12",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 25,
+      "tests_touched": [],
+      "reference_lines": 10,
+      "size_ratio": 2.5,
+      "extra_files": []
+    },
+    {
+      "id": "zh12",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 7,
+      "tests_touched": [],
+      "reference_lines": 10,
+      "size_ratio": 0.7,
+      "extra_files": []
+    }
+  ]
+}

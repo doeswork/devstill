@@ -137,6 +137,7 @@ class SearchResult:
     chunk: SourceChunk
     final_score: float
     scores: dict[str, float] = field(default_factory=dict)
+    source_hash: str | None = None
 
     def to_dict(self, include_scores: bool = True) -> dict[str, Any]:
         data = self.chunk.to_dict()

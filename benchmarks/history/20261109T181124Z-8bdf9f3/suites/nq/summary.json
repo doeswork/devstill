@@ -1,0 +1,50 @@
+{
+  "complete": true,
+  "attempts": 40,
+  "expected_attempts": 40,
+  "workloads": {
+    "small": {
+      "variants": {
+        "pi": {
+          "attempts": 20,
+          "behavior_passes": 19,
+          "workflow_passes": 19,
+          "model_calls": 151,
+          "all_attempt_worker_seconds": 400.38591475200064
+        },
+        "runtime": {
+          "attempts": 20,
+          "behavior_passes": 20,
+          "workflow_passes": 20,
+          "model_calls": 80,
+          "all_attempt_worker_seconds": 400.1744327050019
+        }
+      },
+      "versus_pi": {
+        "runtime": {
+          "paired_trials": 20,
+          "shared_successes": 19,
+          "candidate_only_passes": 1,
+          "pi_only_passes": 0,
+          "median_candidate_over_pi_wall_ratio": 0.7926732358145169,
+          "shared_success_medians": {
+            "coding_seconds": {
+              "pi": 17.50310470300019,
+              "runtime": 18.285443036999823
+            },
+            "worker_wall_seconds": {
+              "pi": 17.88394111100024,
+              "runtime": 18.864114978999623
+            },
+            "end_to_end_seconds": {
+              "pi": 28.394946018000155,
+              "runtime": 28.524459221000143
+            }
+          },
+          "descriptive_target_met": true
+        }
+      }
+    }
+  },
+  "promotion": "diagnostic only; fresh cases and repeated frozen-version evidence required"
+}

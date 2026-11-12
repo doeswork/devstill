@@ -1,0 +1,12 @@
+{
+  "id": "cargo-0.83.0",
+  "url": "https://github.com/rust-lang/cargo.git",
+  "ref": "0.83.0",
+  "commit": "8f40fc59fb0c8df91c97405785197f3c630304ea",
+  "tracked_files": 2574,
+  "tracked_regular_files": 2458,
+  "tracked_text_files": 2440,
+  "tracked_regular_bytes": 15213746,
+  "rust_files": 1118,
+  "purpose": "Second corpus for structural Rust parser and retrieval scaling; no upstream build or installation. Quality acceptance still requires independently reviewed task families."
+}

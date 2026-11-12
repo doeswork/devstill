@@ -1,0 +1,306 @@
+{
+  "tool": "ruff 0.16.1",
+  "rules": "ruff default rules, --isolated",
+  "trials": [
+    {
+      "id": "w_repr",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 3,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "w_repr",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "w_salt",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "w_salt",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "w_header_lines",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 7,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 3.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "w_header_lines",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 3,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "w_close",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 4,
+      "tests_touched": [],
+      "reference_lines": 3,
+      "size_ratio": 1.33,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "w_close",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 5,
+      "tests_touched": [],
+      "reference_lines": 3,
+      "size_ratio": 1.67,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "w_age",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "w_age",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "w_description",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 1,
+      "tests_touched": [],
+      "reference_lines": 1,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "w_description",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 1,
+      "size_ratio": 2.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "w_storage_truth",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "w_storage_truth",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "w_secure_pathlike",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 3,
+      "tests_touched": [],
+      "reference_lines": 3,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "w_secure_pathlike",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 3,
+      "tests_touched": [],
+      "reference_lines": 3,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "w_hop_whitespace",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "w_hop_whitespace",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "w_parse_age_types",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "w_parse_age_types",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    }
+  ]
+}

@@ -23,6 +23,7 @@ from devstill.planning import (
     refine_plan,
     render_plan_json,
     render_plan_markdown,
+    select_planning_context,
     validate_plan_items,
     write_deep_plan_artifacts,
     write_plan_artifacts,
@@ -54,6 +55,34 @@ class FakeClient:
     def chat(self, messages, **kwargs):
         self.calls.append((messages, kwargs))
         return self.responses.pop(0)
+
+
+def test_planning_packs_full_prompt_and_backfills_pool():
+    from devstill.config import LlmConfig
+
+    client = FakeClient()
+    client.config = LlmConfig(
+        context_window=4096, planning_input_tokens=1500, planning_max_output_tokens=1024
+    )
+    observed = []
+
+    def count(messages, **kwargs):
+        observed.append(messages)
+        return sum(len(m["content"]) for m in messages) // 4
+
+    client.count_prompt_tokens = count
+    large = make_result(path="large.py", code="x" * 10000)
+    small = make_result(path="small.py", code="def small(): return 1")
+    assert select_planning_context(
+        [large, small],
+        client=client,
+        query="change small",
+        repository="/repo",
+        min_limit=1,
+        max_limit=2,
+    ) == [small]
+    assert observed[0][0]["role"] == "system"
+    assert "USER_REQUEST: change small" in observed[0][1]["content"]
 
 
 def test_all_seven_labels_validate_and_render(tmp_path: Path) -> None:
@@ -227,9 +256,13 @@ def test_replacement_classification_is_exactly_one_existing_file(
         results=results,
     )
     assert item.label is PlanLabel.MODIFY
-    assert set(
-        client.calls[0][1]["schema"]["properties"]["label"]["enum"]
-    ) == {"Read", "Add", "Remove", "Modify", "Delete"}
+    assert set(client.calls[0][1]["schema"]["properties"]["label"]["enum"]) == {
+        "Read",
+        "Add",
+        "Remove",
+        "Modify",
+        "Delete",
+    }
 
 
 def test_refinement_preserves_pinned_rows_and_records_history(tmp_path: Path) -> None:
@@ -244,11 +277,7 @@ def test_refinement_preserves_pinned_rows_and_records_history(tmp_path: Path) ->
     )
     client = FakeClient(
         json.dumps(
-            {
-                "items": [
-                    plan_item("Modify", "helper.py", "Update the helper behavior.")
-                ]
-            }
+            {"items": [plan_item("Modify", "helper.py", "Update the helper behavior.")]}
         )
     )
     refined = refine_plan(

@@ -1,0 +1,600 @@
+{
+  "tool": "ruff 0.17.4",
+  "rules": "ruff default rules, --isolated",
+  "trials": [
+    {
+      "id": "nq01",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq01",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq02",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq02",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq03",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq03",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 7,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 3.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq04",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 7,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 3.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq04",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 10,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 5.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq05",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 1,
+      "size_ratio": 2.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq05",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 1,
+      "tests_touched": [],
+      "reference_lines": 1,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq06",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 27,
+      "tests_touched": [],
+      "reference_lines": 9,
+      "size_ratio": 3.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq06",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 0,
+      "changed_lines": 0,
+      "tests_touched": [],
+      "reference_lines": 9,
+      "size_ratio": 0.0,
+      "extra_files": []
+    },
+    {
+      "id": "nq07",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 7,
+      "tests_touched": [],
+      "reference_lines": 4,
+      "size_ratio": 1.75,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq07",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 8,
+      "tests_touched": [],
+      "reference_lines": 4,
+      "size_ratio": 2.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq08",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 2,
+      "changed_lines": 6,
+      "tests_touched": [],
+      "reference_lines": 6,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq08",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 6,
+      "tests_touched": [],
+      "reference_lines": 6,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 1,
+        "new_codes": {
+          "I001": 1
+        }
+      }
+    },
+    {
+      "id": "nq09",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 24,
+      "tests_touched": [],
+      "reference_lines": 6,
+      "size_ratio": 4.0,
+      "extra_files": [
+        "src/werkzeug/sansio/http.py"
+      ],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq09",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 2,
+      "changed_lines": 18,
+      "tests_touched": [],
+      "reference_lines": 6,
+      "size_ratio": 3.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq10",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq10",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 0,
+      "changed_lines": 0,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 0.0,
+      "extra_files": []
+    },
+    {
+      "id": "nq01",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq01",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 2,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq02",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 7,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 3.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq02",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 4,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 2.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq03",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 7,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 3.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq03",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 14,
+      "tests_touched": [
+        "tests/test_routing.py"
+      ],
+      "reference_lines": 2,
+      "size_ratio": 7.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq04",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 7,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 3.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq04",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 7,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 3.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq05",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 1,
+      "tests_touched": [],
+      "reference_lines": 1,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq05",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 1,
+      "tests_touched": [],
+      "reference_lines": 1,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq06",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 0,
+      "changed_lines": 0,
+      "tests_touched": [],
+      "reference_lines": 9,
+      "size_ratio": 0.0,
+      "extra_files": []
+    },
+    {
+      "id": "nq06",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 25,
+      "tests_touched": [],
+      "reference_lines": 9,
+      "size_ratio": 2.78,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq07",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 8,
+      "tests_touched": [],
+      "reference_lines": 4,
+      "size_ratio": 2.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq07",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 6,
+      "tests_touched": [],
+      "reference_lines": 4,
+      "size_ratio": 1.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq08",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 6,
+      "tests_touched": [],
+      "reference_lines": 6,
+      "size_ratio": 1.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq08",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 2,
+      "changed_lines": 9,
+      "tests_touched": [],
+      "reference_lines": 6,
+      "size_ratio": 1.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq09",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 2,
+      "changed_lines": 15,
+      "tests_touched": [],
+      "reference_lines": 6,
+      "size_ratio": 2.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq09",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 21,
+      "tests_touched": [],
+      "reference_lines": 6,
+      "size_ratio": 3.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq10",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 6,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 3.0,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    },
+    {
+      "id": "nq10",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 3,
+      "tests_touched": [],
+      "reference_lines": 2,
+      "size_ratio": 1.5,
+      "extra_files": [],
+      "lint": {
+        "new_findings": 0,
+        "new_codes": {}
+      }
+    }
+  ]
+}

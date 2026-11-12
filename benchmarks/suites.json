@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "variants": "pi,runtime",
+    "repeats": 1,
+    "timeout": 120,
+    "purpose": "development",
+    "pi_disable_reasoning": true,
+    "acceptance_budget": 240,
+    "requires": []
+  },
+  "suites": [
+    {
+      "name": "nq",
+      "dataset": "benchmarks/retrieval/native_quick_fresh.v1.json",
+      "tags": ["core", "dev"],
+      "description": "10 Werkzeug quick edits (exposed development set)"
+    },
+    {
+      "name": "quick-fast",
+      "dataset": "benchmarks/retrieval/quick_fast.v1.json",
+      "tags": ["core", "dev"],
+      "description": "10 Werkzeug fast edits (exposed development set)"
+    },
+    {
+      "name": "loop-dev",
+      "dataset": "benchmarks/retrieval/quick_loop_dev.v1.json",
+      "tags": ["core", "dev"],
+      "description": "12 Werkzeug and click cases (development set)"
+    },
+    {
+      "name": "loop-holdout",
+      "dataset": "benchmarks/retrieval/quick_loop_holdout.v1.json",
+      "tags": ["core"],
+      "repeats": 2,
+      "description": "12 Werkzeug and click cases; exposed by the 2026-11-08 final run, so no longer held out"
+    },
+    {
+      "name": "react-dev",
+      "dataset": "benchmarks/retrieval/zustand_dev.v1.json",
+      "tags": ["react", "dev"],
+      "requires": ["node"],
+      "description": "12 zustand (React/TypeScript) cases, vitest + tsc acceptance (development set)"
+    },
+    {
+      "name": "react-holdout",
+      "dataset": "benchmarks/retrieval/zustand_holdout.v1.json",
+      "tags": ["react"],
+      "requires": ["node"],
+      "description": "12 zustand (React/TypeScript) cases authored with react-dev; not read while tuning Devstill"
+    },
+    {
+      "name": "swebench-small",
+      "dataset": "benchmarks/datasets/swebench_small.v1.json",
+      "tags": ["external"],
+      "requires": ["docker"],
+      "prepare": "swebench",
+      "timeout": 300,
+      "acceptance_budget": 900,
+      "description": "24 SWE-bench Verified single-file fixes from 8 pure-Python projects, graded by the official harness"
+    }
+  ]
+}

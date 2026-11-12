@@ -51,7 +51,7 @@ class ExecutionResult:
     instruction: str
     repository: str
     model: str
-    source: PlanSource
+    source: PlanSource | Literal["task"]
     source_artifact: str
     status: str
     changed_files: list[str]
@@ -439,6 +439,49 @@ def _write_execution_artifacts(
     )
 
 
+def run_validation_commands(
+    repo_root: Path, commands: list[str], timeout_seconds: float,
+    progress: ExecutionProgress | None = None,
+) -> list[ValidationResult]:
+    notify = progress or (lambda _message: None)
+    validation: list[ValidationResult] = []
+    for command in commands:
+        notify(f"Validating: {command}")
+        try:
+            argv = shlex.split(command)
+        except ValueError as exc:
+            raise ExecutionError(
+                f"Invalid validation command {command!r}: {exc}"
+            ) from exc
+        if not argv:
+            raise ExecutionError(
+                "Validation command resolved to an empty argument list"
+            )
+        try:
+            completed = subprocess.run(
+                argv,
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout_seconds,
+            )
+            output = (completed.stdout + completed.stderr).strip()
+            returncode = completed.returncode
+        except subprocess.TimeoutExpired as exc:
+            output = (
+                f"Timed out after {timeout_seconds:g} seconds"
+            )
+            returncode = 124
+            if exc.stdout:
+                output = f"{exc.stdout}\n{output}"
+        except OSError as exc:
+            output = str(exc)
+            returncode = 127
+        validation.append(ValidationResult(command, returncode, output))
+    return validation
+
+
 class RepositoryExecutor:
     def __init__(
         self,
@@ -673,41 +716,10 @@ class RepositoryExecutor:
             notify("Patch applied")
         else:
             notify("Pi produced no source changes")
-        validation: list[ValidationResult] = []
-        for command in self.config.executor.validation_commands:
-            notify(f"Validating: {command}")
-            try:
-                argv = shlex.split(command)
-            except ValueError as exc:
-                raise ExecutionError(
-                    f"Invalid validation command {command!r}: {exc}"
-                ) from exc
-            if not argv:
-                raise ExecutionError(
-                    "Validation command resolved to an empty argument list"
-                )
-            try:
-                completed = subprocess.run(
-                    argv,
-                    cwd=self.repo_root,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    timeout=self.config.executor.timeout_seconds,
-                )
-                output = (completed.stdout + completed.stderr).strip()
-                returncode = completed.returncode
-            except subprocess.TimeoutExpired as exc:
-                output = (
-                    f"Timed out after {self.config.executor.timeout_seconds:g} seconds"
-                )
-                returncode = 124
-                if exc.stdout:
-                    output = f"{exc.stdout}\n{output}"
-            except OSError as exc:
-                output = str(exc)
-                returncode = 127
-            validation.append(ValidationResult(command, returncode, output))
+        validation = run_validation_commands(
+            self.repo_root, self.config.executor.validation_commands,
+            self.config.executor.timeout_seconds, notify,
+        )
         prepared.result.status = (
             "validation_failed"
             if any(item.returncode for item in validation)

@@ -128,6 +128,44 @@ class AgentClient:
             return False
         return True
 
+    def count_prompt_tokens(
+        self, messages: list[dict[str, str]], *, reasoning: str = "auto"
+    ) -> int:
+        """Count the served chat template, including generation framing.
+
+        Budgeting is opt-in because /tokenize is not part of every compatible API.
+        An unavailable or invalid tokenizer fails explicitly when budgeting is enabled.
+        """
+        payload = {
+            "model": self.config.model,
+            "messages": messages,
+            "add_generation_prompt": True,
+        }
+        if reasoning == "off":
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
+        key = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+        cache = getattr(self, "_prompt_token_cache", None)
+        if cache is None:
+            cache = self._prompt_token_cache = {}
+        if key not in cache:
+            response = self.client.post(
+                self.config.base_url.removesuffix("/v1") + "/tokenize",
+                headers=self._headers(),
+                json=payload,
+            )
+            response.raise_for_status()
+            body = response.json()
+            count = body.get("count")
+            if type(count) is not int or count < 0:
+                raise AgentError("Server tokenizer returned an invalid token count")
+            server_window = body.get("max_model_len")
+            if type(server_window) is int and server_window > 0:
+                self._tokenizer_context_window = server_window
+            if len(cache) >= 256:
+                cache.clear()
+            cache[key] = count
+        return cache[key]
+
     def _post_logged(
         self,
         payload: dict[str, Any],
@@ -136,6 +174,19 @@ class AgentClient:
         attempt: int,
         mode: str,
     ) -> httpx.Response:
+        if self.config.context_window is not None:
+            count = self.count_prompt_tokens(
+                payload["messages"],
+                reasoning="off" if "chat_template_kwargs" in payload else "auto",
+            )
+            window = min(
+                self.config.context_window,
+                getattr(self, "_tokenizer_context_window", self.config.context_window),
+            )
+            if count + payload["max_tokens"] + 256 > window:
+                raise AgentError(
+                    "Fully serialized prompt and output reservation exceed the configured context window"
+                )
         started = time.monotonic()
         message_summary = [
             {
@@ -268,7 +319,10 @@ class AgentClient:
         schema_name: str = "devstill_output",
         max_output_tokens: int | None = None,
         reasoning: Literal["auto", "off"] = "auto",
+        max_attempts: int = 3,
     ) -> str:
+        if not 1 <= max_attempts <= 3:
+            raise ValueError("max_attempts must be between 1 and 3")
         token_limit = (
             self.config.max_output_tokens
             if max_output_tokens is None
@@ -311,7 +365,7 @@ class AgentClient:
                     mode=mode,
                 )
                 unsupported = self._unsupported_feature(response, payload)
-                if unsupported is None or attempt >= 3:
+                if unsupported is None or attempt >= max_attempts:
                     break
                 if unsupported == "reasoning":
                     payload.pop("chat_template_kwargs", None)

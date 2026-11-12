@@ -125,6 +125,7 @@ def _context_value(record: dict[str, Any]) -> int | None:
             "contextWindow",
             "context_length",
             "max_context_length",
+            "max_model_len",
         ):
             value = container.get(key)
             if isinstance(value, int) and not isinstance(value, bool) and value >= 4096:

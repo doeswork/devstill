@@ -478,3 +478,42 @@ def test_file_becoming_binary_removes_stale_chunks_and_quality(
     assert quality[0].disposition == "skipped"
     assert not chroma.records
     indexer.close()
+
+
+def test_lexical_only_index_never_touches_embeddings_or_vectors(
+    configured_repo: tuple,
+) -> None:
+    from devstill.search import HybridSearch
+
+    repo, config_path, config = configured_repo
+    config.index.vectors = False
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    source = repo / "accounts.py"
+    source.write_text("def authenticate_user():\n    return True\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "accounts.py", "devstill.json"], check=True
+    )
+
+    class Forbidden:
+        def __getattr__(self, name):
+            raise AssertionError(f"vector operation used: {name}")
+
+    indexer = RepositoryIndexer(
+        config_path, config, embedder=Forbidden(), chroma_store=Forbidden()
+    )
+    assert indexer.run().parsed_files == 1
+    source.write_text("def authenticate_user():\n    return False\n", encoding="utf-8")
+    assert indexer.run().parsed_files == 1
+    assert indexer.run(rebuild=True).parsed_files == 1
+    indexer.close()
+
+    search = HybridSearch(
+        config_path, config, embedder=Forbidden(), chroma_store=Forbidden()
+    )
+    try:
+        results = search.query("authenticate_user", limit=3)
+        assert results and results[0].chunk.path == "accounts.py"
+        with pytest.raises(ValueError, match="no vectors"):
+            search.query("authenticate", semantic_only=True)
+    finally:
+        search.close()

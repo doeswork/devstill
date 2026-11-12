@@ -12,7 +12,7 @@ from rich.progress import (
     SpinnerColumn,
     TaskProgressColumn,
     TextColumn,
-    TimeRemainingColumn,
+    TimeElapsedColumn,
 )
 
 from devstill import __version__
@@ -38,9 +38,9 @@ from devstill.context import (
     PLAN_MAX_CHUNKS,
     PLAN_MIN_CHUNKS,
     planning_retrieval_limit,
+    query_requests_tests,
     render_context_json,
     render_context_markdown,
-    select_adaptive_context_results,
     select_context_results,
     write_context_artifacts,
 )
@@ -51,6 +51,7 @@ from devstill.executor import (
     RepositoryExecutor,
     render_execution_markdown,
 )
+from devstill.feature_planning import load_feature, render_feature_review
 from devstill.git_files import discover_repository_inventory
 from devstill.indexer import RepositoryIndexer
 from devstill.installation import load_install_metadata
@@ -63,6 +64,7 @@ from devstill.planning import (
     generate_plan,
     render_plan_json,
     render_plan_markdown,
+    select_planning_context,
     write_deep_plan_artifacts,
     write_plan_artifacts,
 )
@@ -70,7 +72,9 @@ from devstill.removal import build_removal_plan, execute_removal
 from devstill.repository import ensure_devstill_gitignore
 from devstill.retrieval_policy import normalize_retrieval_pattern
 from devstill.search import HybridSearch
+from devstill.tasks import load_task_draft, render_task_review
 from devstill.tui import DevstillApp
+from devstill.tui_commands import TuiCommand, TuiCommandKind, TuiWorkflow
 from devstill.updater import (
     fetch_latest_release,
     install_release,
@@ -108,6 +112,7 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument(
         "--version", action="version", version=f"devstill {__version__}"
     )
+    command.add_argument("--resume", metavar="SESSION_ID", help="Restore a saved TUI session")
     sub = command.add_subparsers(dest="command")
 
     help_parser = sub.add_parser(
@@ -308,6 +313,32 @@ def parser() -> argparse.ArgumentParser:
     agent_actions.add_parser("test", help="Send a small structured agent request.")
     agent_actions.add_parser("enable", help="Enable the configured agent.")
     agent_actions.add_parser("disable", help="Disable the configured agent.")
+
+    edit = sub.add_parser("edit", help="Minimal editor: prepare an actual patch without Pi.")
+    edit.add_argument("query")
+    edit.add_argument("--yolo", action="store_true", help="Apply after checks, without a review stop.")
+    edit.add_argument("--json", action="store_true")
+    runs = sub.add_parser("runs", help="Inspect, apply or discard saved minimal proposals.")
+    runs.add_argument("action", choices=("show", "apply", "discard"))
+    runs.add_argument("run_id")
+    runs.add_argument("--digest", help="Reviewed proposal digest, required for apply.")
+    runs.add_argument("--json", action="store_true")
+    session = sub.add_parser("session", help="Persistent minimal editor JSONL session.")
+    session.add_argument("--stdio", action="store_true", required=True)
+
+    task = sub.add_parser("task", help="Review and run compact tasks, or use --yolo to skip review.")
+    task.add_argument("query", nargs="?", help="Requested outcome, such as changing a button color.")
+    task.add_argument("--run", dest="run_id", help="Run a previously reviewed task ID.")
+    task.add_argument("--yolo", action="store_true", help="Execute without review; scope and validation checks still apply.")
+    task.add_argument("--json", action="store_true", help="Print JSON; review-only unless --yolo is supplied.")
+
+    task.add_argument("--engine", choices=("minimal", "legacy"), default=None)
+
+    feature = sub.add_parser("feature", help="Review a feature and run its Quick tasks serially.")
+    feature.add_argument("query", nargs="?", help="The complete feature outcome.")
+    feature.add_argument("--run", dest="run_id", help="Run a saved feature review.")
+    feature.add_argument("--yolo", action="store_true", help="Run without a review stop.")
+    feature.add_argument("--json", action="store_true", help="Print JSON; review-only unless --yolo is supplied.")
 
     plan = sub.add_parser(
         "plan",
@@ -527,9 +558,7 @@ def doctor(load_model: bool) -> int:
             )
             vectors = backend.encode(["devstill repository intelligence"])
             shape = (len(vectors), len(vectors[0]) if vectors else 0)
-            console.print(
-                f"Embedding shape: {shape}; device: {backend.device}"
-            )
+            console.print(f"Embedding shape: {shape}; device: {backend.device}")
             backend.close()
         except Exception as exc:  # noqa: BLE001
             console.print(f"[red]Model load failed: {exc}[/red]")
@@ -554,7 +583,9 @@ def device_command(value: str | None) -> int:
         console.print(f"GPU: [green]{info.gpu_name}[/green]")
     elif requested == "auto":
         console.print("GPU: [dim]unavailable; automatic mode is using CPU[/dim]")
-    console.print("The existing index remains valid; future operations use this device.")
+    console.print(
+        "The existing index remains valid; future operations use this device."
+    )
     return 0
 
 
@@ -781,7 +812,8 @@ def index_command(rebuild: bool, verbose: bool, as_json: bool) -> int:
         TextColumn("{task.description}"),
         BarColumn(),
         TaskProgressColumn(),
-        TimeRemainingColumn(),
+        TextColumn("[dim]stage time[/dim]"),
+        TimeElapsedColumn(),
         TextColumn("[dim]{task.fields[files]}[/dim]"),
         console=diagnostic_console,
         transient=True,
@@ -793,7 +825,10 @@ def index_command(rebuild: bool, verbose: bool, as_json: bool) -> int:
         files="",
     )
 
+    previous_phase = None
+
     def report(event: IndexProgress) -> None:
+        nonlocal previous_phase
         total = event.total if event.total is not None and event.total > 0 else None
         completed = event.current or 0
         if total is not None:
@@ -806,19 +841,37 @@ def index_command(rebuild: bool, verbose: bool, as_json: bool) -> int:
                 f"{event.files.unchanged} unchanged · "
                 f"{event.files.parsed} parsed"
             )
-        progress.update(
-            task,
-            description=event.message,
-            total=total,
-            completed=completed,
-            stage=event.stage.upper(),
-            files=files,
-        )
+        fields = {
+            "description": event.message,
+            "stage": "SAVING" if event.stage == "persistence" else event.stage.upper(),
+            "files": files,
+        }
+        phase = (event.stage, total)
+        if phase != previous_phase:
+            # reset() clears a previous numeric total for indeterminate work;
+            # update(total=None) would keep the old total and show a false %.
+            # It also refreshes immediately before a blocking database call.
+            progress.reset(task, total=total, completed=completed, **fields)
+        else:
+            progress.update(
+                task,
+                completed=completed,
+                refresh=(
+                    event.current in {None, 0}
+                    or (event.total is not None and event.current == event.total)
+                ),
+                **fields,
+            )
+        previous_phase = phase
 
     try:
         embedder = getattr(indexer, "embedder", None)
         device = getattr(embedder, "device", config.embedding.device)
         diagnostic_console.print(f"Embedding device: [bold]{device}[/bold]")
+        diagnostic_console.print(
+            "[dim]Stages: scan → parse → embed → save → finalize. "
+            "Percentages apply to the current stage.[/dim]"
+        )
         with progress:
             summary = indexer.run(
                 rebuild=rebuild,
@@ -1088,15 +1141,18 @@ def plan_command(args: argparse.Namespace) -> int:
         )
     finally:
         engine.close()
-    results = select_adaptive_context_results(
-        candidates,
-        min_limit=min(PLAN_MIN_CHUNKS, args.limit),
-        max_limit=args.limit,
-        include_tests=args.include_tests,
-    )
     agent_log = resolve_index_path(config_path, config).parent / "logs/agent.jsonl"
     client = AgentClient(config.llm, log_path=agent_log)
     try:
+        results = select_planning_context(
+            candidates,
+            client=client,
+            query=args.query,
+            repository=str(repo_root),
+            min_limit=min(PLAN_MIN_CHUNKS, args.limit),
+            max_limit=args.limit,
+            include_tests=args.include_tests,
+        )
         diagnostic_console.print(f"Agent response log: {agent_log}")
         diagnostic_console.print(
             f"Sending {len(results)} source chunks to {client.endpoint}"
@@ -1157,11 +1213,14 @@ def deep_plan_command(args: argparse.Namespace) -> int:
             semantic_only=args.semantic_only,
             lexical_only=args.lexical_only,
         )
-        initial_results = select_adaptive_context_results(
+        initial_results = select_planning_context(
             candidates,
+            client=client,
+            query=args.query,
+            repository=str(repo_root),
             min_limit=min(PLAN_MIN_CHUNKS, args.initial_limit),
             max_limit=args.initial_limit,
-            include_tests=args.include_tests,
+            include_tests=args.include_tests or query_requests_tests(args.query),
         )
         diagnostic_console.print(f"Agent response log: {agent_log}")
         diagnostic_console.print(
@@ -1212,7 +1271,7 @@ def deep_plan_command(args: argparse.Namespace) -> int:
             search=search_reasons,
             deep_limit=args.limit,
             deep_minimum=min(DEEP_PLAN_MIN_CHUNKS, args.limit),
-            include_tests=args.include_tests,
+            include_tests=args.include_tests or query_requests_tests(args.query),
             on_initial=initial_ready,
             on_context=context_ready,
             retrieval_exclude=config.retrieval.exclude,
@@ -1237,6 +1296,62 @@ def deep_plan_command(args: argparse.Namespace) -> int:
             )
             console.print(f"  {item.reason}")
     return 0
+
+
+def task_command(args: argparse.Namespace) -> int:
+    if args.command == "task":
+        config_path, config = _configured()
+        if getattr(args, "engine", None) == "minimal" or (getattr(args, "engine", None) is None and config.editing.enabled):
+            from devstill.runtime.cli import command
+            if args.run_id:
+                raise ValueError("Use devstill runs apply ID --digest DIGEST for minimal proposals")
+            return command(args, config_path, config)
+    feature = args.command == "feature"
+    noun = "feature" if feature else "task"
+    loader = load_feature if feature else load_task_draft
+    render = render_feature_review if feature else render_task_review
+    if bool(args.query) == bool(args.run_id):
+        raise ValueError("Provide a task request or --run ID, but not both")
+    config_path, config = _configured()
+    workflow = TuiWorkflow(config_path, config)
+    def run(draft, report):
+        return (workflow.run_feature if feature else workflow.run_task)(draft, report)
+    report = lambda message: diagnostic_console.print(message, markup=False)
+    try:
+        if args.run_id:
+            draft = loader(workflow.artifact_root, args.run_id)
+            if args.yolo:
+                result = run(draft, report)
+            else:
+                result = None
+        else:
+            result = workflow.execute(
+                TuiCommand((TuiCommandKind.FEATURE_YOLO if args.yolo else TuiCommandKind.FEATURE) if feature else (TuiCommandKind.YOLO if args.yolo else TuiCommandKind.TASK), args.query, args.query),
+                report,
+            )
+            draft = result.task_review
+        if not args.yolo:
+            if args.json:
+                print(draft.model_dump_json(indent=2))
+                return 0
+            print(render(draft), end="")
+            if draft.plan.unresolved:
+                return 1
+            if not sys.stdin.isatty():
+                diagnostic_console.print(f"Run this {noun} with: devstill {noun} --run {draft.id} --yolo", markup=False)
+                return 0
+            diagnostic_console.print(f"Run this {noun} now? [y/N] ", end="")
+            if sys.stdin.readline().strip().casefold() not in {"y", "yes"}:
+                diagnostic_console.print("Task saved for review; no changes applied.")
+                return 0
+            result = run(draft, report)
+        if args.json:
+            print(json.dumps(result.task_state, indent=2))
+        else:
+            print(result.markdown, end="")
+        return 0 if result.task_state["status"] in {"validated", "applied_unvalidated"} else 1
+    finally:
+        workflow.close()
 
 
 def execute_command(args: argparse.Namespace) -> int:
@@ -1309,6 +1424,10 @@ def execute_command(args: argparse.Namespace) -> int:
 def main() -> None:
     args = parser().parse_args()
     try:
+        if args.command in {"edit", "runs", "session"}:
+            from devstill.runtime.cli import command
+            config_path, config = _configured()
+            raise SystemExit(command(args, config_path, config))
         if args.command == "help":
             raise SystemExit(show_help(args.topic))
         if args.command == "init":
@@ -1342,12 +1461,16 @@ def main() -> None:
             raise SystemExit(agent_command(args))
         if args.command == "plan":
             raise SystemExit(plan_command(args))
+        if args.command in {"task", "feature"}:
+            raise SystemExit(task_command(args))
         if args.command == "deep-plan":
             raise SystemExit(deep_plan_command(args))
         if args.command == "execute":
             raise SystemExit(execute_command(args))
         config_path, config = _configured()
-        DevstillApp(config_path, config).run()
+        DevstillApp(config_path, config, resume=args.resume).run()
+    except KeyboardInterrupt:
+        raise SystemExit(130) from None
     except (FileNotFoundError, RuntimeError, ValueError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise SystemExit(1) from exc

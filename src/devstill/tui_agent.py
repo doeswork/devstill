@@ -145,7 +145,7 @@ class AgentSetupScreen(ModalScreen[AgentSetupResult | None]):
                     id="agent-max-tokens",
                 )
                 yield Label(
-                    "Planning maximum output tokens",
+                    "Task Review maximum output tokens",
                     classes="agent-label",
                 )
                 yield Input(
@@ -153,26 +153,26 @@ class AgentSetupScreen(ModalScreen[AgentSetupResult | None]):
                     type="integer",
                     id="agent-planning-max-tokens",
                 )
-                yield Label("Planning reasoning", classes="agent-label")
+                yield Label("Legacy planning reasoning (tasks always use Off)", classes="agent-label")
                 yield Select(
                     (("Off (compatible fallback)", "off"), ("Automatic", "auto")),
                     allow_blank=False,
                     value=self.config.planning_reasoning,
                     id="agent-planning-reasoning",
                 )
-                yield Label("Pi execution context window", classes="agent-label")
+                yield Label("Legacy Pi execution context window", classes="agent-label")
                 yield Input(
                     str(self.executor.context_window),
                     placeholder="auto or token count",
                     id="agent-execution-context",
                 )
-                yield Label("Pi execution maximum output tokens", classes="agent-label")
+                yield Label("Task / Pi edit maximum output tokens", classes="agent-label")
                 yield Input(
                     str(self.executor.max_output_tokens),
                     type="integer",
                     id="agent-execution-max-tokens",
                 )
-                yield Label("Pi execution reasoning", classes="agent-label")
+                yield Label("Legacy Pi execution reasoning", classes="agent-label")
                 yield Select(
                     (("Off", "off"), ("Automatic", "auto")),
                     allow_blank=False,
@@ -218,6 +218,8 @@ class AgentSetupScreen(ModalScreen[AgentSetupResult | None]):
                 planning_reasoning=self.query_one(
                     "#agent-planning-reasoning", Select
                 ).value,
+                context_window=self.config.context_window,
+                planning_input_tokens=self.config.planning_input_tokens,
             )
             context_value = self.query_one("#agent-execution-context", Input).value
             context_window: str | int = (

@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "repo": {
+    "root": "."
+  },
+  "index": {
+    "path": ".devstill/chroma",
+    "collection": "devstill_code",
+    "max_chunk_chars": 8000,
+    "max_chunk_lines": 400,
+    "fallback_overlap_lines": 20
+  },
+  "embedding": {
+    "model": "/home/jeffy4080/.local/share/devstill/models/jina-embeddings-v2-base-code",
+    "device": "auto",
+    "max_sequence_length": 2048,
+    "batch_size": 8,
+    "normalize_embeddings": true
+  },
+  "files": {
+    "use_gitignore": true,
+    "scan_all_text": true,
+    "index_noisy_files": false,
+    "include_ignored": [],
+    "include": [
+      "**/*.py",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.go",
+      "**/*.rs",
+      "**/*.rb",
+      "**/*.rake",
+      "**/*.gemspec",
+      "**/*.sh",
+      "**/*.bash",
+      "**/*.java",
+      "**/*.json",
+      "**/*.toml",
+      "**/*.yaml",
+      "**/*.yml",
+      "**/*.sql",
+      "**/*.html",
+      "**/*.css",
+      "**/*.md",
+      "**/*.markdown",
+      "**/*.rst",
+      "**/*.adoc",
+      "**/*.txt",
+      "**/*.jsonc",
+      "**/*.ini",
+      "**/*.cfg",
+      "**/*.conf",
+      "**/*.service",
+      "Dockerfile",
+      "Makefile",
+      ".gitignore",
+      ".env*.example",
+      ".env*.sample",
+      ".env*.template",
+      "Gemfile",
+      "Rakefile"
+    ],
+    "exclude": [
+      ".git/**",
+      ".devstill/**",
+      ".venv/**",
+      "venv/**",
+      "node_modules/**",
+      "dist/**",
+      "build/**",
+      "__pycache__/**"
+    ]
+  },
+  "retrieval": {
+    "exclude": []
+  },
+  "llm": {
+    "enabled": true,
+    "base_url": "https://llm.codemonkey.study/v1",
+    "model": "vllm-qwen38-27b",
+    "api_key_env": "DEVSTILL_AGENT_API_KEY",
+    "timeout_seconds": 300.0,
+    "max_output_tokens": 2048,
+    "planning_max_output_tokens": 6144,
+    "planning_reasoning": "off",
+    "context_window": 262144,
+    "planning_input_tokens": 8192
+  },
+  "executor": {
+    "enabled": true,
+    "backend": "pi",
+    "timeout_seconds": 300.0,
+    "context_window": "auto",
+    "reasoning": "off",
+    "max_output_tokens": 4096,
+    "max_tool_calls": 12,
+    "validation_commands": [],
+    "task_validation_commands": [],
+    "task_concurrency": 1
+  }
+}

@@ -387,9 +387,9 @@ class SQLiteStore:
         values = list(dict.fromkeys(chunk_ids))
         if not values:
             return {}
-        placeholders = ",".join("?" for _ in values)
         rows = self.connection.execute(
-            f"SELECT * FROM chunks WHERE id IN ({placeholders})", values
+            "SELECT * FROM chunks WHERE id IN (SELECT value FROM json_each(?))",
+            (json.dumps(values),),
         ).fetchall()
         return {row["id"]: self._chunk(row) for row in rows}
 
@@ -409,21 +409,67 @@ class SQLiteStore:
         ).fetchall()
         return [self._chunk(row) for row in rows]
 
-    def find_symbol_exact(self, query: str, limit: int = 50) -> list[str]:
+    def retrieval_paths(self) -> list[str]:
+        return [
+            row[0]
+            for row in self.connection.execute("SELECT DISTINCT path FROM chunks")
+        ]
+
+    def eligible_chunk_ids(
+        self, *, allowed_paths: list[str] | None = None, kind: str | None = None
+    ) -> set[str]:
+        scope, params = self._scope(allowed_paths, kind)
+        return {
+            row[0]
+            for row in self.connection.execute(
+                f"SELECT id FROM chunks WHERE 1=1 {scope}", params
+            )
+        }
+
+    @staticmethod
+    def _scope(allowed_paths: list[str] | None, kind: str | None) -> tuple[str, list]:
+        clauses, params = [], []
+        if allowed_paths is not None:
+            clauses.append("chunks.path IN (SELECT value FROM json_each(?))")
+            params.append(json.dumps(allowed_paths))
+        if kind:
+            clauses.append("chunks.kind = ?")
+            params.append(kind)
+        return (" AND " + " AND ".join(clauses) if clauses else ""), params
+
+    def find_symbol_exact(
+        self,
+        query: str,
+        limit: int = 50,
+        *,
+        allowed_paths: list[str] | None = None,
+        kind: str | None = None,
+    ) -> list[str]:
+        scope, params = self._scope(allowed_paths, kind)
         rows = self.connection.execute(
-            """
+            f"""
             SELECT DISTINCT aliases.chunk_id
             FROM aliases
             JOIN chunks ON chunks.id = aliases.chunk_id
             WHERE aliases.alias_normalized = ?
               AND coalesce(json_extract(chunks.parser_metadata_json, '$.searchable'), 1) != 0
+              {scope}
+            ORDER BY chunks.path, chunks.start_line, chunks.id
             LIMIT ?
             """,
-            (query.casefold(), limit),
+            (query.casefold(), *params, limit),
         ).fetchall()
         return [row[0] for row in rows]
 
-    def find_symbol_prefix(self, query: str, limit: int = 50) -> list[str]:
+    def find_symbol_prefix(
+        self,
+        query: str,
+        limit: int = 50,
+        *,
+        allowed_paths: list[str] | None = None,
+        kind: str | None = None,
+    ) -> list[str]:
+        scope, params = self._scope(allowed_paths, kind)
         escaped = (
             query.casefold()
             .replace("\\", "\\\\")
@@ -431,33 +477,51 @@ class SQLiteStore:
             .replace("_", "\\_")
         )
         rows = self.connection.execute(
-            """
+            f"""
             SELECT DISTINCT aliases.chunk_id
             FROM aliases
             JOIN chunks ON chunks.id = aliases.chunk_id
             WHERE aliases.alias_normalized LIKE ? ESCAPE '\\'
               AND coalesce(json_extract(chunks.parser_metadata_json, '$.searchable'), 1) != 0
+              {scope}
             ORDER BY length(aliases.alias_normalized), aliases.alias_normalized
             LIMIT ?
             """,
-            (f"{escaped}%", limit),
+            (f"{escaped}%", *params, limit),
         ).fetchall()
         return [row[0] for row in rows]
 
-    def search_paths(self, query: str, limit: int = 100) -> list[str]:
+    def search_paths(
+        self,
+        query: str,
+        limit: int = 100,
+        *,
+        allowed_paths: list[str] | None = None,
+        kind: str | None = None,
+    ) -> list[str]:
+        scope, params = self._scope(allowed_paths, kind)
         rows = self.connection.execute(
-            """
+            f"""
             SELECT id FROM chunks
             WHERE lower(path) LIKE ?
               AND coalesce(json_extract(parser_metadata_json, '$.searchable'), 1) != 0
+              {scope}
             ORDER BY length(path), start_line
             LIMIT ?
             """,
-            (f"%{query.casefold()}%", limit),
+            (f"%{query.casefold()}%", *params, limit),
         ).fetchall()
         return [row[0] for row in rows]
 
-    def search_fts(self, query: str, limit: int = 100) -> list[tuple[str, float]]:
+    def search_fts(
+        self,
+        query: str,
+        limit: int = 100,
+        *,
+        allowed_paths: list[str] | None = None,
+        kind: str | None = None,
+    ) -> list[tuple[str, float]]:
+        scope, params = self._scope(allowed_paths, kind)
         tokens = re.findall(r"[\w.:-]+", query, flags=re.UNICODE)
         if not tokens:
             return []
@@ -465,17 +529,18 @@ class SQLiteStore:
             f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens
         )
         rows = self.connection.execute(
-            """
+            f"""
             SELECT chunks_fts.chunk_id,
                    bm25(chunks_fts, 0.0, 4.0, 3.0, 2.0, 1.0, 1.0) AS rank
             FROM chunks_fts
             JOIN chunks ON chunks.id = chunks_fts.chunk_id
             WHERE chunks_fts MATCH ?
               AND coalesce(json_extract(chunks.parser_metadata_json, '$.searchable'), 1) != 0
+              {scope}
             ORDER BY rank
             LIMIT ?
             """,
-            (expression, limit),
+            (expression, *params, limit),
         ).fetchall()
         return [(row["chunk_id"], float(row["rank"])) for row in rows]
 

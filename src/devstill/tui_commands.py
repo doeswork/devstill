@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock
 from typing import Any
 
 from devstill.agent import AgentClient
@@ -23,6 +23,7 @@ from devstill.context import (
     PLAN_MAX_CHUNKS,
     PLAN_MIN_CHUNKS,
     planning_retrieval_limit,
+    query_requests_tests,
     render_context_json,
     render_context_markdown,
     select_adaptive_context_results,
@@ -40,6 +41,16 @@ from devstill.executor import (
     validate_execution_plan,
     validate_reviewed_plan,
 )
+from devstill.feature_planning import (
+    FeatureBudget,
+    FeatureClient,
+    FeatureDraft,
+    load_feature,
+    prepare_feature_draft,
+    render_feature_review,
+    save_feature,
+)
+from devstill.feature_runs import render_feature_run, run_feature
 from devstill.file_questions import FileQuestionSession, prepare_file_questions
 from devstill.git_files import discover_repository_inventory
 from devstill.indexer import RepositoryIndexer
@@ -53,15 +64,33 @@ from devstill.planning import (
     refine_plan,
     render_plan_json,
     render_plan_markdown,
+    select_planning_context,
     write_deep_plan_artifacts,
     write_plan_artifacts,
 )
+from devstill.quick_tasks import create_quick_draft
 from devstill.retrieval_policy import matches_retrieval_exclude
 from devstill.search import HybridSearch
 from devstill.storage import ChromaStore
+from devstill.task_runs import render_task_run, run_tasks
+from devstill.tasks import (
+    TaskDraft,
+    load_task_draft,
+    render_task_review,
+    save_task_draft,
+)
 
 
 class TuiCommandKind(str, Enum):
+    EDIT = "edit"
+    EDIT_YOLO = "edit_yolo"
+    EDIT_APPLY = "edit_apply"
+    TASK = "task"
+    YOLO = "yolo"
+    TASK_RUN = "task_run"
+    FEATURE = "feature"
+    FEATURE_YOLO = "feature_yolo"
+    FEATURE_RUN = "feature_run"
     SEARCH = "search"
     CONTEXT = "context"
     PLAN = "plan"
@@ -86,6 +115,12 @@ class CommandSpec:
 
 
 COMMAND_SPECS = (
+    CommandSpec("/edit ", "Minimal Review", "Generate and check an actual patch without Pi", TuiCommandKind.EDIT),
+    CommandSpec("/edit-yolo ", "Minimal YOLO", "Generate, check and apply with the minimal editor", TuiCommandKind.EDIT_YOLO),
+    CommandSpec("/task ", "Task Review", "Review file impacts before running Quick", TuiCommandKind.TASK),
+    CommandSpec("/yolo ", "YOLO", "Retrieve, edit and check without review", TuiCommandKind.YOLO),
+    CommandSpec("/feature ", "Feature Review", "Quick first; coordinate when needed", TuiCommandKind.FEATURE),
+    CommandSpec("/feature-yolo ", "Feature YOLO", "Quick first; run without review", TuiCommandKind.FEATURE_YOLO),
     CommandSpec(
         "/search ", "Search", "Find relevant code locally", TuiCommandKind.SEARCH
     ),
@@ -94,36 +129,6 @@ COMMAND_SPECS = (
         "Context",
         "Build five AI-ready source chunks",
         TuiCommandKind.CONTEXT,
-    ),
-    CommandSpec(
-        "/plan ",
-        "Plan",
-        "Classify file impact with the configured agent",
-        TuiCommandKind.PLAN,
-    ),
-    CommandSpec(
-        "/deep-plan ",
-        "Deep Plan",
-        "Refine file impact through a second retrieval pass",
-        TuiCommandKind.DEEP_PLAN,
-    ),
-    CommandSpec(
-        "/execute",
-        "Execute",
-        "Preview and approve the newest Plan with Pi",
-        TuiCommandKind.EXECUTE,
-    ),
-    CommandSpec(
-        "/execute plan",
-        "Execute Plan",
-        "Preview the ordinary Plan with Pi",
-        TuiCommandKind.EXECUTE,
-    ),
-    CommandSpec(
-        "/execute deep-plan",
-        "Execute Deep Plan",
-        "Preview the refined Deep Plan with Pi",
-        TuiCommandKind.EXECUTE,
     ),
     CommandSpec("/index", "Index", "Update the repository index", TuiCommandKind.INDEX),
     CommandSpec("/files", "Files", "Inspect repository coverage", TuiCommandKind.FILES),
@@ -178,6 +183,8 @@ class TuiResult:
     markdown: str
     prepared_execution: PreparedExecution | None = None
     execution_offer: TuiExecutionOffer | None = None
+    task_review: TaskDraft | FeatureDraft | dict | None = None
+    task_state: dict | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,9 +227,7 @@ class TuiRetrievalRuntime:
     @property
     def device(self) -> str:
         try:
-            return str(
-                getattr(self.embedder, "device", self.config.embedding.device)
-            )
+            return str(getattr(self.embedder, "device", self.config.embedding.device))
         except RuntimeError:
             return "unavailable"
 
@@ -276,10 +281,16 @@ def parse_tui_command(value: str) -> TuiCommand:
         "/?": "/help",
     }
     name = aliases.get(name, name)
-    if name in {"/search", "/context", "/plan", "/deep-plan"}:
+    if name in {"/edit", "/edit-yolo", "/task", "/yolo", "/feature", "/feature-yolo", "/search", "/context", "/plan", "/deep-plan"}:
         if not query:
             raise ValueError(f"{name} requires a query.")
         kind = {
+            "/edit": TuiCommandKind.EDIT,
+            "/edit-yolo": TuiCommandKind.EDIT_YOLO,
+            "/task": TuiCommandKind.TASK,
+            "/yolo": TuiCommandKind.YOLO,
+            "/feature": TuiCommandKind.FEATURE,
+            "/feature-yolo": TuiCommandKind.FEATURE_YOLO,
             "/search": TuiCommandKind.SEARCH,
             "/context": TuiCommandKind.CONTEXT,
             "/plan": TuiCommandKind.PLAN,
@@ -333,7 +344,11 @@ def help_markdown() -> str:
     lines.extend(
         [
             "",
-            "Plain text runs local hybrid search. `/plan`, `/deep-plan`, `/execute`, and `/agent test` use the configured model.",
+            "Plain text uses the selected Task Review, YOLO or Search mode. Task Review is the startup default.",
+            "`/task` reviews file impacts before one Run action; `/yolo` edits without review. Both use the configured model and the same scope checks.",
+            "Both modes use compact file-impact review followed by the existing bounded Quick executor. No task decomposition is generated.",
+            "Feature uses Quick directly when its review is ready; an unresolved review can coordinate multiple tasks. Review/YOLO is a separate choice. `/feature` reviews; `/feature-yolo` runs immediately.",
+            "`/search` stays local. Legacy `/plan`, `/deep-plan`, `/execute`, and `/agent test` use the configured model.",
             "Advanced flags, rebuilds, configuration, and removal remain available in the CLI.",
             "",
             "## Clipboard",
@@ -491,6 +506,9 @@ class TuiWorkflow:
         self.config = config
         self.repo_root = resolve_repo_root(config_path, config)
         self.artifact_root = resolve_index_path(config_path, config).parent
+        self._minimal = None
+        self._tasks_cancelled = Event()
+        self._tasks_closed = Event()
         self._runtime = TuiRetrievalRuntime(
             config_path,
             config,
@@ -518,6 +536,9 @@ class TuiWorkflow:
         )
 
     def update_config(self, config: DevstillConfig) -> None:
+        if self._minimal is not None:
+            self._minimal.close()
+            self._minimal = None
         if self._retrieval_key(config) != self._retrieval_key(self.config):
             self._runtime.close()
             self._runtime = TuiRetrievalRuntime(self.config_path, config)
@@ -525,9 +546,15 @@ class TuiWorkflow:
         self.repo_root = resolve_repo_root(self.config_path, config)
         self.artifact_root = resolve_index_path(self.config_path, config).parent
 
-    def file_question_session(self, plan: PlanOutput, index: int) -> FileQuestionSession:
+    def file_question_session(
+        self, plan: PlanOutput, index: int
+    ) -> FileQuestionSession:
         return prepare_file_questions(
-            self.repo_root, self.config, self.artifact_root, plan, index,
+            self.repo_root,
+            self.config,
+            self.artifact_root,
+            plan,
+            index,
         )
 
     def save_manual_plan(
@@ -600,7 +627,9 @@ class TuiWorkflow:
             suppressed_paths=frozenset(suppressed),
             pinned_targets=offer.pinned_targets - {item.target},
         )
-        return TuiReviewResult(next_offer, markdown, f"Removed {item.target} from this plan")
+        return TuiReviewResult(
+            next_offer, markdown, f"Removed {item.target} from this plan"
+        )
 
     def replace_review_item(
         self,
@@ -791,16 +820,22 @@ class TuiWorkflow:
             for result in candidates
             if result.chunk.path not in offer.suppressed_paths
         ]
-        maximum = DEEP_PLAN_MAX_CHUNKS if offer.source == "deep-plan" else PLAN_MAX_CHUNKS
-        minimum = DEEP_PLAN_MIN_CHUNKS if offer.source == "deep-plan" else PLAN_MIN_CHUNKS
+        maximum = (
+            DEEP_PLAN_MAX_CHUNKS if offer.source == "deep-plan" else PLAN_MAX_CHUNKS
+        )
+        minimum = (
+            DEEP_PLAN_MIN_CHUNKS if offer.source == "deep-plan" else PLAN_MIN_CHUNKS
+        )
         results = select_adaptive_context_results(
             candidates,
             min_limit=minimum,
             max_limit=maximum,
-            include_tests=False,
+            include_tests=query_requests_tests(query),
         )
         if not results:
-            raise ValueError("No eligible retrieval context is available for refinement")
+            raise ValueError(
+                "No eligible retrieval context is available for refinement"
+            )
         notify("Asking the agent to refine the live plan")
         client = AgentClient(
             self.config.llm,
@@ -835,7 +870,23 @@ class TuiWorkflow:
         return offer.plan
 
     def close(self) -> None:
+        self._tasks_closed.set()
+        self.cancel_tasks()
         self._runtime.close()
+        if self._minimal is not None:
+            self._minimal.close()
+
+    def cancel_tasks(self) -> None:
+        self._tasks_cancelled.set()
+        if self._minimal is not None:
+            self._minimal.cancelled.set()
+
+    def tasks_cancelled(self) -> bool:
+        return self._tasks_cancelled.is_set() or self._tasks_closed.is_set()
+
+    def reset_task_cancellation(self) -> None:
+        if not self._tasks_closed.is_set():
+            self._tasks_cancelled.clear()
 
     def warm(self, report: ProgressCallback | None = None) -> None:
         """Open the persistent vector store and load the encoder for this session."""
@@ -853,6 +904,9 @@ class TuiWorkflow:
 
     def _open_search(self, report: ProgressCallback) -> HybridSearch:
         index_root = resolve_index_path(self.config_path, self.config).parent
+        if (index_root / ".tasks-need-index").exists():
+            report("Refreshing local embeddings after task edits")
+            self.execute(TuiCommand(TuiCommandKind.INDEX, "/index"), report)
         if (index_root / ".indexing-dirty").exists():
             raise RuntimeError(
                 f"Devstill index recovery is required at {index_root}. "
@@ -880,9 +934,7 @@ class TuiWorkflow:
         list_quality = getattr(getattr(engine, "store", None), "list_quality", None)
         if callable(list_quality):
             paths.update(
-                item.path
-                for item in list_quality()
-                if item.disposition == "indexed"
+                item.path for item in list_quality() if item.disposition == "indexed"
             )
         return tuple(
             sorted(
@@ -902,6 +954,85 @@ class TuiWorkflow:
         progress: ProgressCallback | None = None,
     ) -> TuiResult:
         report = progress or (lambda _message: None)
+        minimal_kind = command.kind in {TuiCommandKind.EDIT, TuiCommandKind.EDIT_YOLO, TuiCommandKind.EDIT_APPLY}
+        minimal_kind = minimal_kind or (self.config.editing.enabled and command.kind in {TuiCommandKind.TASK, TuiCommandKind.YOLO})
+        if minimal_kind:
+            if self._tasks_closed.is_set():
+                raise ValueError("Workflow is closed")
+            from devstill.runtime.service import RuntimeSession, render
+            if self._minimal is None:
+                embedder, chroma = self._runtime.dependencies(report, warm_encoder=False)
+                self._minimal = RuntimeSession(self.config_path, self.config, embedder=embedder, chroma=chroma)
+            if command.kind == TuiCommandKind.EDIT_APPLY:
+                proposal = self._minimal.load(command.query)
+                state = self._minimal.apply(command.query, command.instruction)
+                return TuiResult("Task applied", render({**proposal, **state}), task_state=state)
+            proposal = self._minimal.prepare(command.query, report=report)
+            if proposal["status"] != "ready":
+                return TuiResult("Task failed", render(proposal), task_state=proposal)
+            if command.kind in {TuiCommandKind.EDIT_YOLO, TuiCommandKind.YOLO}:
+                state = self._minimal.apply(proposal["id"], proposal["digest"])
+                return TuiResult("Task applied", render({**proposal, **state}), task_state=state)
+            return TuiResult("Patch review", render(proposal), task_review=proposal)
+
+        if command.kind in {TuiCommandKind.TASK, TuiCommandKind.YOLO, TuiCommandKind.TASK_RUN,
+                            TuiCommandKind.FEATURE, TuiCommandKind.FEATURE_YOLO, TuiCommandKind.FEATURE_RUN} and self._tasks_closed.is_set():
+            raise ValueError("Workflow is closed")
+        if command.kind in {TuiCommandKind.FEATURE, TuiCommandKind.FEATURE_YOLO}:
+            if not self.config.llm.enabled:
+                raise ValueError("Agent is disabled. Configure its endpoint and model first.")
+            from uuid import uuid4
+            budget = FeatureBudget(self.config.feature.timeout_seconds, cancelled=self.tasks_cancelled)
+            report("Retrieving compact feature evidence")
+            engine = self._open_search(report)
+            try:
+                candidates = engine.query(command.query, limit=planning_retrieval_limit(PLAN_MAX_CHUNKS))
+            finally:
+                engine.close()
+            budget.remaining()
+            log_path = self.artifact_root / "logs" / f"feature-discovery-{uuid4().hex}.jsonl"
+            with FeatureClient(self.config.llm, budget=budget, log_path=log_path) as client:
+                draft = prepare_feature_draft(client, query=command.query, repo=self.repo_root,
+                    candidates=candidates, mode="yolo" if command.kind == TuiCommandKind.FEATURE_YOLO else "review", config=self.config)
+            budget.remaining()
+            if isinstance(draft, FeatureDraft):
+                draft.discovery_seconds = budget.spent
+            directory = save_feature(self.artifact_root, draft)
+            (directory / "discovery-log.txt").write_text(str(log_path) + "\n")
+            if command.kind == TuiCommandKind.FEATURE_YOLO:
+                return self.run_feature(draft, report)
+            return TuiResult("Feature Review" if isinstance(draft, FeatureDraft) else "Task Review", render_feature_review(draft), task_review=draft)
+
+        if command.kind == TuiCommandKind.FEATURE_RUN:
+            return self.run_feature(load_feature(self.artifact_root, command.query), report)
+
+        if command.kind in {TuiCommandKind.TASK, TuiCommandKind.YOLO}:
+            if not self.config.llm.enabled:
+                raise ValueError("Agent is disabled. Configure its endpoint and model first.")
+            report("Retrieving compact task evidence")
+            engine = self._open_search(report)
+            try:
+                candidates = engine.query(command.query, limit=planning_retrieval_limit(PLAN_MAX_CHUNKS))
+            finally:
+                engine.close()
+            from uuid import uuid4
+            log_path = self.artifact_root / "logs" / f"task-discovery-{uuid4().hex}.jsonl"
+            with AgentClient(self.config.llm, log_path=log_path) as client:
+                draft = create_quick_draft(
+                    client, query=command.query, repo=self.repo_root,
+                    candidates=candidates,
+                    mode="yolo" if command.kind is TuiCommandKind.YOLO else "review",
+                    excluded=self.config.retrieval.exclude,
+                )
+            directory = save_task_draft(self.artifact_root, draft)
+            (directory / "discovery-log.txt").write_text(str(log_path) + "\n")
+            if command.kind is TuiCommandKind.YOLO:
+                return self.run_task(draft, report)
+            return TuiResult("Task Review", render_task_review(draft), task_review=draft)
+
+        if command.kind is TuiCommandKind.TASK_RUN:
+            return self.run_task(load_task_draft(self.artifact_root, command.query), report)
+
         if command.kind is TuiCommandKind.SEARCH:
             report("Preparing local hybrid search")
             engine = self._open_search(report)
@@ -918,7 +1049,9 @@ class TuiWorkflow:
                 candidates = engine.query(command.query, limit=32)
             finally:
                 engine.close()
-            results = select_context_results(candidates, 5, include_tests=False)
+            results = select_context_results(
+                candidates, 5, include_tests=query_requests_tests(command.query)
+            )
             json_output = render_context_json(results)
             markdown = render_context_markdown(
                 results,
@@ -943,16 +1076,18 @@ class TuiWorkflow:
                 repository_paths = self._plan_picker_paths(engine, candidates)
             finally:
                 engine.close()
-            results = select_adaptive_context_results(
-                candidates,
-                min_limit=PLAN_MIN_CHUNKS,
-                max_limit=PLAN_MAX_CHUNKS,
-                include_tests=False,
-            )
-            report(TuiPreview(render_plan_preview_markdown(results, command.query)))
             agent_log = self.artifact_root / "logs" / "agent.jsonl"
             client = AgentClient(self.config.llm, log_path=agent_log)
             try:
+                results = select_planning_context(
+                    candidates,
+                    client=client,
+                    query=command.query,
+                    repository=str(self.repo_root),
+                    min_limit=PLAN_MIN_CHUNKS,
+                    max_limit=PLAN_MAX_CHUNKS,
+                )
+                report(TuiPreview(render_plan_preview_markdown(results, command.query)))
                 report(f"Agent response log: {agent_log}")
                 report(f"Sending {len(results)} source chunks to {client.endpoint}")
                 plan = generate_plan(
@@ -995,11 +1130,14 @@ class TuiWorkflow:
                     limit=planning_retrieval_limit(PLAN_MAX_CHUNKS),
                 )
                 repository_paths = self._plan_picker_paths(engine, candidates)
-                initial_results = select_adaptive_context_results(
+                initial_results = select_planning_context(
                     candidates,
+                    client=client,
+                    query=command.query,
+                    repository=str(self.repo_root),
                     min_limit=PLAN_MIN_CHUNKS,
                     max_limit=PLAN_MAX_CHUNKS,
-                    include_tests=False,
+                    include_tests=query_requests_tests(command.query),
                 )
                 report(
                     TuiPreview(
@@ -1076,7 +1214,7 @@ class TuiWorkflow:
                     search=search_reasons,
                     deep_limit=DEEP_PLAN_MAX_CHUNKS,
                     deep_minimum=DEEP_PLAN_MIN_CHUNKS,
-                    include_tests=False,
+                    include_tests=query_requests_tests(command.query),
                     on_initial=initial_ready,
                     on_context=context_ready,
                     retrieval_exclude=self.config.retrieval.exclude,
@@ -1146,6 +1284,7 @@ class TuiWorkflow:
             try:
                 summary = indexer.run(progress=index_progress)
                 quality = indexer.list_quality()
+                (self.artifact_root / ".tasks-need-index").unlink(missing_ok=True)
             finally:
                 indexer.close()
             return TuiResult("Index", render_index_markdown(summary, quality))
@@ -1208,11 +1347,7 @@ class TuiWorkflow:
                     f"- Response log: `{self.artifact_root / 'logs' / 'agent.jsonl'}`",
                     "",
                     "The API key value is never displayed.",
-                    *(
-                        (f"\n> Warning: {limits.warning}",)
-                        if limits.warning
-                        else ()
-                    ),
+                    *((f"\n> Warning: {limits.warning}",) if limits.warning else ()),
                 )
             )
             return TuiResult("Agent", markdown)
@@ -1242,6 +1377,25 @@ class TuiWorkflow:
             return TuiResult("Agent test", markdown)
 
         raise ValueError(f"{command.kind.value} is handled by the interface")
+
+    def run_feature(self, draft: FeatureDraft | TaskDraft, progress: ProgressCallback | None = None) -> TuiResult:
+        report = progress or (lambda message: None)
+        def retrieve(query):
+            engine = self._open_search(report)
+            try:
+                return engine.query(query, limit=planning_retrieval_limit(PLAN_MAX_CHUNKS))
+            finally:
+                engine.close()
+        state = run_feature(draft, repo=self.repo_root, artifact_root=self.artifact_root,
+            config=self.config, retrieve=retrieve, progress=report, cancelled=self.tasks_cancelled)
+        return TuiResult("Feature result", render_feature_run(state), task_state=state)
+
+    def run_task(self, draft: TaskDraft, progress: ProgressCallback | None = None) -> TuiResult:
+        state = run_tasks(
+            draft, repo=self.repo_root, artifact_root=self.artifact_root,
+            config=self.config, progress=progress, cancelled=self.tasks_cancelled,
+        )
+        return TuiResult("Task result", render_task_run(state), task_state=state)
 
     def apply_execution(
         self,

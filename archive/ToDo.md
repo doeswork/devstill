@@ -1,3 +1,5 @@
+> Archived historical document. Statements and commands describe the workflow at that time. Use the [active test plan](../benchmarks/retrieval/TEST_PLAN.md) for current work. Original path: `ToDo.md`.
+
 We need to include other major coding laguanges like rust, ruby, go, sql, etc to the parsing or Structural Chunking and have some generic fallback if we don't have the laguange. Or if a chunk is over 1000 lines of code. Like maybe a ineractive "devstill index --verbose" that lets us know how many good files, meh files and bad files
 
 ## Current implementation status

@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "id": "20261110T112931Z-3841a55",
+  "status": "completed",
+  "started_at": "2026-11-10T11:29:31+00:00",
+  "finished_at": "2026-11-10T12:53:41+00:00",
+  "note": "react-holdout after JS fixes 5c58680 (second look at the holdout; no tuning on it)",
+  "command": [
+    "bench_suite.py",
+    "run",
+    "--suite",
+    "react-holdout",
+    "--repeats",
+    "2",
+    "--note",
+    "react-holdout after JS fixes 5c58680 (second look at the holdout; no tuning on it)"
+  ],
+  "host": "USNBRosenbergJ",
+  "platform": "Linux-6.18.54.1-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+  "git": {
+    "sha": "3841a55bd5272a427c8a4241435d73470d4b4884",
+    "short": "3841a55",
+    "branch": "bench-test-ui-ux",
+    "dirty": false,
+    "status": []
+  },
+  "model": {
+    "base_url": "https://llm.codemonkey.study/v1",
+    "configured_model": "vllm-qwen38-27b",
+    "served": [
+      [
+        "vllm-qwen38-27b",
+        "gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090",
+        262144
+      ]
+    ],
+    "served_sha256": "05a50541b75c9bee998e78c26a97e70deeb8c1da68a3150d6842d34ed586a6f1"
+  },
+  "pi": {
+    "version": "1.5.0",
+    "node": "v24.14.1",
+    "reason": null
+  },
+  "tools": {
+    "python": "Python 3.12.3",
+    "pytest": "pytest 8.3.5",
+    "ruff": "ruff 0.17.4",
+    "node": "v24.14.1",
+    "git": "git version 2.43.0"
+  },
+  "settings": {
+    "sampling": "default",
+    "endpoint_wait": 1800,
+    "max_hours": null,
+    "overrides": {
+      "repeats": 2,
+      "variants": null,
+      "timeout": null
+    }
+  },
+  "suites": [
+    {
+      "name": "react-holdout",
+      "settings": {
+        "variants": "pi,runtime",
+        "repeats": 2,
+        "timeout": 120,
+        "purpose": "development",
+        "pi_disable_reasoning": true,
+        "acceptance_budget": 240,
+        "requires": [
+          "node"
+        ],
+        "name": "react-holdout",
+        "dataset": "benchmarks/retrieval/zustand_holdout.v1.json",
+        "tags": [
+          "react"
+        ],
+        "description": "12 zustand (React/TypeScript) cases authored with react-dev; not read while tuning Devstill"
+      },
+      "dataset_sha256": "bef6420fe9e3405f87e46abf08eb431e9fd7426e487930354e67f91890e3ec01",
+      "status": "completed",
+      "reason": null,
+      "attempts": [
+        {
+          "started_at": "2026-11-10T11:29:31+00:00",
+          "finished_at": "2026-11-10T12:53:41+00:00",
+          "exit_code": 0,
+          "resume": false,
+          "trials_recorded": 48,
+          "suite_time_limit_hit": false,
+          "stray_processes_killed": 0,
+          "stopped": null
+        }
+      ],
+      "verified_cache": "/home/jeffyx/devstill/.devstill/bench-cache/verified/react-holdout-bef6420fe9e3-6a32e89d6b6e",
+      "excluded_cases": {},
+      "dataset_used": "/home/jeffyx/devstill/benchmarks/retrieval/zustand_holdout.v1.json",
+      "verified_used": "/home/jeffyx/devstill/.devstill/bench-cache/verified/react-holdout-bef6420fe9e3-6a32e89d6b6e"
+    }
+  ]
+}

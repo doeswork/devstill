@@ -5,3 +5,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+
+# devstill local index
+.devstill/
+.claude/settings.local.json

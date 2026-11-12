@@ -1,0 +1,326 @@
+[
+  {
+    "id": "xc01",
+    "corpus": "click",
+    "workload": "small",
+    "category": "parameter type validation",
+    "family": "src/click/types.py",
+    "query": "Bounded float range parameters let NaN through: an option typed as a float range from 0 to 1 accepts `--ratio nan` and hands NaN to the command. Reject NaN with the usual bad-parameter error whenever the float range has a min or a max bound, including when clamp is enabled (NaN must never be clamped to a bound). A float range without bounds and the plain float type must still accept nan, and everything else (non-numeric input, in-range, out-of-range and clamped values including inf/-inf, and integer ranges) must behave exactly as before.",
+    "checks": "import math\n\nimport click\nfrom click.testing import CliRunner\n\n\ndef rejects(ptype, value):\n    try:\n        ptype.convert(value, None, None)\n    except click.BadParameter:\n        return True\n    return False\n\n\nbounded = [\n    click.FloatRange(0, 1),\n    click.FloatRange(0, 1, clamp=True),\n    click.FloatRange(min=0),\n    click.FloatRange(max=1),\n    click.FloatRange(min=0, clamp=True),\n    click.FloatRange(max=1, clamp=True),\n    click.FloatRange(0, 1, min_open=True, max_open=True),\n]\nfor ptype in bounded:\n    for value in (\"nan\", \"NaN\", \"-nan\", float(\"nan\")):\n        assert rejects(ptype, value), (\"NaN accepted\", ptype, value)\n\n# Without bounds NaN is still accepted, and so is NaN for the plain float type.\nassert math.isnan(click.FloatRange().convert(\"nan\", None, None))\nassert math.isnan(click.FloatRange(clamp=True).convert(\"nan\", None, None))\nassert math.isnan(click.FLOAT.convert(\"nan\", None, None))\n\n# Ordinary, out-of-range, infinite and clamped values behave as before.\nr = click.FloatRange(0, 1)\nassert r.convert(\"0.25\", None, None) == 0.25\nassert r.convert(1, None, None) == 1.0\nfor value in (\"1.5\", \"-0.1\", \"inf\", \"-inf\", \"abc\"):\n    assert rejects(r, value), value\nc = click.FloatRange(0, 1, clamp=True)\nassert c.convert(\"5\", None, None) == 1\nassert c.convert(\"-3\", None, None) == 0\nassert c.convert(\"inf\", None, None) == 1\nassert c.convert(\"-inf\", None, None) == 0\nassert c.convert(\"0.5\", None, None) == 0.5\nassert click.FloatRange(min=0).convert(\"inf\", None, None) == math.inf\nassert click.IntRange(0, 5).convert(\"3\", None, None) == 3\nassert click.IntRange(0, 5, clamp=True).convert(\"9\", None, None) == 5\nassert rejects(click.IntRange(0, 5), \"9\")\n\n\n@click.command()\n@click.option(\"--ratio\", type=click.FloatRange(0, 1))\ndef cli(ratio):\n    click.echo(f\"ratio={ratio}\")\n\n\nrunner = CliRunner()\nresult = runner.invoke(cli, [\"--ratio\", \"nan\"])\nassert result.exit_code == 2, result.output\nassert \"Invalid value for '--ratio'\" in result.output, result.output\nresult = runner.invoke(cli, [\"--ratio\", \"0.5\"])\nassert result.exit_code == 0 and result.output == \"ratio=0.5\\n\", result.output",
+    "edits": [
+      {
+        "path": "src/click/types.py",
+        "old": "        rv = super().convert(value, param, ctx)\n        lt_min: bool = self.min is not None and (\n",
+        "new": "        rv = super().convert(value, param, ctx)\n\n        # NaN compares false against every bound, so it would slip\n        # through (or be clamped); reject it whenever a bound is set.\n        if rv != rv and (self.min is not None or self.max is not None):\n            self.fail(\n                _(\"{value} is not in the range {range}.\").format(\n                    value=rv, range=self._describe_range()\n                ),\n                param,\n                ctx,\n            )\n\n        lt_min: bool = self.min is not None and (\n"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "allowed_change_areas": [
+      "src/click/types.py"
+    ],
+    "exposure": "Fresh dev case authored and adversarially reviewed by independent subagents on 2026-11-08; used for development."
+  },
+  {
+    "id": "xc03",
+    "corpus": "click",
+    "workload": "small",
+    "category": "option envvar parsing",
+    "family": "src/click/core.py",
+    "query": "Option.value_from_envvar silently drops a trailing incomplete group for multiple=True options with nargs > 1: POINT='1 2 3' for --point (nargs=2, type=int, multiple=True, envvar='POINT') yields ((1, 2),). Reject such environment values with a click.BadParameter for that option (exit code 2), both for an explicit envvar and for auto_envvar_prefix. Complete groups, unset or empty variables, multiple options with nargs=1, single nargs>1 options, and command-line values (which still take precedence over the environment) must work as before.",
+    "checks": "import click\nfrom click.testing import CliRunner\n\nCLEAN = {\"POINT\": None, \"TAGS\": None, \"PAIR\": None, \"APP_POINT\": None}\n\n\ndef env(**values):\n    return {**CLEAN, **values}\n\n\n@click.command()\n@click.option(\"--point\", nargs=2, type=int, multiple=True, envvar=\"POINT\")\n@click.option(\"--tag\", multiple=True, envvar=\"TAGS\")\n@click.option(\"--pair\", nargs=2, envvar=\"PAIR\")\ndef cli(point, tag, pair):\n    click.echo(f\"point={point} tag={tag} pair={pair}\")\n\n\n@click.command(context_settings={\"auto_envvar_prefix\": \"APP\"})\n@click.option(\"--point\", nargs=2, type=int, multiple=True)\ndef auto(point):\n    click.echo(f\"point={point}\")\n\n\nrunner = CliRunner()\n\n\ndef bad(cmd, environ, name):\n    result = runner.invoke(cmd, [], env=environ)\n    assert result.exit_code == 2, (environ, result.output)\n    assert \"Invalid value\" in result.output, (environ, result.output)\n    result = runner.invoke(cmd, [], env=environ, standalone_mode=False)\n    exc = result.exception\n    assert isinstance(exc, click.BadParameter), (environ, repr(exc), result.return_value)\n    assert exc.param is not None and exc.param.name == name, (environ, exc.param)\n\n\ndef ok(cmd, args, environ, expect):\n    result = runner.invoke(cmd, args, env=environ)\n    assert result.exit_code == 0, (args, environ, result.output)\n    assert result.output == expect, (args, environ, result.output)\n\n\nbad(cli, env(POINT=\"1 2 3\"), \"point\")\nbad(cli, env(POINT=\"7\"), \"point\")\nbad(cli, env(POINT=\"1 2 3 4 5\"), \"point\")\nbad(auto, env(APP_POINT=\"1 2 3\"), \"point\")\n\nok(cli, [], env(POINT=\"1 2 3 4\"), \"point=((1, 2), (3, 4)) tag=() pair=None\\n\")\nok(cli, [], env(POINT=\"1 2\"), \"point=((1, 2),) tag=() pair=None\\n\")\nok(cli, [], env(), \"point=() tag=() pair=None\\n\")\nok(cli, [], env(POINT=\"\"), \"point=() tag=() pair=None\\n\")\nok(cli, [\"--point\", \"5\", \"6\"], env(POINT=\"1 2 3\"), \"point=((5, 6),) tag=() pair=None\\n\")\nok(cli, [], env(TAGS=\"a b c\"), \"point=() tag=('a', 'b', 'c') pair=None\\n\")\nok(cli, [], env(PAIR=\"x y\"), \"point=() tag=() pair=('x', 'y')\\n\")\nbad(cli, env(PAIR=\"x y z\"), \"pair\")\nok(auto, [], env(APP_POINT=\"1 2 3 4\"), \"point=((1, 2), (3, 4))\\n\")",
+    "edits": [
+      {
+        "path": "src/click/core.py",
+        "old": "            if self.multiple and self.nargs != 1:\n                rv = batch(rv, self.nargs)\n",
+        "new": "            if self.multiple and self.nargs != 1:\n                if len(rv) % self.nargs:\n                    raise BadParameter(\n                        _(\"Values must come in groups of {nargs}.\").format(\n                            nargs=self.nargs\n                        ),\n                        ctx=ctx,\n                        param=self,\n                    )\n\n                rv = batch(rv, self.nargs)\n"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "allowed_change_areas": [
+      "src/click/core.py"
+    ],
+    "exposure": "Fresh dev case authored and adversarially reviewed by independent subagents on 2026-11-08; used for development."
+  },
+  {
+    "id": "xc05",
+    "corpus": "click",
+    "workload": "small",
+    "category": "help output",
+    "family": "src/click/core.py",
+    "query": "Click's \\f marker hides the rest of a command's help on that command's own --help page, but a group's Commands listing still builds the one-line summary from the whole help text (a subcommand documented as 'Sync files', then \\f, then ':param x: ...' is listed as 'Sync files :param x: ...'), and command epilogs ignore \\f entirely. Make both the Commands-list summaries (for any command, whether or not it was made with the decorator) and the epilog stop at the first \\f, with summaries still shortened the usual way from the text before it. Summaries of help text without \\f, explicit short_help values, the usual '...' shortening of long summaries, and epilogs without \\f must render exactly as before.",
+    "checks": "import click\nfrom click.testing import CliRunner\n\n\n@click.group()\ndef cli():\n    \"\"\"Project tool.\"\"\"\n\n\n@cli.command()\ndef sync():\n    \"\"\"Sync files to the remote\n    \\f\n    :param verbose: internal implementation note\n    \"\"\"\n\n\n@cli.command()\ndef push():\n    \"\"\"Push local changes.\n\n    Longer description of pushing.\n    \"\"\"\n\n\n@cli.command(short_help=\"Explicit summary here\")\ndef pull():\n    \"\"\"Fetch and merge remote changes into the current branch.\"\"\"\n\n\n@cli.command()\ndef rebuild():\n    \"\"\"Rebuild every cached artifact for all of the configured\n    projects and environments, then refresh the shared index\n    \"\"\"\n\n\n@cli.command()\ndef mirror():\n    \"\"\"Mirror every tracked file and directory into the configured\n    backup location and verify all checksums afterwards\n\n    Runs nightly from cron.\n    \\f\n    :param target: internal implementation note\n    \"\"\"\n\n\n@cli.command(epilog=\"See the docs for details.\\fMAINTAINER NOTE: do not ship this\")\ndef build():\n    \"\"\"Build the project.\"\"\"\n\n\n@cli.command(\n    epilog=\"\"\"First epilog paragraph.\n\n    Visit example.com for more help.\n    \"\"\"\n)\ndef clean():\n    \"\"\"Remove build outputs.\\fsecret clean note\"\"\"\n\n\n# Built without the decorator: help text is passed directly.\ncli.add_command(click.Command(\"deploy\", help=\"Deploy the app\\fsecret deploy note\"))\n\nrunner = CliRunner()\n\nr = runner.invoke(cli, [\"--help\"])\nassert r.exit_code == 0, r.output\nout = r.output\nassert \"Commands:\" in out, out\nlisting = {}\nfor line in out.split(\"Commands:\", 1)[1].splitlines():\n    parts = line.split(None, 1)\n    if parts:\n        listing[parts[0]] = \" \".join(parts[1].split()) if len(parts) > 1 else \"\"\n\n# New behavior: summaries stop at the first form feed.\nassert listing.get(\"sync\") == \"Sync files to the remote\", listing\nassert listing.get(\"deploy\") == \"Deploy the app\", listing\nfor leaked in (\"param\", \"internal\", \"implementation\", \"secret\"):\n    assert leaked not in out, out\n\n# Text before a form feed is still summarized the usual way (\"...\" shortening).\nassert listing.get(\"mirror\") == \"Mirror every tracked file and directory into the configured...\", listing\nassert \"nightly\" not in out, out\n\n# Preserved: first-paragraph summaries, explicit short_help, \"...\" truncation.\nassert listing.get(\"push\") == \"Push local changes.\", listing\nassert listing.get(\"pull\") == \"Explicit summary here\", listing\nassert listing.get(\"clean\") == \"Remove build outputs.\", listing\nassert listing.get(\"build\") == \"Build the project.\", listing\nassert listing.get(\"rebuild\") == \"Rebuild every cached artifact for all of the configured projects...\", listing\n\n# Preserved: full help page truncation at the form feed.\nr = runner.invoke(cli, [\"sync\", \"--help\"])\nassert r.exit_code == 0, r.output\nassert \"Sync files to the remote\" in r.output, r.output\nassert \"param\" not in r.output and \"internal\" not in r.output, r.output\n\n# New behavior: the epilog stops at the first form feed.\nr = runner.invoke(cli, [\"build\", \"--help\"])\nassert r.exit_code == 0, r.output\nassert \"See the docs for details.\" in r.output, r.output\nassert \"MAINTAINER\" not in r.output and \"do not ship\" not in r.output, r.output\nassert r.output.index(\"Options:\") < r.output.index(\"See the docs for details.\"), r.output\n\n# Preserved: an epilog without a form feed renders exactly as before.\nr = runner.invoke(cli, [\"clean\", \"--help\"])\nassert r.exit_code == 0, r.output\nassert r.output == (\n    \"Usage: cli clean [OPTIONS]\\n\\n\"\n    \"  Remove build outputs.\\n\\n\"\n    \"Options:\\n\"\n    \"  --help  Show this message and exit.\\n\\n\"\n    \"  First epilog paragraph.\\n\\n\"\n    \"  Visit example.com for more help.\\n\"\n), repr(r.output)",
+    "edits": [
+      {
+        "path": "src/click/core.py",
+        "old": "            text = make_default_short_help(self.help, limit)",
+        "new": "            text = make_default_short_help(self.help.partition(\"\\f\")[0], limit)"
+      },
+      {
+        "path": "src/click/core.py",
+        "old": "            epilog = inspect.cleandoc(self.epilog)",
+        "new": "            epilog = inspect.cleandoc(self.epilog).partition(\"\\f\")[0]"
+      }
+    ],
+    "allowed_change_areas": [
+      "src/click/core.py",
+      "src/click/utils.py"
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh dev case authored and adversarially reviewed by independent subagents on 2026-11-08; used for development."
+  },
+  {
+    "id": "xc07",
+    "corpus": "click",
+    "workload": "small",
+    "category": "documentation",
+    "family": "docs/api.rst",
+    "query": "The Sphinx API reference page documents every public click exception except MissingParameter. Add an autoexception entry for it to that page's Exceptions section, directly after the BadParameter entry (its base class) and formatted like the neighbouring entries; don't change anything else on the page.",
+    "checks": "import hashlib\nfrom pathlib import Path\n\nlines = Path(\"docs/api.rst\").read_text(encoding=\"utf-8\").splitlines()\n\n\ndef section_bounds(title):\n    for i in range(len(lines) - 1):\n        if lines[i].strip() == title and set(lines[i + 1].strip()) == {\"-\"}:\n            for j in range(i + 2, len(lines) - 1):\n                if lines[j].strip() and set(lines[j + 1].strip()) == {\"-\"}:\n                    return i, j\n            return i, len(lines)\n    raise AssertionError(f\"section {title!r} not found\")\n\n\nstart, end = section_bounds(\"Exceptions\")\nwanted = {\n    \".. autoexception:: MissingParameter\",\n    \".. autoexception:: click.MissingParameter\",\n}\nhits = [i for i, line in enumerate(lines) if \"MissingParameter\" in line]\nassert len(hits) == 1, [lines[i] for i in hits]\ni = hits[0]\nassert lines[i].rstrip() in wanted, repr(lines[i])\nassert start < i < end, \"MissingParameter must be in the Exceptions section\"\n\n# Placed directly after BadParameter, as its own blank-line separated entry.\nprev = next(lines[j] for j in range(i - 1, -1, -1) if lines[j].strip())\nassert prev.rstrip() == \".. autoexception:: BadParameter\", repr(prev)\nassert lines[i - 1].strip() == \"\", \"missing blank line before the entry\"\nassert i + 1 < len(lines) and lines[i + 1].strip() == \"\", \"missing blank line after\"\nnxt = next(lines[j] for j in range(i + 1, len(lines)) if lines[j].strip())\nassert nxt.rstrip() == \".. autoexception:: FileError\", repr(nxt)\n\n# Nothing else on the page changed (blank-line differences are tolerated).\nrest = [line for j, line in enumerate(lines) if j != i and line.strip()]\ndigest = hashlib.sha256(\"\\n\".join(rest).encode()).hexdigest()\nassert digest == \"ad82e369c4b29f39cc0e10db57371593a29958dcb548ce5e3a89806671323213\", (\n    \"other lines of docs/api.rst were changed\"\n)",
+    "edits": [
+      {
+        "path": "docs/api.rst",
+        "old": ".. autoexception:: BadParameter\n",
+        "new": ".. autoexception:: BadParameter\n\n.. autoexception:: MissingParameter\n"
+      }
+    ],
+    "allowed_change_areas": [
+      "docs/api.rst"
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh dev case authored and adversarially reviewed by independent subagents on 2026-11-08; used for development."
+  },
+  {
+    "id": "xc09",
+    "corpus": "click",
+    "workload": "small",
+    "category": "test-authoring",
+    "family": "tests/test_commands.py",
+    "query": "click.CommandCollection has no test coverage: add a single, non-parametrized, module-level test function named test_command_collection_sources to tests/test_commands.py (only add the test; leave the existing tests in that file and everything under src/ unchanged). Build a CommandCollection from two groups that both define a command with the same name, plus one command only the first group has and one only the second group has, and assert that invoking the shared name runs the first source's command, that the command existing only in the second source can be invoked, and that list_commands returns every command name exactly once, in sorted order.",
+    "checks": "import ast, hashlib, os, re, shutil, subprocess, sys, tempfile\n\nTEST = \"tests/test_commands.py\"\nNODE = TEST + \"::test_command_collection_sources\"\nCMD = [sys.executable, \"-m\", \"pytest\", \"-q\", \"-p\", \"no:cacheprovider\", \"-o\", \"filterwarnings=\", NODE]\n\n# Preservation (\"only add the test ... do not change anything under src/\"):\n# pristine digest of src/**/*.py + py.typed, and an AST fingerprint of every\n# existing top-level test in tests/test_commands.py (formatting-insensitive).\nSRC_DIGEST = \"91c0f6770254ff5d96e6021b8a31f07dfe5edafc40fc1319ef52704d6622db92\"\nEXISTING_TESTS = {\n    \"test_other_command_invoke\": \"818317487f589907\",\n    \"test_other_command_forward\": \"da6b6ac97fb6e9da\",\n    \"test_forwarded_params_consistency\": \"5f67d6a52b7a2f45\",\n    \"test_auto_shorthelp\": \"3d6a99e68b47eac8\",\n    \"test_no_args_is_help\": \"da81aa489522423a\",\n    \"test_default_maps\": \"33d17c9cd0da4e2a\",\n    \"test_group_with_args\": \"90091b1227c9cae1\",\n    \"test_base_command\": \"11956cb90fb97571\",\n    \"test_object_propagation\": \"29d300846c39bc19\",\n    \"test_other_command_invoke_with_defaults\": \"08695802920e1016\",\n    \"test_invoked_subcommand\": \"cc4f8b6b459c071c\",\n    \"test_aliased_command_canonical_name\": \"9a0ab3a69a31faa3\",\n    \"test_group_add_command_name\": \"cd80ee56b93f922f\",\n    \"test_iter_params_for_processing\": \"33bea7af68a4e721\",\n    \"test_help_param_priority\": \"e88b43d0f8e9bf05\",\n    \"test_unprocessed_options\": \"e34633cfc6934ba2\",\n    \"test_deprecated_in_help_messages\": \"61f2729bcf8c7d56\",\n    \"test_deprecated_in_invocation\": \"8897a682c3466f13\",\n    \"test_command_parse_args_collects_option_prefixes\": \"4679976a57b49591\",\n    \"test_group_parse_args_collects_base_option_prefixes\": \"e06242398d852855\",\n    \"test_group_invoke_collects_used_option_prefixes\": \"454afbd3cc9f0972\",\n    \"test_abort_exceptions_with_disabled_standalone_mode\": \"16c461ae70128a9c\",\n}\n\n\ndef src_digest(root):\n    h = hashlib.sha256()\n    for dirpath, dirnames, filenames in os.walk(root):\n        dirnames[:] = sorted(d for d in dirnames if d != \"__pycache__\")\n        for name in sorted(filenames):\n            if name.endswith(\".py\") or name == \"py.typed\":\n                path = os.path.join(dirpath, name)\n                h.update(os.path.relpath(path, root).replace(os.sep, \"/\").encode() + b\"\\0\")\n                with open(path, \"rb\") as f:\n                    h.update(f.read() + b\"\\0\")\n    return h.hexdigest()\n\n\nassert src_digest(\"src\") == SRC_DIGEST, \"files under src/ were changed\"\nwith open(TEST) as f:\n    defs = {}\n    for node in ast.parse(f.read()).body:\n        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):\n            defs[node.name] = hashlib.sha256(ast.unparse(node).encode()).hexdigest()[:16]\nfor name, digest in EXISTING_TESTS.items():\n    assert defs.get(name) == digest, \"existing test removed or modified: \" + name\n\n\ndef start(src):\n    env = dict(os.environ, PYTHONPATH=src, PYTHONDONTWRITEBYTECODE=\"1\")\n    return subprocess.Popen(CMD, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)\n\n\ndef finish(proc):\n    out, _ = proc.communicate(timeout=120)\n    return proc.returncode, out\n\n\ncode, out = finish(start(os.path.abspath(\"src\")))\nassert code == 0 and re.search(r\"\\b1 passed\\b\", out), out\nassert not re.search(r\"\\d+ (failed|errors?)\\b\", out), out\n\nGET = \"        for source in self.sources:\\n            rv = source.get_command(ctx, cmd_name)\"\nMUTANTS = {\n    \"later source wins\": [(GET, GET.replace(\"self.sources\", \"reversed(self.sources)\"))],\n    \"only first source consulted\": [(GET, GET.replace(\"self.sources\", \"self.sources[:1]\"))],\n    \"duplicate names kept\": [\n        (\"        rv: t.Set[str] = set()\\n\", \"        rv: t.List[str] = []\\n\"),\n        (\"            rv.update(source.list_commands(ctx))\", \"            rv.extend(source.list_commands(ctx))\"),\n    ],\n    \"names not sorted\": [(\"        return sorted(rv)\\n\", \"        return sorted(rv, reverse=True)\\n\")],\n}\nwith tempfile.TemporaryDirectory() as tmp:\n    procs = {}\n    for i, (label, swaps) in enumerate(MUTANTS.items()):\n        dst = os.path.join(tmp, str(i), \"src\")\n        shutil.copytree(\"src\", dst, ignore=shutil.ignore_patterns(\"__pycache__\"))\n        path = os.path.join(dst, \"click\", \"core.py\")\n        with open(path) as f:\n            text = f.read()\n        for old, new in swaps:\n            assert text.count(old) == 1, (\"library source was modified\", label)\n            text = text.replace(old, new, 1)\n        with open(path, \"w\") as f:\n            f.write(text)\n        procs[label] = start(dst)\n    for label, proc in procs.items():\n        code, out = finish(proc)\n        assert code == 1 and re.search(r\"\\b1 (failed|error)\\b\", out), (\"mutant survived: \" + label, out)\nprint(\"ok\")\n",
+    "edits": [
+      {
+        "path": "tests/test_commands.py",
+        "old": null,
+        "new": "\n\ndef test_command_collection_sources(runner):\n    @click.group()\n    def first():\n        pass\n\n    @first.command(\"shared\")\n    def first_shared():\n        click.echo(\"shared from first\")\n\n    @first.command(\"alpha\")\n    def alpha():\n        click.echo(\"alpha\")\n\n    @click.group()\n    def second():\n        pass\n\n    @second.command(\"shared\")\n    def second_shared():\n        click.echo(\"shared from second\")\n\n    @second.command(\"beta\")\n    def beta():\n        click.echo(\"beta\")\n\n    cli = click.CommandCollection(sources=[first, second])\n\n    result = runner.invoke(cli, [\"shared\"])\n    assert result.exit_code == 0\n    assert result.output == \"shared from first\\n\"\n\n    result = runner.invoke(cli, [\"beta\"])\n    assert result.exit_code == 0\n    assert result.output == \"beta\\n\"\n\n    ctx = click.Context(cli)\n    assert cli.list_commands(ctx) == [\"alpha\", \"beta\", \"shared\"]\n"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "allowed_change_areas": [
+      "tests/test_commands.py"
+    ],
+    "keep_test_paths": [
+      "tests/test_commands.py"
+    ],
+    "exposure": "Fresh dev case authored and adversarially reviewed by independent subagents on 2026-11-08; used for development."
+  },
+  {
+    "id": "xc11",
+    "corpus": "click",
+    "workload": "small",
+    "category": "param-types",
+    "family": "src/click/types.py",
+    "query": "Add an expand_user option to click.Path (keyword argument, default False). When it is enabled, a leading ~ in the value is expanded with os.path.expanduser (no environment-variable expansion) before anything else happens, so the exists, file_okay/dir_okay, readable, writable and executable checks and resolve_path all operate on the expanded path, and the converted value (also when path_type is set) is the expanded path. A '-' accepted via allow_dash is still returned unchanged, with the default every value is handled exactly as today without any expansion, and Path.to_info_dict() stays as it is (don't add the new option there).",
+    "checks": "import os, pathlib, tempfile\nimport click\nfrom click.testing import CliRunner\n\ntmp = tempfile.TemporaryDirectory()\nhome = os.path.realpath(tmp.name)\nos.environ[\"HOME\"] = home\nos.mkdir(os.path.join(home, \"sub\"))\ndata = os.path.join(home, \"data.txt\")\nscript = os.path.join(home, \"run.sh\")\nfor path, mode in ((data, 0o644), (script, 0o755)):\n    with open(path, \"w\") as f:\n        f.write(\"#!/bin/sh\\n\")\n    os.chmod(path, mode)\n\n\ndef rejects(param_type, value):\n    try:\n        param_type.convert(value, None, None)\n    except click.BadParameter:\n        return True\n    return False\n\n\n# Default: no expansion, exactly as before.\nassert click.Path().convert(\"~/data.txt\", None, None) == \"~/data.txt\"\nassert rejects(click.Path(exists=True), \"~/data.txt\")\n\nP = click.Path(expand_user=True)\nassert P.convert(\"~/data.txt\", None, None) == data\nassert P.convert(\"~\", None, None) == home\nassert P.convert(\"~/missing/thing.txt\", None, None) == os.path.join(home, \"missing\", \"thing.txt\")\nassert P.convert(\"plain/relative.txt\", None, None) == \"plain/relative.txt\"\n# Only a leading ~ is expanded; environment variables are not.\nassert P.convert(\"backup/~old.txt\", None, None) == \"backup/~old.txt\"\nassert P.convert(\"$HOME/data.txt\", None, None) == \"$HOME/data.txt\"\n# A '-' accepted via allow_dash is still returned unchanged.\nassert click.Path(expand_user=True, allow_dash=True).convert(\"-\", None, None) == \"-\"\nassert click.Path(expand_user=True, allow_dash=True, exists=True).convert(\"-\", None, None) == \"-\"\n\n# Every check runs against the expanded path.\nassert click.Path(exists=True, expand_user=True).convert(\"~/data.txt\", None, None) == data\nassert rejects(click.Path(exists=True, expand_user=True), \"~/nope.txt\")\nassert rejects(click.Path(dir_okay=False, expand_user=True), \"~/sub\")\nassert rejects(click.Path(file_okay=False, expand_user=True), \"~/data.txt\")\nassert click.Path(file_okay=False, exists=True, expand_user=True).convert(\"~/sub\", None, None) == os.path.join(home, \"sub\")\nassert click.Path(readable=True, writable=True, exists=True, expand_user=True).convert(\"~/data.txt\", None, None) == data\nassert click.Path(executable=True, exists=True, expand_user=True).convert(\"~/run.sh\", None, None) == script\nassert rejects(click.Path(executable=True, exists=True, expand_user=True), \"~/data.txt\")\n\n# path_type and resolve_path see the expanded value.\nvalue = click.Path(expand_user=True, path_type=pathlib.Path).convert(\"~/data.txt\", None, None)\nassert isinstance(value, pathlib.Path) and value == pathlib.Path(data)\nassert click.Path(expand_user=True, resolve_path=True).convert(\"~/sub/../data.txt\", None, None) == data\n\n# to_info_dict() stays as it is.\nassert click.Path(expand_user=True).to_info_dict() == click.Path().to_info_dict()\n\n\n@click.command()\n@click.argument(\"src\", type=click.Path(exists=True, dir_okay=False, expand_user=True))\ndef cli(src):\n    click.echo(src)\n\n\nresult = CliRunner().invoke(cli, [\"~/data.txt\"])\nassert result.exit_code == 0 and result.output == data + \"\\n\", result.output\ntmp.cleanup()\nprint(\"ok\")\n",
+    "edits": [
+      {
+        "path": "src/click/types.py",
+        "old": "        executable: bool = False,\n    ):\n",
+        "new": "        executable: bool = False,\n        expand_user: bool = False,\n    ):\n"
+      },
+      {
+        "path": "src/click/types.py",
+        "old": "        self.allow_dash = allow_dash\n",
+        "new": "        self.allow_dash = allow_dash\n        self.expand_user = expand_user\n"
+      },
+      {
+        "path": "src/click/types.py",
+        "old": "        if not is_dash:\n            if self.resolve_path:\n",
+        "new": "        if not is_dash:\n            if self.expand_user:\n                rv = os.path.expanduser(rv)\n\n            if self.resolve_path:\n"
+      },
+      {
+        "path": "src/click/types.py",
+        "old": "            if self.executable and not os.access(value, os.X_OK):\n",
+        "new": "            if self.executable and not os.access(rv, os.X_OK):\n"
+      }
+    ],
+    "check_file": null,
+    "package": null,
+    "allowed_change_areas": [
+      "src/click/types.py"
+    ],
+    "exposure": "Fresh dev case authored and adversarially reviewed by independent subagents on 2026-11-08; used for development."
+  },
+  {
+    "id": "xw01",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "project config",
+    "family": "pyproject.toml",
+    "query": "Configure coverage reporting in pyproject.toml so reports list the missing line numbers and fail when total coverage is below 90% (coverage.py's show_missing and fail_under report options). Keep the existing coverage run and paths settings, and everything else in the file, unchanged.",
+    "checks": "import hashlib, json, os, tomllib\n\nwith open(\"pyproject.toml\", \"rb\") as f:\n    data = tomllib.load(f)\ncoverage = data[\"tool\"][\"coverage\"]\nassert \"report\" in coverage, \"no [tool.coverage.report] settings\"\nreport = coverage.pop(\"report\")\nassert report.get(\"show_missing\") is True, report\nfail_under = report.get(\"fail_under\")\nassert type(fail_under) in (int, float) and fail_under == 90, report\nassert coverage == {\n    \"run\": {\"branch\": True, \"source\": [\"werkzeug\", \"tests\"]},\n    \"paths\": {\"source\": [\"src\", \"*/site-packages\"]},\n}, coverage\ndigest = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()\nassert digest == \"f5a9e8efadb1b95fad9c3c1da0f60f0eedf562e3848e57e242b85a277a5985eb\", \"other pyproject.toml settings changed\"\n# coverage.py reads .coveragerc(.toml), then [coverage:*] sections of setup.cfg and\n# tox.ini, before pyproject.toml; any of them would make it ignore these settings.\nfor name in (\".coveragerc\", \".coveragerc.toml\"):\n    assert not os.path.exists(name), name + \" overrides pyproject.toml coverage settings\"\nfor name in (\"setup.cfg\", \"tox.ini\"):\n    if os.path.exists(name):\n        with open(name, encoding=\"utf-8\", errors=\"replace\") as f:\n            assert \"[coverage:\" not in f.read(), name + \" overrides pyproject.toml coverage settings\"\n",
+    "edits": [
+      {
+        "path": "pyproject.toml",
+        "old": "[tool.coverage.paths]\nsource = [\"src\", \"*/site-packages\"]\n",
+        "new": "[tool.coverage.paths]\nsource = [\"src\", \"*/site-packages\"]\n\n[tool.coverage.report]\nshow_missing = true\nfail_under = 90\n"
+      }
+    ],
+    "allowed_change_areas": [
+      "pyproject.toml"
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh dev case authored and adversarially reviewed by independent subagents on 2026-11-08; used for development."
+  },
+  {
+    "id": "xw03",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "error message wording",
+    "family": "src/werkzeug/exceptions.py",
+    "query": "The default description of the 431 error has a grammar mistake: it says \"One or more header fields exceeds the maximum size.\" but it should say \"One or more header fields exceed the maximum size.\" Fix it without changing any other exception's description.",
+    "checks": "import hashlib, json\nfrom werkzeug import exceptions as ex\n\nE = ex.RequestHeaderFieldsTooLarge\nfixed = \"One or more header fields exceed the maximum size.\"\nassert E.code == 431 and ex.default_exceptions[431] is E\nassert E.description == fixed, E.description\nassert E().get_description() == \"<p>\" + fixed + \"</p>\"\nassert \"exceeds the maximum size\" not in E().get_body()\nothers = {\n    n: o.__dict__[\"description\"]\n    for n, o in vars(ex).items()\n    if isinstance(o, type)\n    and issubclass(o, ex.HTTPException)\n    and o is not E\n    and isinstance(o.__dict__.get(\"description\"), str)\n}\nassert len(others) == 30, sorted(others)\ndigest = hashlib.sha256(json.dumps(others, sort_keys=True).encode()).hexdigest()\nassert digest == \"5c730f6a5b43cb5ea4b7cb6d368d5c59d72ad6481099b06fdcc16c7d084ac738\", \"another exception description changed\"\n",
+    "edits": [
+      {
+        "path": "src/werkzeug/exceptions.py",
+        "old": "    description = \"One or more header fields exceeds the maximum size.\"",
+        "new": "    description = \"One or more header fields exceed the maximum size.\""
+      }
+    ],
+    "allowed_change_areas": [
+      "src/werkzeug/exceptions.py"
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh dev case authored and adversarially reviewed by independent subagents on 2026-11-08; used for development."
+  },
+  {
+    "id": "xw05",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "multi-file rename",
+    "family": "src/werkzeug/_internal.py",
+    "query": "Rename the private helper _dt_as_utc in werkzeug/_internal.py to _ensure_utc and update every module that imports or calls it. Don't keep an alias: afterwards no .py file under src/ may contain the string _dt_as_utc. Behavior must stay the same for the helper and all of its callers (None passes through, naive datetimes are treated as UTC, aware ones are converted to UTC).",
+    "checks": "import os\nimport pathlib\nimport time\nfrom datetime import datetime, timedelta, timezone\n\n# Pin a non-UTC local zone so treating naive datetimes as local time cannot\n# pass by accident on a UTC host.\nos.environ[\"TZ\"] = \"XYZ-03\"\ntime.tzset()\nassert datetime(2021, 3, 4, 5, 6, 7).astimezone(timezone.utc).hour == 2, \"TZ pin failed\"\n\nimport werkzeug._internal as internal\nfrom werkzeug._internal import _ensure_utc as f\n\nassert not hasattr(internal, \"_dt_as_utc\"), \"old helper name still defined\"\nleft = sorted(\n    str(p)\n    for p in pathlib.Path(\"src\").rglob(\"*.py\")\n    if \"_dt_as_utc\" in p.read_text(encoding=\"utf-8\", errors=\"replace\")\n)\nassert not left, f\"old name still referenced in {left}\"\n\nassert f(None) is None\nnaive = datetime(2021, 3, 4, 5, 6, 7)\nr = f(naive)\nassert r.utcoffset() == timedelta(0) and r.replace(tzinfo=None) == naive, r\naware = datetime(2021, 3, 4, 7, 6, 7, tzinfo=timezone(timedelta(hours=2)))\nr = f(aware)\nassert r.utcoffset() == timedelta(0) and r == aware and r.hour == 5, r\nutc = datetime(2021, 3, 4, 5, 6, 7, tzinfo=timezone.utc)\nassert f(utc) == utc and f(utc).utcoffset() == timedelta(0)\n\nfrom werkzeug.http import http_date, is_resource_modified\nfrom werkzeug.sansio.http import is_resource_modified as sansio_modified\nfrom werkzeug.test import create_environ\n\nstamp = \"Thu, 04 Mar 2021 05:06:07 GMT\"\nassert http_date(naive) == stamp\nassert http_date(aware) == stamp\nenv = create_environ(headers={\"If-Modified-Since\": stamp})\nassert is_resource_modified(env, last_modified=datetime(2021, 3, 4, 5, 6, 7, 999)) is False\nassert is_resource_modified(env, last_modified=datetime(2021, 3, 4, 5, 6, 8)) is True\nassert is_resource_modified(env, last_modified=aware) is False\nassert sansio_modified(http_if_modified_since=stamp, last_modified=naive) is False\nassert sansio_modified(http_if_modified_since=stamp, last_modified=aware) is False\nlater = datetime(2021, 3, 4, 8, 6, 8, tzinfo=timezone(timedelta(hours=3)))\nassert sansio_modified(http_if_modified_since=stamp, last_modified=later) is True",
+    "edits": [
+      {
+        "path": "src/werkzeug/_internal.py",
+        "old": "@t.overload\ndef _dt_as_utc(dt: None) -> None: ...\n\n\n@t.overload\ndef _dt_as_utc(dt: datetime) -> datetime: ...\n\n\ndef _dt_as_utc(dt: datetime | None) -> datetime | None:",
+        "new": "@t.overload\ndef _ensure_utc(dt: None) -> None: ...\n\n\n@t.overload\ndef _ensure_utc(dt: datetime) -> datetime: ...\n\n\ndef _ensure_utc(dt: datetime | None) -> datetime | None:"
+      },
+      {
+        "path": "src/werkzeug/http.py",
+        "old": "from ._internal import _dt_as_utc\n",
+        "new": "from ._internal import _ensure_utc\n"
+      },
+      {
+        "path": "src/werkzeug/http.py",
+        "old": "            timestamp = _dt_as_utc(timestamp)",
+        "new": "            timestamp = _ensure_utc(timestamp)"
+      },
+      {
+        "path": "src/werkzeug/sansio/http.py",
+        "old": "from .._internal import _dt_as_utc\n",
+        "new": "from .._internal import _ensure_utc\n"
+      },
+      {
+        "path": "src/werkzeug/sansio/http.py",
+        "old": "        last_modified = _dt_as_utc(last_modified.replace(microsecond=0))",
+        "new": "        last_modified = _ensure_utc(last_modified.replace(microsecond=0))"
+      }
+    ],
+    "allowed_change_areas": [
+      "src/werkzeug/_internal.py",
+      "src/werkzeug/http.py",
+      "src/werkzeug/sansio/http.py"
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh dev case authored and adversarially reviewed by independent subagents on 2026-11-08; used for development."
+  },
+  {
+    "id": "xw07",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "deprecation warning",
+    "family": "src/werkzeug/sansio/utils.py",
+    "query": "host_is_trusted in werkzeug.sansio.utils quietly accepts a bare string as the trusted list by wrapping it in a one-item list (e.g. get_host(environ, trusted_hosts=\"example.org\")), and we want to phase that out. Keep accepting a str with the same results for now, but emit a DeprecationWarning when one is passed, directly or through get_host. Lists, tuples, sets and other non-string iterables must not warn, and matching must not change (port ignored, Unicode names compared in IDNA form, a leading-dot entry matches that domain and its subdomains but not look-alikes like notexample.org, SecurityError for untrusted hosts in get_host).",
+    "checks": "import warnings\n\nfrom werkzeug.exceptions import SecurityError\nfrom werkzeug.sansio.utils import host_is_trusted\nfrom werkzeug.wsgi import get_host\n\n\ndef deprecated(fn, *args, **kwargs):\n    with warnings.catch_warnings(record=True) as caught:\n        warnings.simplefilter(\"always\")\n        try:\n            rv = fn(*args, **kwargs)\n        except SecurityError:\n            rv = SecurityError\n    assert any(issubclass(w.category, DeprecationWarning) for w in caught), (\n        args,\n        kwargs,\n        [(w.category.__name__, str(w.message)) for w in caught],\n    )\n    return rv\n\n\nassert deprecated(host_is_trusted, \"example.org\", \"example.org\") is True\nassert deprecated(host_is_trusted, \"example.org:8080\", \"example.org\") is True\nassert deprecated(host_is_trusted, \"api.example.org\", \".example.org\") is True\nassert deprecated(host_is_trusted, \"example.org\", \".example.org\") is True\nassert deprecated(host_is_trusted, \"notexample.org\", \".example.org\") is False\nassert deprecated(host_is_trusted, \"evil.com\", \"example.org\") is False\nassert deprecated(host_is_trusted, \"e\", \"example.org\") is False\nenv = {\"wsgi.url_scheme\": \"http\", \"HTTP_HOST\": \"example.org\"}\nassert deprecated(get_host, env, trusted_hosts=\"example.org\") == \"example.org\"\nassert deprecated(get_host, env, trusted_hosts=\"other.org\") is SecurityError\n\nwith warnings.catch_warnings():\n    warnings.simplefilter(\"error\")\n    assert host_is_trusted(\"example.org\", [\"example.org\"]) is True\n    assert host_is_trusted(\"api.example.org\", (\".example.org\",)) is True\n    assert host_is_trusted(\"example.org\", (\".example.org\",)) is True\n    assert host_is_trusted(\"notexample.org\", [\".example.org\"]) is False\n    assert host_is_trusted(\"b\u00fccher.example\", [\"xn--bcher-kva.example\"]) is True\n    assert host_is_trusted(\"xn--bcher-kva.example\", [\"b\u00fccher.example\"]) is True\n    assert host_is_trusted(\"example.org\", {\"example.org\"}) is True\n    assert host_is_trusted(\"example.org\", iter([\"x.org\", \"example.org\"])) is True\n    assert host_is_trusted(\"example.org:80\", [\"example.org:8080\"]) is True\n    assert host_is_trusted(\"evil.com\", [\"example.org\"]) is False\n    assert host_is_trusted(\"e\", [\"example.org\"]) is False\n    assert host_is_trusted(\"example.org\", []) is False\n    assert get_host(env, trusted_hosts=[\"example.org\"]) == \"example.org\"\n    assert get_host(env) == \"example.org\"\n    try:\n        get_host(env, trusted_hosts=[\"other.org\"])\n    except SecurityError:\n        pass\n    else:\n        raise AssertionError(\"untrusted host accepted\")",
+    "edits": [
+      {
+        "path": "src/werkzeug/sansio/utils.py",
+        "old": "import typing as t\n",
+        "new": "import typing as t\nimport warnings\n"
+      },
+      {
+        "path": "src/werkzeug/sansio/utils.py",
+        "old": "    if isinstance(trusted_list, str):\n        trusted_list = [trusted_list]\n",
+        "new": "    if isinstance(trusted_list, str):\n        warnings.warn(\n            \"Passing a single string as 'trusted_list' is deprecated.\"\n            \" Pass a list of trusted host names instead.\",\n            DeprecationWarning,\n            stacklevel=2,\n        )\n        trusted_list = [trusted_list]\n"
+      }
+    ],
+    "allowed_change_areas": [
+      "src/werkzeug/sansio/utils.py",
+      "src/werkzeug/wsgi.py"
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh dev case authored and adversarially reviewed by independent subagents on 2026-11-08; used for development."
+  },
+  {
+    "id": "xw09",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "test authoring: trusted host matching",
+    "family": "tests/sansio/test_utils.py",
+    "query": "Add a regression test named test_host_is_trusted_dot_prefix to tests/sansio/test_utils.py (a single plain module-level test function, not parametrized) that checks werkzeug.sansio.utils.host_is_trusted with the trusted entry \".example.org\": the bare domain example.org and subdomains such as api.example.org are trusted, as is a subdomain with a port such as api.example.org:8443, while lookalike hosts that merely end with the same text, such as badexample.org, are rejected. Only add the test: keep the existing tests in that file as they are, and do not change library code.",
+    "checks": "import hashlib\nimport os\nimport re\nimport shutil\nimport subprocess\nimport sys\nimport tempfile\nfrom pathlib import Path\n\nTEST_FILE = \"tests/sansio/test_utils.py\"\nNAME = \"test_host_is_trusted_dot_prefix\"\nNODE = TEST_FILE + \"::\" + NAME\nTARGET = \"src/werkzeug/sansio/utils.py\"\n# SHA-256 over every src/**/*.py file of pristine werkzeug 3.1.3 (52 files).\nLIBRARY_SHA256 = \"cd140a31c6bbe24ba25d78e1fbad8005c06770aa846eaf6073c63f77dfe38586\"\n# Tests already in TEST_FILE; they must still be present and pass.\nEXISTING = [\n    \"test_get_host[http-spam-None-spam]\",\n    \"test_get_host[http-spam:80-None-spam]\",\n    \"test_get_host[https-spam-None-spam]\",\n    \"test_get_host[https-spam:443-None-spam]\",\n    \"test_get_host[http-spam:8080-None-spam:8080]\",\n    \"test_get_host[http-127.0.0.1:8080-None-127.0.0.1:8080]\",\n    \"test_get_host[http-[::1]:8080-None-[::1]:8080]\",\n    \"test_get_host[ws-spam-None-spam]\",\n    \"test_get_host[ws-spam:80-None-spam]\",\n    \"test_get_host[wss-spam-None-spam]\",\n    \"test_get_host[wss-spam:443-None-spam]\",\n    \"test_get_host[http-None-server11-spam]\",\n    \"test_get_host[http-None-server12-spam:8080]\",\n    \"test_get_host[http-None-server13-127.0.0.1:8080]\",\n    \"test_get_host[http-None-server14-[::1]:8080]\",\n    \"test_get_host[http-None-server15-unix/socket]\",\n    \"test_get_host[http-spam-server16-spam]\",\n    \"test_get_content_length[2-None-2]\",\n    \"test_get_content_length[ 2-None-2]\",\n    \"test_get_content_length[2 -None-2]\",\n    \"test_get_content_length[None-None-None]\",\n    \"test_get_content_length[None-chunked-None]\",\n    \"test_get_content_length[a-None-0]\",\n    \"test_get_content_length[-2-None-0]\",\n]\n# Each mutation breaks exactly one behavior the requested test must cover.\nMUTATIONS = [\n    # lookalike hosts such as badexample.org become trusted\n    ('hostname.endswith(f\".{ref}\")', \"hostname.endswith(ref)\"),\n    # subdomains are no longer trusted\n    (\"suffix_match = True\", \"suffix_match = False\"),\n    # the bare domain is no longer trusted by a dot-prefixed entry\n    (\"if ref == hostname or\", \"if (not suffix_match and ref == hostname) or\"),\n    # a port on the host is no longer ignored\n    ('hostname = hostname.partition(\":\")[0].encode', \"hostname = hostname.encode\"),\n]\n\n\ndef library_digest():\n    h = hashlib.sha256()\n    for path in sorted(Path(\"src\").rglob(\"*.py\")):\n        h.update(path.as_posix().encode() + b\"\\0\" + hashlib.sha256(path.read_bytes()).digest())\n    return h.hexdigest()\n\n\ndef start(argv, pythonpath):\n    env = dict(os.environ, PYTHONPATH=pythonpath, PYTHONDONTWRITEBYTECODE=\"1\")\n    return subprocess.Popen(\n        [sys.executable, *argv],\n        cwd=\".\",\n        env=env,\n        stdout=subprocess.PIPE,\n        stderr=subprocess.STDOUT,\n        text=True,\n    )\n\n\ndef finish(proc):\n    out, _ = proc.communicate(timeout=120)\n    return proc.returncode, out\n\n\nPYTEST = [\"-m\", \"pytest\", \"-q\", \"-p\", \"no:cacheprovider\"]\nPROBE = [\"-c\", \"import werkzeug; print(werkzeug.__file__)\"]\n\nsource = Path(TEST_FILE)\nassert source.is_file(), TEST_FILE + \" is missing\"\nassert re.search(r\"^def \" + NAME + r\"\\(\", source.read_text(), re.M), (\n    \"module-level test function \" + NAME + \" not found in \" + TEST_FILE\n)\nassert library_digest() == LIBRARY_SHA256, \"library code under src/ was changed\"\n\nwith tempfile.TemporaryDirectory() as tmp:\n    # Mutated copies of src/, one per mutation; all runs execute concurrently.\n    mutated = []\n    for index, (old, new) in enumerate(MUTATIONS):\n        mutated_src = os.path.join(tmp, str(index), \"src\")\n        shutil.copytree(\"src\", mutated_src)\n        target = Path(tmp, str(index), TARGET)\n        text = target.read_text()\n        assert text.count(old) == 1, \"mutation anchor not found: \" + old\n        target.write_text(text.replace(old, new, 1))\n        mutated.append((new, mutated_src))\n\n    # The whole test file against the unmodified library.\n    base = start([*PYTEST, \"-rA\", TEST_FILE], os.path.abspath(\"src\"))\n    runs = [\n        (new, path, start([*PYTEST, NODE], path), start(PROBE, path))\n        for new, path in mutated\n    ]\n\n    code, out = finish(base)\n    assert code == 0, out[-4000:]\n    passed = {\n        line[len(\"PASSED \"):].rstrip()\n        for line in out.splitlines()\n        if line.startswith(\"PASSED \")\n    }\n    assert NODE in passed, (\n        NODE + \" did not pass as a single non-parametrized test\\n\" + out[-4000:]\n    )\n    missing = [i for i in EXISTING if TEST_FILE + \"::\" + i not in passed]\n    assert not missing, \"existing tests removed or failing: \" + \", \".join(missing)\n\n    for new, path, proc, probe in runs:\n        code, out = finish(proc)\n        _, where = finish(probe)\n        assert where.strip().startswith(path), \"mutated copy not imported: \" + where\n        assert code == 1 and re.search(r\"\\b1 failed\\b\", out), (\n            \"the test still passes when the behavior is broken by: \" + new + \"\\n\" + out[-4000:]\n        )\n\nprint(\"ok\")\n",
+    "edits": [
+      {
+        "path": "tests/sansio/test_utils.py",
+        "old": "from werkzeug.sansio.utils import get_host\n",
+        "new": "from werkzeug.sansio.utils import get_host\nfrom werkzeug.sansio.utils import host_is_trusted\n"
+      },
+      {
+        "path": "tests/sansio/test_utils.py",
+        "old": null,
+        "new": "\n\ndef test_host_is_trusted_dot_prefix() -> None:\n    trusted = [\".example.org\"]\n    assert host_is_trusted(\"example.org\", trusted)\n    assert host_is_trusted(\"api.example.org\", trusted)\n    assert host_is_trusted(\"api.example.org:8443\", trusted)\n    assert not host_is_trusted(\"badexample.org\", trusted)\n    assert not host_is_trusted(\"example.org.evil.com\", trusted)\n"
+      }
+    ],
+    "allowed_change_areas": [
+      "tests/sansio/test_utils.py"
+    ],
+    "keep_test_paths": [
+      "tests/sansio/test_utils.py"
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh dev case authored and adversarially reviewed by independent subagents on 2026-11-08; used for development."
+  },
+  {
+    "id": "xw11",
+    "corpus": "werkzeug",
+    "workload": "small",
+    "category": "attribute protocol bug",
+    "family": "src/werkzeug/datastructures/auth.py",
+    "query": "Doing response.www_authenticate.token = \"abc123\" (or assigning .type or .parameters on that WWW-Authenticate challenge object) never reaches the token/type/parameters property setters: the value is silently stored as an auth parameter (e.g. token=abc123) and the header is wrong. Make assignments to those three attributes go through their property setters so the challenge and the response's WWW-Authenticate header update (assigning .parameters replaces the whole parameter dict, and later edits to that new dict keep updating the header). Assigning any other attribute name (e.g. .realm = \"x\", or None to remove it) must keep setting/removing an auth parameter as it does today.",
+    "checks": "from werkzeug.datastructures import WWWAuthenticate\nfrom werkzeug.wrappers import Response\n\n# token assignment goes through the token property\nw = WWWAuthenticate(\"bearer\", {\"realm\": \"api\"})\nw.token = \"abc123\"\nassert w.token == \"abc123\", w.token\nassert \"token\" not in w.parameters, dict(w.parameters)\nassert w.to_header() == \"Bearer abc123\", w.to_header()\n\n# type assignment goes through the type property\nw = WWWAuthenticate(\"basic\", {\"realm\": \"api\"})\nw.type = \"digest\"\nassert w.type == \"digest\", w.type\nassert \"type\" not in w.parameters, dict(w.parameters)\nassert w.to_header() == 'Digest realm=\"api\"', w.to_header()\n\n# parameters assignment replaces the whole parameter dict\nw = WWWAuthenticate(\"basic\", {\"realm\": \"old\", \"nonce\": \"n1\"})\nw.parameters = {\"realm\": \"new\", \"charset\": \"UTF-8\"}\nassert dict(w.parameters) == {\"realm\": \"new\", \"charset\": \"UTF-8\"}, dict(w.parameters)\nassert w.realm == \"new\"\nassert w.to_header() == \"Basic realm=new, charset=UTF-8\", w.to_header()\n\n# the response header follows each assignment\nr = Response()\nr.www_authenticate = WWWAuthenticate(\"basic\", {\"realm\": \"api\"})\nr.www_authenticate.type = \"digest\"\nassert r.headers[\"WWW-Authenticate\"] == 'Digest realm=\"api\"', r.headers[\"WWW-Authenticate\"]\n\nr = Response()\nr.www_authenticate = WWWAuthenticate(\"bearer\", {\"realm\": \"api\"})\nr.www_authenticate.token = \"abc123\"\nassert r.headers[\"WWW-Authenticate\"] == \"Bearer abc123\", r.headers[\"WWW-Authenticate\"]\n\nr = Response()\nr.www_authenticate = WWWAuthenticate(\"basic\", {\"realm\": \"old\", \"charset\": \"latin-1\"})\nw = r.www_authenticate\nw.parameters = {\"realm\": \"new\"}\nassert dict(w.parameters) == {\"realm\": \"new\"}, dict(w.parameters)\nassert r.headers[\"WWW-Authenticate\"] == \"Basic realm=new\", r.headers[\"WWW-Authenticate\"]\nw.parameters[\"charset\"] = \"UTF-8\"\nassert r.headers[\"WWW-Authenticate\"] == \"Basic realm=new, charset=UTF-8\", r.headers[\n    \"WWW-Authenticate\"\n]\n\n# any other attribute name still sets / removes an auth parameter\nw = WWWAuthenticate(\"basic\")\nw.realm = \"x\"\nassert dict(w.parameters) == {\"realm\": \"x\"} and w.realm == \"x\", dict(w.parameters)\nw.realm = None\nassert \"realm\" not in w.parameters, dict(w.parameters)\nw.charset = \"UTF-8\"\nassert dict(w.parameters) == {\"charset\": \"UTF-8\"}, dict(w.parameters)\n\nr = Response()\nr.www_authenticate = WWWAuthenticate(\"basic\", {\"realm\": \"a\"})\nr.www_authenticate.realm = \"b\"\nassert r.headers[\"WWW-Authenticate\"] == \"Basic realm=b\", r.headers[\"WWW-Authenticate\"]\nprint(\"ok\")\n",
+    "edits": [
+      {
+        "path": "src/werkzeug/datastructures/auth.py",
+        "old": "        if name in {\"_type\", \"_parameters\", \"_token\", \"_on_update\"}:\n",
+        "new": "        if name in {\n            \"_type\",\n            \"_parameters\",\n            \"_token\",\n            \"_on_update\",\n            \"type\",\n            \"parameters\",\n            \"token\",\n        }:\n"
+      }
+    ],
+    "allowed_change_areas": [
+      "src/werkzeug/datastructures/auth.py"
+    ],
+    "check_file": null,
+    "package": null,
+    "exposure": "Fresh dev case authored and adversarially reviewed by independent subagents on 2026-11-08; used for development."
+  }
+]

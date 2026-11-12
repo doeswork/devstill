@@ -1,0 +1,568 @@
+{
+  "tool": "ruff 0.17.4",
+  "rules": "ruff default rules, --isolated",
+  "trials": [
+    {
+      "id": "zh01",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 60,
+      "tests_touched": [
+        "tests/vanilla/shallow.test.tsx"
+      ],
+      "reference_lines": 10,
+      "size_ratio": 6.0,
+      "extra_files": []
+    },
+    {
+      "id": "zh01",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 15,
+      "tests_touched": [],
+      "reference_lines": 10,
+      "size_ratio": 1.5,
+      "extra_files": []
+    },
+    {
+      "id": "zh02",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 6,
+      "tests_touched": [],
+      "reference_lines": 8,
+      "size_ratio": 0.75,
+      "extra_files": []
+    },
+    {
+      "id": "zh02",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 9,
+      "tests_touched": [],
+      "reference_lines": 8,
+      "size_ratio": 1.12,
+      "extra_files": []
+    },
+    {
+      "id": "zh03",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 86,
+      "tests_touched": [
+        "tests/ssr-external.test.tsx"
+      ],
+      "reference_lines": 12,
+      "size_ratio": 7.17,
+      "extra_files": []
+    },
+    {
+      "id": "zh03",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 16,
+      "tests_touched": [],
+      "reference_lines": 12,
+      "size_ratio": 1.33,
+      "extra_files": []
+    },
+    {
+      "id": "zh04",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 0,
+      "changed_lines": 0,
+      "tests_touched": [],
+      "reference_lines": 23,
+      "size_ratio": 0.0,
+      "extra_files": []
+    },
+    {
+      "id": "zh04",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 122,
+      "tests_touched": [
+        "tests/basic.test.tsx"
+      ],
+      "reference_lines": 23,
+      "size_ratio": 5.3,
+      "extra_files": []
+    },
+    {
+      "id": "zh05",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 23,
+      "tests_touched": [],
+      "reference_lines": 13,
+      "size_ratio": 1.77,
+      "extra_files": []
+    },
+    {
+      "id": "zh05",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 19,
+      "tests_touched": [],
+      "reference_lines": 13,
+      "size_ratio": 1.46,
+      "extra_files": []
+    },
+    {
+      "id": "zh06",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 0,
+      "changed_lines": 0,
+      "tests_touched": [],
+      "reference_lines": 9,
+      "size_ratio": 0.0,
+      "extra_files": []
+    },
+    {
+      "id": "zh06",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 79,
+      "tests_touched": [],
+      "reference_lines": 9,
+      "size_ratio": 8.78,
+      "extra_files": []
+    },
+    {
+      "id": "zh07",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 10,
+      "tests_touched": [],
+      "reference_lines": 7,
+      "size_ratio": 1.43,
+      "extra_files": []
+    },
+    {
+      "id": "zh07",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 8,
+      "tests_touched": [],
+      "reference_lines": 7,
+      "size_ratio": 1.14,
+      "extra_files": []
+    },
+    {
+      "id": "zh08",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 28,
+      "tests_touched": [],
+      "reference_lines": 24,
+      "size_ratio": 1.17,
+      "extra_files": []
+    },
+    {
+      "id": "zh08",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 47,
+      "tests_touched": [],
+      "reference_lines": 24,
+      "size_ratio": 1.96,
+      "extra_files": []
+    },
+    {
+      "id": "zh09",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 10,
+      "tests_touched": [],
+      "reference_lines": 3,
+      "size_ratio": 3.33,
+      "extra_files": []
+    },
+    {
+      "id": "zh09",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 5,
+      "tests_touched": [],
+      "reference_lines": 3,
+      "size_ratio": 1.67,
+      "extra_files": []
+    },
+    {
+      "id": "zh10",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 0,
+      "changed_lines": 0,
+      "tests_touched": [],
+      "reference_lines": 22,
+      "size_ratio": 0.0,
+      "extra_files": []
+    },
+    {
+      "id": "zh10",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 33,
+      "tests_touched": [],
+      "reference_lines": 22,
+      "size_ratio": 1.5,
+      "extra_files": []
+    },
+    {
+      "id": "zh11",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 187,
+      "tests_touched": [
+        "tests/devtools.test.tsx"
+      ],
+      "reference_lines": 6,
+      "size_ratio": 31.17,
+      "extra_files": []
+    },
+    {
+      "id": "zh11",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 6,
+      "tests_touched": [],
+      "reference_lines": 6,
+      "size_ratio": 1.0,
+      "extra_files": []
+    },
+    {
+      "id": "zh12",
+      "repeat": 0,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 14,
+      "tests_touched": [],
+      "reference_lines": 10,
+      "size_ratio": 1.4,
+      "extra_files": []
+    },
+    {
+      "id": "zh12",
+      "repeat": 0,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 15,
+      "tests_touched": [],
+      "reference_lines": 10,
+      "size_ratio": 1.5,
+      "extra_files": []
+    },
+    {
+      "id": "zh01",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 23,
+      "tests_touched": [],
+      "reference_lines": 10,
+      "size_ratio": 2.3,
+      "extra_files": []
+    },
+    {
+      "id": "zh01",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 25,
+      "tests_touched": [
+        "tests/vanilla/shallow.test.tsx"
+      ],
+      "reference_lines": 10,
+      "size_ratio": 2.5,
+      "extra_files": []
+    },
+    {
+      "id": "zh02",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 87,
+      "tests_touched": [
+        "tests/vanilla/repro.test.ts"
+      ],
+      "reference_lines": 8,
+      "size_ratio": 10.88,
+      "extra_files": []
+    },
+    {
+      "id": "zh02",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 7,
+      "tests_touched": [],
+      "reference_lines": 8,
+      "size_ratio": 0.88,
+      "extra_files": []
+    },
+    {
+      "id": "zh03",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 2,
+      "changed_lines": 14,
+      "tests_touched": [],
+      "reference_lines": 12,
+      "size_ratio": 1.17,
+      "extra_files": [
+        "src/middleware/persist.ts"
+      ]
+    },
+    {
+      "id": "zh03",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 3,
+      "changed_lines": 57,
+      "tests_touched": [
+        "tests/ssr.test.tsx"
+      ],
+      "reference_lines": 12,
+      "size_ratio": 4.75,
+      "extra_files": [
+        "src/traditional.ts"
+      ]
+    },
+    {
+      "id": "zh04",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 173,
+      "tests_touched": [
+        "tests/selectorCache.test.tsx"
+      ],
+      "reference_lines": 23,
+      "size_ratio": 7.52,
+      "extra_files": []
+    },
+    {
+      "id": "zh04",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 0,
+      "changed_lines": 0,
+      "tests_touched": [],
+      "reference_lines": 23,
+      "size_ratio": 0.0,
+      "extra_files": []
+    },
+    {
+      "id": "zh05",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 19,
+      "tests_touched": [],
+      "reference_lines": 13,
+      "size_ratio": 1.46,
+      "extra_files": []
+    },
+    {
+      "id": "zh05",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 68,
+      "tests_touched": [
+        "tests/basic.test.tsx"
+      ],
+      "reference_lines": 13,
+      "size_ratio": 5.23,
+      "extra_files": []
+    },
+    {
+      "id": "zh06",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 127,
+      "tests_touched": [
+        "tests/dbg.test.tsx"
+      ],
+      "reference_lines": 9,
+      "size_ratio": 14.11,
+      "extra_files": []
+    },
+    {
+      "id": "zh06",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 81,
+      "tests_touched": [],
+      "reference_lines": 9,
+      "size_ratio": 9.0,
+      "extra_files": []
+    },
+    {
+      "id": "zh07",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 6,
+      "tests_touched": [],
+      "reference_lines": 7,
+      "size_ratio": 0.86,
+      "extra_files": []
+    },
+    {
+      "id": "zh07",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 9,
+      "tests_touched": [],
+      "reference_lines": 7,
+      "size_ratio": 1.29,
+      "extra_files": []
+    },
+    {
+      "id": "zh08",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 1,
+      "changed_lines": 16,
+      "tests_touched": [],
+      "reference_lines": 24,
+      "size_ratio": 0.67,
+      "extra_files": []
+    },
+    {
+      "id": "zh08",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 24,
+      "tests_touched": [],
+      "reference_lines": 24,
+      "size_ratio": 1.0,
+      "extra_files": []
+    },
+    {
+      "id": "zh09",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 9,
+      "tests_touched": [],
+      "reference_lines": 3,
+      "size_ratio": 3.0,
+      "extra_files": []
+    },
+    {
+      "id": "zh09",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 104,
+      "tests_touched": [
+        "tests/vanilla/subscribe.test.tsx"
+      ],
+      "reference_lines": 3,
+      "size_ratio": 34.67,
+      "extra_files": []
+    },
+    {
+      "id": "zh10",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 163,
+      "tests_touched": [
+        "tests/unavailable.test.tsx"
+      ],
+      "reference_lines": 22,
+      "size_ratio": 7.41,
+      "extra_files": []
+    },
+    {
+      "id": "zh10",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 20,
+      "tests_touched": [],
+      "reference_lines": 22,
+      "size_ratio": 0.91,
+      "extra_files": []
+    },
+    {
+      "id": "zh11",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 5,
+      "tests_touched": [],
+      "reference_lines": 6,
+      "size_ratio": 0.83,
+      "extra_files": []
+    },
+    {
+      "id": "zh11",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 2,
+      "changed_lines": 175,
+      "tests_touched": [
+        "tests/devtools.test.tsx"
+      ],
+      "reference_lines": 6,
+      "size_ratio": 29.17,
+      "extra_files": []
+    },
+    {
+      "id": "zh12",
+      "repeat": 1,
+      "variant": "pi",
+      "files": 4,
+      "changed_lines": 142,
+      "tests_touched": [
+        "tests/dbg.test.tsx",
+        "tests/dbg2.test.tsx",
+        "tests/reduxCheck.test.tsx"
+      ],
+      "reference_lines": 10,
+      "size_ratio": 14.2,
+      "extra_files": []
+    },
+    {
+      "id": "zh12",
+      "repeat": 1,
+      "variant": "runtime",
+      "files": 1,
+      "changed_lines": 11,
+      "tests_touched": [],
+      "reference_lines": 10,
+      "size_ratio": 1.1,
+      "extra_files": []
+    }
+  ]
+}

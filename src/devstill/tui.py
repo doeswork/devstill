@@ -44,9 +44,12 @@ from devstill.credentials import (
     store_api_key,
 )
 from devstill.executor import PreparedExecution
+from devstill.feature_planning import FeatureDraft
+from devstill.herdr import HerdrReporter
 from devstill.models import IndexProgress
 from devstill.pi_runtime import inspect_pi
-from devstill.planning import PlanItem, PlanLabel, PlanOutput
+from devstill.planning import PlanItem, PlanLabel, PlanOutput, render_plan_markdown
+from devstill.tasks import TaskDraft
 from devstill.tui_agent import AgentSetupAction, AgentSetupResult, AgentSetupScreen
 from devstill.tui_commands import (
     COMMAND_SPECS,
@@ -63,6 +66,7 @@ from devstill.tui_commands import (
     safe_status,
 )
 from devstill.tui_file_questions import FileQuestionScreen
+from devstill.ui_session import UiSession
 
 MAX_SESSION_ENTRIES = 50
 SIDEBAR_BREAKPOINT = 100
@@ -172,6 +176,7 @@ class PromptTextArea(TextArea):
 
 class ComposerMode(str, Enum):
     NORMAL = "normal"
+    TASK_REVIEW = "task_review"
     PI_HANDOFF = "pi_handoff"
     SEARCH_PATH = "search_path"
     PATCH_APPROVAL = "patch_approval"
@@ -1212,6 +1217,12 @@ class DevstillApp(App[None]):
         color: $text-muted;
     }
     """
+    CSS += """
+    #task-mode-row { height: 3; }
+    #task-mode { width: 22; }
+    #request-type { width: 20; }
+    #task-mode-help { width: 1fr; padding: 1 1 0 1; color: $text-muted; }
+    """
     BINDINGS: ClassVar = [
         Binding("ctrl+c", "copy_or_quit", "Copy / quit", priority=True),
         Binding("ctrl+q", "quit", "Quit"),
@@ -1227,10 +1238,14 @@ class DevstillApp(App[None]):
         config: DevstillConfig,
         *,
         workflow: TuiWorkflow | None = None,
+        resume: str | None = None,
     ) -> None:
         super().__init__()
         self.config_path = config_path
         self.config = config
+        self._session = UiSession(config_path, config, resume)
+        self._herdr = HerdrReporter(self._session.id, ("devstill", "--resume", self._session.id))
+        self._session_ready = False
         self._workflow_injected = workflow is not None
         self.workflow = workflow or TuiWorkflow(config_path, config)
         self._active_worker: Worker[TuiResult | None] | None = None
@@ -1252,6 +1267,7 @@ class DevstillApp(App[None]):
         self._resolving_search_index: int | None = None
         self._resolving_search_label: PlanLabel | None = None
         self._pi_status = inspect_pi()
+        self._task_review: TaskDraft | FeatureDraft | dict | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -1261,23 +1277,37 @@ class DevstillApp(App[None]):
                 with VerticalScroll(id="session-feed"):
                     yield Static(
                         "[b]Devstill is ready.[/b]\n"
-                        "Type a question for local hybrid search, or type [b]/[/b] "
-                        "for commands. [b]/plan[/b], [b]/deep-plan[/b], "
-                        "[b]/execute[/b], and [b]/agent test[/b] use the configured model.",
+                        "Describe the outcome you want. [b]Task Review[/b] shows "
+                        "file impacts before running Quick. [b]YOLO[/b] "
+                        "runs without review. Choose [b]Search[/b] for local lookup.",
                         id="welcome",
                     )
                 with Vertical(id="composer"):
                     yield OptionList(id="command-palette", compact=True)
+                    with Horizontal(id="task-mode-row"):
+                        yield Select(
+                            (("Quick task", "quick"), ("Feature", "feature")),
+                            value="quick", allow_blank=False, id="request-type",
+                        )
+                        yield Select(
+                            (("Task Review", "review"), ("YOLO", "yolo"), ("Search", "search")),
+                            value="review", allow_blank=False, id="task-mode",
+                        )
+                        yield Static("Review file impacts before running", id="task-mode-help")
                     with Horizontal(id="prompt-row"):
                         yield Static("❯", id="prompt-marker")
                         yield PromptTextArea(
-                            placeholder="Search the repository or type / for commands",
+                            placeholder="Describe a task, or type / for commands",
                             id="command-input",
                             soft_wrap=True,
                             compact=True,
                         )
                         yield LoadingIndicator(id="busy")
                     with Horizontal(id="composer-actions"):
+                        yield Button("Cancel", id="cancel-task")
+                        yield Button("Edit request", id="edit-task")
+                        yield Button("Run task", id="run-task", variant="success")
+                        yield Button("Stop feature", id="stop-feature", variant="warning")
                         yield Button("Not now", id="cancel-pi-handoff")
                         yield Button(
                             "Preview with Pi",
@@ -1319,7 +1349,11 @@ class DevstillApp(App[None]):
                 yield Static(id="sidebar-info")
         yield Footer()
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
+        await self._restore_session()
+        self._session_ready = True
+        self._sync_session()
+        self.set_interval(0.25, self._sync_session)
         self.query_one("#busy", LoadingIndicator).display = False
         self.refresh_repository_status()
         self._apply_sidebar_visibility(self.size.width)
@@ -1329,6 +1363,11 @@ class DevstillApp(App[None]):
             self._start_warmup(warm)
 
     def on_unmount(self) -> None:
+        self._session_ready = False
+        self._herdr.close()
+        cancel_tasks = getattr(self.workflow, "cancel_tasks", None)
+        if callable(cancel_tasks):
+            cancel_tasks()
         if self._pending_execution is not None:
             self._pending_execution.close()
             self._pending_execution = None
@@ -1337,6 +1376,76 @@ class DevstillApp(App[None]):
         close = getattr(self.workflow, "close", None)
         if callable(close):
             close()
+
+    @property
+    def _busy(self):
+        return getattr(self, "_busy_value", False)
+
+    @_busy.setter
+    def _busy(self, value):
+        self._busy_value = value
+        if getattr(self, "_session_ready", False):
+            self._report_herdr()
+            self._sync_session()
+
+    def _report_herdr(self):
+        blocked = self._composer_mode is not ComposerMode.NORMAL or len(self.screen_stack) > 1
+        state = "working" if self._busy else "blocked" if blocked else "idle"
+        self._herdr.report(state, "Waiting for your review or input" if state == "blocked" else None)
+
+    def exit(self, *args, **kwargs):
+        self._sync_session()
+        return super().exit(*args, **kwargs)
+
+    def _sync_session(self):
+        if not self._session_ready or not self.screen_stack:
+            return
+        self._report_herdr()
+        screen = self.screen_stack[0]
+        if not screen.query("#command-input"):
+            return
+        entries = [{"command": e.command, "markdown": render_plan_markdown(e.plan, title=e.title) if isinstance(e, PlanSessionEntry) else getattr(e, "markdown", ""),
+                    "error": getattr(e, "error", False)}
+                   for e in screen.query(".session-entry") if hasattr(e, "command")]
+        data = {"history": self._history, "entries": entries[-MAX_SESSION_ENTRIES:],
+                "input": screen.query_one("#command-input", PromptTextArea).text,
+                "task_mode": screen.query_one("#task-mode", Select).value,
+                "request_type": screen.query_one("#request-type", Select).value,
+                "interrupted": self._busy,
+                "pending_review": self._task_review if self._composer_mode is ComposerMode.TASK_REVIEW and isinstance(self._task_review, dict) else None,
+                "review_interrupted": self._composer_mode is not ComposerMode.NORMAL}
+        try:
+            self._session.save(data)
+        except OSError as exc:
+            screen.query_one("#activity", Static).update(f"Session could not be saved: {exc}")
+
+    async def _restore_session(self):
+        data = self._session.data
+        if not data:
+            return
+        self._history = data.get("history", [])[-MAX_SESSION_ENTRIES:]
+        for entry in data.get("entries", [])[-MAX_SESSION_ENTRIES:]:
+            await self._append_entry(entry["command"], entry["markdown"], error=entry.get("error", False))
+        self.query_one("#command-input", PromptTextArea).text = data.get("input", "")
+        self.query_one("#task-mode", Select).value = data.get("task_mode", "review")
+        self.query_one("#request-type", Select).value = data.get("request_type", "quick")
+        draft = data.get("pending_review")
+        if draft:
+            import json
+
+            from devstill.runtime.artifacts import load
+            root = self._session.path.parent.parent / "runs"
+            try:
+                proposal = load(root, draft["id"])
+                state = json.loads((root / draft["id"] / "result.json").read_text())
+                if proposal["digest"] != draft["digest"] or state["status"] != "ready":
+                    raise ValueError("Saved proposal is no longer ready for review")
+                self._task_review = proposal
+                self._set_composer_mode(ComposerMode.TASK_REVIEW)
+            except (OSError, ValueError, KeyError) as exc:
+                await self._append_entry("Session restored", f"Patch review could not be restored: {exc}", error=True)
+        elif data.get("interrupted") or data.get("review_interrupted"):
+            await self._append_entry("Session restored", "The previous task or review was interrupted. Check the saved results and retry your request when ready. No task was replayed.")
 
     def _show_composer_actions(self, *button_ids: str) -> None:
         actions = self.query_one("#composer-actions", Horizontal)
@@ -1347,14 +1456,34 @@ class DevstillApp(App[None]):
 
     def _set_composer_mode(self, mode: ComposerMode) -> None:
         self._composer_mode = mode
+        if self._session_ready:
+            self._report_herdr()
         prompt = self.query_one("#command-input", PromptTextArea)
         sidebar = self.query_one("#sidebar-commands", OptionList)
         sidebar.disabled = mode is not ComposerMode.NORMAL
+        self.query_one("#task-mode", Select).disabled = self._busy or mode is not ComposerMode.NORMAL
+        self.query_one("#request-type", Select).disabled = self._busy or mode is not ComposerMode.NORMAL or self.query_one("#task-mode", Select).value == "search"
         self._hide_palette()
         if mode is ComposerMode.NORMAL:
-            prompt.placeholder = "Search the repository or type / for commands"
+            selected = self.query_one("#task-mode", Select).value
+            prompt.placeholder = {"review": "Describe a task to review", "yolo": "Describe a task to run immediately", "search": "Search the repository"}[selected]
             prompt.disabled = self._busy
             self._show_composer_actions()
+        elif mode is ComposerMode.TASK_REVIEW:
+            prompt.placeholder = "Review the task above, then Run task or Edit request"
+            prompt.disabled = True
+            self._show_composer_actions("cancel-task", "edit-task", "run-task")
+            draft = self._task_review
+            count = 1 if isinstance(draft, dict) else (len(draft.plan.tasks) if draft else 0)
+            button = self.query_one("#run-task", Button)
+            button.label = "Run task" if count == 1 else f"Run {count} tasks"
+            if isinstance(draft, FeatureDraft):
+                button.label = "Run feature"
+                prompt.placeholder = "Review the feature, then Run feature or Edit request"
+            if isinstance(draft, dict):
+                button.label = "Apply patch"
+                prompt.placeholder = "Review the checked patch, then Apply patch or Edit request"
+            button.disabled = self._busy or draft is None or (not isinstance(draft, dict) and bool(draft.plan.unresolved))
         elif mode is ComposerMode.PI_HANDOFF:
             prompt.placeholder = "Refine this plan, then press Enter"
             prompt.disabled = self._busy
@@ -1684,7 +1813,7 @@ class DevstillApp(App[None]):
             f"[b]{escape(str(status['repository']))}[/b]  •  Index {index}  •  "
             f"Embeddings {model}  •  Device "
             f"[cyan]{escape(str(getattr(self.workflow, 'runtime_device', self.config.embedding.device)))}[/cyan]  •  "
-            f"Agent {agent}  •  Pi {pi}"
+            f"Agent {agent}  •  Legacy Pi {pi}"
         )
         key_state = str(status["key_source"])
         runtime_state = str(getattr(self.workflow, "runtime_state", "external"))
@@ -1699,10 +1828,11 @@ class DevstillApp(App[None]):
         self.query_one("#sidebar-info", Static).update(
             "[b]DEFAULTS[/b]\n"
             "Search: hybrid × 10\n"
-            "Context/plan: 5\n"
-            "Deep Plan: 5 → 10\n"
-            "Execute: preview → approve\n"
-            "Tests: excluded\n\n"
+            "Task Review: inspect → run\n"
+            "YOLO: run without review\n"
+            "Compact lookup and review\n"
+            "Bounded Quick execution\n"
+            "Tests included when requested\n\n"
             f"[b]INDEX[/b]\n{escape(str(status['quality']))}\n\n"
             f"[b]ENCODER[/b]\n[{runtime_color}]"
             f"{escape(runtime_state)}[/{runtime_color}] · "
@@ -1744,7 +1874,8 @@ class DevstillApp(App[None]):
             self._copy_selected_text()
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        if event.text_area.id != "command-input":
+        # Queued edits can arrive while shutdown is removing the composer.
+        if not self.is_running or event.text_area.id != "command-input":
             return
         prompt = event.text_area
         prompt.styles.height = max(1, min(6, prompt.text.count("\n") + 1))
@@ -1836,7 +1967,13 @@ class DevstillApp(App[None]):
         self._hide_palette()
         if not value.strip():
             return
+        history_value = value
         try:
+            if not value.lstrip().startswith("/"):
+                selected = self.query_one("#task-mode", Select).value
+                feature = self.query_one("#request-type", Select).value == "feature"
+                prefixes = {"review": "/feature " if feature else "/task ", "yolo": "/feature-yolo " if feature else "/yolo ", "search": "/search "}
+                value = prefixes[selected] + value
             command = parse_tui_command(value)
         except ValueError as exc:
             await self._append_entry(value, str(exc), error=True)
@@ -1844,7 +1981,7 @@ class DevstillApp(App[None]):
             prompt.focus()
             return
 
-        self._remember(value)
+        self._remember(history_value)
         prompt.text = ""
         if command.kind is TuiCommandKind.HELP:
             await self._append_entry(value, help_markdown())
@@ -2104,7 +2241,40 @@ class DevstillApp(App[None]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id
-        if button_id == "cancel-pi-handoff":
+        if button_id == "stop-feature":
+            self.workflow.cancel_tasks()
+            event.button.disabled = True
+            self.query_one("#activity", Static).update("Stopping work before further application; applied changes remain")
+            return
+        if button_id in {"cancel-task", "edit-task", "run-task"}:
+            if self._busy or self._task_review is None:
+                return
+            draft = self._task_review
+            if isinstance(draft, dict):
+                self._task_review = None
+                self._set_composer_mode(ComposerMode.NORMAL)
+                if button_id == "run-task":
+                    self._start_worker(TuiCommand(TuiCommandKind.EDIT_APPLY, "Apply reviewed patch", draft["id"], draft["digest"]))
+                elif button_id == "edit-task":
+                    self.query_one("#command-input", PromptTextArea).text = "/edit " + draft["query"]
+                else:
+                    self.query_one("#activity", Static).update("Patch saved; no changes applied")
+                return
+            if button_id == "run-task" and draft.plan.unresolved:
+                return
+            self._task_review = None
+            self._set_composer_mode(ComposerMode.NORMAL)
+            if button_id == "run-task":
+                self._start_worker(TuiCommand(TuiCommandKind.FEATURE_RUN if isinstance(draft, FeatureDraft) else TuiCommandKind.TASK_RUN, f"Run {'feature' if isinstance(draft, FeatureDraft) else 'task'} {draft.id}", draft.id))
+            elif button_id == "edit-task":
+                self.query_one("#task-mode", Select).value = "review"
+                self.query_one("#request-type", Select).value = "feature" if isinstance(draft, FeatureDraft) else "quick"
+                self.query_one("#command-input", PromptTextArea).text = draft.query
+                self.query_one("#command-input", PromptTextArea).focus()
+            else:
+                self.query_one("#activity", Static).update("Task saved; no changes applied")
+                self.query_one("#command-input", PromptTextArea).focus()
+        elif button_id == "cancel-pi-handoff":
             self._leave_handoff(activity="Plan ready; Pi not started")
         elif button_id == "start-pi-handoff":
             self._start_pi_preview()
@@ -2294,11 +2464,18 @@ class DevstillApp(App[None]):
             await self.submit_text("/agent test")
 
     def _start_worker(self, command: TuiCommand) -> None:
+        if command.kind in {TuiCommandKind.TASK, TuiCommandKind.YOLO, TuiCommandKind.TASK_RUN,
+                            TuiCommandKind.FEATURE, TuiCommandKind.FEATURE_YOLO, TuiCommandKind.FEATURE_RUN}:
+            reset = getattr(self.workflow, "reset_task_cancellation", None)
+            if callable(reset):
+                reset()
         self._busy = True
         self._active_command = command
         self._live_entry = None
         prompt = self.query_one("#command-input", PromptTextArea)
         prompt.disabled = True
+        self.query_one("#task-mode", Select).disabled = True
+        self.query_one("#request-type", Select).disabled = True
         self.query_one("#busy", LoadingIndicator).display = True
         file_progress = self.query_one("#file-progress", Static)
         file_progress.display = command.kind is TuiCommandKind.INDEX
@@ -2307,6 +2484,9 @@ class DevstillApp(App[None]):
         progress_bar.display = command.kind is TuiCommandKind.INDEX
         progress_bar.update(total=100, progress=0)
         self.query_one("#activity", Static).update(f"Running {escape(command.raw)}")
+        if command.kind in {TuiCommandKind.EDIT, TuiCommandKind.EDIT_YOLO, TuiCommandKind.FEATURE, TuiCommandKind.FEATURE_YOLO, TuiCommandKind.FEATURE_RUN} or (self.config.editing.enabled and command.kind in {TuiCommandKind.TASK, TuiCommandKind.YOLO}):
+            self._show_composer_actions("stop-feature")
+            self.query_one("#stop-feature", Button).disabled = False
         self._active_worker = self.run_worker(
             lambda: self.workflow.execute(command, self._thread_progress),
             name=command.kind.value,
@@ -2490,6 +2670,7 @@ class DevstillApp(App[None]):
                         self._active_command.raw,
                         result.markdown,
                     )
+            task_review = result.task_review if result is not None else None
             pending = result.prepared_execution if result is not None else None
             offer = result.execution_offer if result is not None else None
             if is_pi_preview and isinstance(rendered_entry, ExecutionSessionEntry):
@@ -2507,8 +2688,16 @@ class DevstillApp(App[None]):
                 and str(getattr(self.workflow, "runtime_state", "")) == "warm"
                 else "Ready"
             )
+            if result is not None and result.task_state is not None:
+                activity = f"{'Feature' if result.task_state.get('engine') == 'composed_quick' else 'Task'} run: {result.task_state['status']}"
             self._finish_worker(activity)
-            if pending is not None:
+            if task_review is not None:
+                self._task_review = task_review
+                self._set_composer_mode(ComposerMode.TASK_REVIEW)
+                unresolved = not isinstance(task_review, dict) and task_review.plan.unresolved
+                self.query_one("#activity", Static).update("Review the checked patch, then apply" if isinstance(task_review, dict) else ("Task needs more context" if unresolved else "Review task impacts, then run"))
+                self.query_one("#edit-task" if unresolved else "#run-task", Button).focus()
+            elif pending is not None:
                 self._pending_execution = pending
                 self._pending_entry = (
                     rendered_entry if isinstance(rendered_entry, SessionEntry) else None
@@ -2700,6 +2889,10 @@ class DevstillApp(App[None]):
         ):
             if self._composer_mode is ComposerMode.SEARCH_PATH:
                 self._cancel_search_resolution()
+            elif self._composer_mode is ComposerMode.TASK_REVIEW:
+                self._task_review = None
+                self._set_composer_mode(ComposerMode.NORMAL)
+                prompt.focus()
             elif self._composer_mode is ComposerMode.PI_HANDOFF:
                 self._leave_handoff(activity="Plan ready; Pi not started")
             elif self._composer_mode is ComposerMode.PATCH_APPROVAL:
@@ -2776,6 +2969,19 @@ class DevstillApp(App[None]):
         sidebar = self.query_one("#sidebar", Vertical)
         self._sidebar_manual = not sidebar.display
         sidebar.display = self._sidebar_manual
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id not in {"task-mode", "request-type"} or event.value is Select.BLANK:
+            return
+        selected = self.query_one("#task-mode", Select).value
+        feature = self.query_one("#request-type", Select).value == "feature"
+        self.query_one("#task-mode-help", Static).update({
+            "review": "Quick first; review before running" if feature else "Review file impacts before running",
+            "yolo": "Quick first; coordinate only when needed" if feature else "Runs immediately · no review · same scope and checks",
+            "search": "Local lookup · no edits",
+        }[selected])
+        if self._composer_mode is ComposerMode.NORMAL:
+            self._set_composer_mode(ComposerMode.NORMAL)
 
     def action_refresh(self) -> None:
         self._pi_status = inspect_pi()

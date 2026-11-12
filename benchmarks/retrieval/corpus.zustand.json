@@ -1,0 +1,8 @@
+{
+  "id": "zustand-5.0.8",
+  "url": "https://github.com/pmndrs/zustand.git",
+  "ref": "v5.0.8",
+  "commit": "0ea8be27db13019819fc1c0492e5b672dd7b6f4b",
+  "tracked_files": 137,
+  "purpose": "React/TypeScript corpus (vitest, jsdom, @testing-library/react) for small-task coding comparisons; dependencies installed from its pnpm lockfile with install scripts disabled; tsc and the upstream vitest suite serve as protected regressions."
+}

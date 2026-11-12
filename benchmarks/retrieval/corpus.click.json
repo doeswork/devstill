@@ -1,0 +1,8 @@
+{
+  "id": "click-8.1.8",
+  "url": "https://github.com/pallets/click.git",
+  "ref": "8.1.8",
+  "commit": "934813e4d421071a1b3db3973c02fe2721359a6e",
+  "tracked_files": 147,
+  "purpose": "Second pinned pure-Python corpus for small-task coding comparisons, so results are not specific to Werkzeug; upstream tests serve as protected regressions."
+}

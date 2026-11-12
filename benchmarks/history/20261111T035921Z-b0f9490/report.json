@@ -1,0 +1,689 @@
+{
+  "campaign": {
+    "command": [
+      "bench_suite.py",
+      "run",
+      "--suite",
+      "react-dev",
+      "--variants",
+      "baseline,runtime",
+      "--baseline-ref",
+      "5c58680",
+      "--repeats",
+      "4",
+      "--note",
+      "A/B: Devstill 5c58680 (baseline) vs b0f9490 (round 2), react-dev, 120 s, 4 repeats"
+    ],
+    "finished_at": "2026-11-11T06:25:13+00:00",
+    "git": {
+      "branch": "bench-test-ui-ux",
+      "dirty": false,
+      "sha": "b0f949084e0c52ad51eeef70938a68add795d82a",
+      "short": "b0f9490",
+      "status": []
+    },
+    "host": "USNBRosenbergJ",
+    "hours": 2.43,
+    "id": "20261111T035921Z-b0f9490",
+    "model": "vllm-qwen38-27b",
+    "model_endpoint": "https://llm.codemonkey.study/v1",
+    "note": "A/B: Devstill 5c58680 (baseline) vs b0f9490 (round 2), react-dev, 120 s, 4 repeats",
+    "pi_version": "1.5.0",
+    "reason": null,
+    "sampling": "default",
+    "served_models": [
+      [
+        "vllm-qwen38-27b",
+        "gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090",
+        262144
+      ]
+    ],
+    "started_at": "2026-11-11T03:59:21+00:00",
+    "status": "completed",
+    "tools": {
+      "git": "git version 2.43.0",
+      "node": "v24.14.1",
+      "pytest": "pytest 8.3.5",
+      "python": "Python 3.12.3",
+      "ruff": "ruff 0.17.4"
+    }
+  },
+  "generated_at": "2026-11-11T06:25:13+00:00",
+  "previous": {
+    "git": "3841a55",
+    "id": "20261110T125421Z-3841a55",
+    "model": "vllm-qwen38-27b",
+    "started_at": "2026-11-10T12:54:21+00:00",
+    "suites": {
+      "react-dev": {
+        "arms": {
+          "runtime": {
+            "before": "16/24",
+            "now": "32/48"
+          }
+        },
+        "flips": [
+          {
+            "before": "1/2",
+            "id": "zd01",
+            "now": "3/4",
+            "variant": "runtime"
+          },
+          {
+            "before": "2/2",
+            "id": "zd02",
+            "now": "3/4",
+            "variant": "runtime"
+          },
+          {
+            "before": "2/2",
+            "id": "zd03",
+            "now": "3/4",
+            "variant": "runtime"
+          },
+          {
+            "before": "1/2",
+            "id": "zd05",
+            "now": "4/4",
+            "variant": "runtime"
+          },
+          {
+            "before": "1/2",
+            "id": "zd08",
+            "now": "0/4",
+            "variant": "runtime"
+          },
+          {
+            "before": "1/2",
+            "id": "zd12",
+            "now": "3/4",
+            "variant": "runtime"
+          }
+        ],
+        "median_ratio": {
+          "before": 0.79,
+          "now": null
+        }
+      }
+    }
+  },
+  "schema_version": 1,
+  "suites": [
+    {
+      "arms": {
+        "baseline": {
+          "acceptance_passes": 26,
+          "attempts": 48,
+          "failures": {
+            "no_change": 17,
+            "wrong_fix:regression_tests": 5
+          },
+          "median_pass_seconds": 54.1,
+          "passes": 26
+        },
+        "runtime": {
+          "acceptance_passes": 32,
+          "attempts": 48,
+          "failures": {
+            "no_change": 8,
+            "wrong_fix:regression_tests": 8
+          },
+          "median_pass_seconds": 50.9,
+          "passes": 32
+        }
+      },
+      "audit": {
+        "baseline_unchanged": true,
+        "coding_toolchain_unchanged": true,
+        "complete": true,
+        "frozen_runtime_unchanged": true,
+        "frozen_source_unchanged": true,
+        "pi_unchanged": true,
+        "retrieval_inputs_unchanged": true,
+        "working_tree_source_changed": false
+      },
+      "cases": [
+        {
+          "id": "zd01",
+          "median_seconds": {
+            "baseline": 30.2,
+            "runtime": 31.0
+          },
+          "outcomes": {
+            "baseline": "3/4",
+            "runtime": "3/4"
+          }
+        },
+        {
+          "id": "zd02",
+          "median_seconds": {
+            "baseline": 66.9,
+            "runtime": 27.7
+          },
+          "outcomes": {
+            "baseline": "2/4",
+            "runtime": "3/4"
+          }
+        },
+        {
+          "id": "zd03",
+          "median_seconds": {
+            "baseline": 39.2,
+            "runtime": 60.3
+          },
+          "outcomes": {
+            "baseline": "2/4",
+            "runtime": "3/4"
+          }
+        },
+        {
+          "id": "zd04",
+          "median_seconds": {
+            "baseline": 70.0,
+            "runtime": 50.8
+          },
+          "outcomes": {
+            "baseline": "4/4",
+            "runtime": "4/4"
+          }
+        },
+        {
+          "id": "zd05",
+          "median_seconds": {
+            "baseline": 41.6,
+            "runtime": 73.0
+          },
+          "outcomes": {
+            "baseline": "3/4",
+            "runtime": "4/4"
+          }
+        },
+        {
+          "id": "zd06",
+          "median_seconds": {
+            "baseline": 106.3,
+            "runtime": null
+          },
+          "outcomes": {
+            "baseline": "1/4",
+            "runtime": "0/4"
+          }
+        },
+        {
+          "id": "zd07",
+          "median_seconds": {
+            "baseline": 75.5,
+            "runtime": 66.3
+          },
+          "outcomes": {
+            "baseline": "4/4",
+            "runtime": "4/4"
+          }
+        },
+        {
+          "id": "zd08",
+          "median_seconds": {
+            "baseline": 56.4,
+            "runtime": null
+          },
+          "outcomes": {
+            "baseline": "1/4",
+            "runtime": "0/4"
+          }
+        },
+        {
+          "id": "zd09",
+          "median_seconds": {
+            "baseline": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "baseline": "0/4",
+            "runtime": "0/4"
+          }
+        },
+        {
+          "id": "zd10",
+          "median_seconds": {
+            "baseline": 59.3,
+            "runtime": 111.2
+          },
+          "outcomes": {
+            "baseline": "1/4",
+            "runtime": "4/4"
+          }
+        },
+        {
+          "id": "zd11",
+          "median_seconds": {
+            "baseline": 23.5,
+            "runtime": 21.8
+          },
+          "outcomes": {
+            "baseline": "4/4",
+            "runtime": "4/4"
+          }
+        },
+        {
+          "id": "zd12",
+          "median_seconds": {
+            "baseline": 35.3,
+            "runtime": 76.1
+          },
+          "outcomes": {
+            "baseline": "1/4",
+            "runtime": "3/4"
+          }
+        }
+      ],
+      "description": "12 zustand (React/TypeScript) cases, vitest + tsc acceptance (development set)",
+      "excluded_cases": {},
+      "expected_trials": 96,
+      "failures": [
+        {
+          "category": "no_change",
+          "detail": "turn_limit: No verified change within 20 model calls",
+          "id": "zd01",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd01-0-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-ujxteez4/vitest-report.json",
+          "id": "zd01",
+          "repeat": 2,
+          "trial": "suites/react-dev/zd01-2-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-zrug5s5y/vitest-report.json",
+          "id": "zd02",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd02-0-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: Your latest check fails after your last edit (re-run automatically): \u2026 ed code (your files are unchanged). For comparison, the same module also ran on a pristine",
+          "id": "zd02",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd02-1-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-48pekxcx/vitest-report.json",
+          "id": "zd02",
+          "repeat": 3,
+          "trial": "suites/react-dev/zd02-3-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: No verified change before the deadline",
+          "id": "zd03",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd03-0-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-nu56gn70/vitest-report.json",
+          "id": "zd03",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd03-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-54c043cq/vitest-report.json",
+          "id": "zd03",
+          "repeat": 2,
+          "trial": "suites/react-dev/zd03-2-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-kelh1utk/vitest-report.json",
+          "id": "zd05",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd05-0-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-8mcffiuq/vitest-report.json",
+          "id": "zd06",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd06-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: Tests still fail: tests/basic.test.tsx > can throw an error in equality checker",
+          "id": "zd06",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd06-1-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: No verified change before the deadline",
+          "id": "zd06",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd06-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: Tests still fail: tests/devstill_traditional_extra.test.tsx > (module failed to load)",
+          "id": "zd06",
+          "repeat": 2,
+          "trial": "suites/react-dev/zd06-2-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: No verified change before the deadline",
+          "id": "zd06",
+          "repeat": 2,
+          "trial": "suites/react-dev/zd06-2-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-7zjeigdb/vitest-report.json",
+          "id": "zd06",
+          "repeat": 3,
+          "trial": "suites/react-dev/zd06-3-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: Tests still fail: src/traditional.ts(49,37): error TS2554: Expected 1 arguments, but got 0 \u2026 State' could be instantiated with an arbitrary type which could be unrelated to 'unknown'.",
+          "id": "zd06",
+          "repeat": 3,
+          "trial": "suites/react-dev/zd06-3-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: No verified change before the deadline",
+          "id": "zd08",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd08-0-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: Tests still fail: src/middleware/persist.ts(278,45): error TS2339: Property 'version' does not exist on type '{}'., src/middleware/persist.ts(279,38): error TS2339: Property 'vers\u2026",
+          "id": "zd08",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd08-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: No verified change within 20 model calls",
+          "id": "zd08",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd08-1-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: Your latest check fails after your last edit (re-run automatically): \u2026 your current, edited code (your files are unchanged). For comparison, the same module also",
+          "id": "zd08",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd08-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: Tests still fail: src/middleware/persist.ts(56,20): error TS2345: Argument of type 'string \u2026 ts(281,13): error TS2345: Argument of type '(deserializedStorageValue: StorageValue<T> | \u2026",
+          "id": "zd08",
+          "repeat": 2,
+          "trial": "suites/react-dev/zd08-2-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: No verified change before the deadline",
+          "id": "zd08",
+          "repeat": 2,
+          "trial": "suites/react-dev/zd08-2-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: Your latest check fails after your last edit (re-run automatically): \u2026 FAIL hydrates sync and thenable storage",
+          "id": "zd08",
+          "repeat": 3,
+          "trial": "suites/react-dev/zd08-3-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: No verified change within 20 model calls",
+          "id": "zd09",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd09-0-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-b1erqlai/vitest-report.json",
+          "id": "zd09",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd09-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: No verified change within 20 model calls",
+          "id": "zd09",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd09-1-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-9h1xundf/vitest-report.json",
+          "id": "zd09",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd09-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "No changed source produced",
+          "id": "zd09",
+          "repeat": 2,
+          "trial": "suites/react-dev/zd09-2-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: No verified change before the deadline",
+          "id": "zd09",
+          "repeat": 2,
+          "trial": "suites/react-dev/zd09-2-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: No verified change before the deadline",
+          "id": "zd09",
+          "repeat": 3,
+          "trial": "suites/react-dev/zd09-3-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-mfst46qv/vitest-report.json",
+          "id": "zd09",
+          "repeat": 3,
+          "trial": "suites/react-dev/zd09-3-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-xm7tygz8/vitest-report.json",
+          "id": "zd10",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd10-0-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: No verified change before the deadline",
+          "id": "zd10",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd10-1-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: No verified change before the deadline",
+          "id": "zd10",
+          "repeat": 2,
+          "trial": "suites/react-dev/zd10-2-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: No verified change before the deadline",
+          "id": "zd12",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd12-0-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: No verified change before the deadline",
+          "id": "zd12",
+          "repeat": 1,
+          "trial": "suites/react-dev/zd12-1-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: Your latest check fails after your last edit (re-run automatically): \u2026 + Received",
+          "id": "zd12",
+          "repeat": 2,
+          "trial": "suites/react-dev/zd12-2-baseline",
+          "variant": "baseline"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-yad0h7zo/vitest-report.json",
+          "id": "zd12",
+          "repeat": 2,
+          "trial": "suites/react-dev/zd12-2-runtime",
+          "variant": "runtime"
+        }
+      ],
+      "name": "react-dev",
+      "paired": {
+        "baseline": {
+          "both": 0,
+          "candidate_faster": 0,
+          "candidate_only": 0,
+          "median_ratio": null,
+          "median_shared_seconds": {
+            "baseline": null,
+            "pi": null
+          },
+          "neither": 0,
+          "pairs": 0,
+          "pi_only": 0,
+          "shared_seconds": []
+        },
+        "runtime": {
+          "both": 0,
+          "candidate_faster": 0,
+          "candidate_only": 0,
+          "median_ratio": null,
+          "median_shared_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "neither": 0,
+          "pairs": 0,
+          "pi_only": 0,
+          "shared_seconds": []
+        }
+      },
+      "quality": {
+        "baseline": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 15,
+          "median_size_ratio": 1.33,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 0,
+          "trials_touching_tests": 0,
+          "trials_with_change": 31
+        },
+        "runtime": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 20.0,
+          "median_size_ratio": 1.1,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 0,
+          "trials_touching_tests": 0,
+          "trials_with_change": 40
+        },
+        "tool": "ruff 0.17.4"
+      },
+      "reason": null,
+      "settings": {
+        "dataset": "benchmarks/retrieval/zustand_dev.v1.json",
+        "repeats": 4,
+        "timeout": 120,
+        "variants": "baseline,runtime"
+      },
+      "status": "completed",
+      "trials": 96
+    }
+  ],
+  "totals": {
+    "baseline": {
+      "attempts": 48,
+      "passes": 26
+    },
+    "runtime": {
+      "attempts": 48,
+      "passes": 32
+    }
+  },
+  "totals_paired": {
+    "baseline": {
+      "both": 0,
+      "candidate_faster": 0,
+      "candidate_only": 0,
+      "median_ratio": null,
+      "median_shared_seconds": {
+        "candidate": null,
+        "pi": null
+      },
+      "neither": 0,
+      "pairs": 0,
+      "pi_only": 0
+    },
+    "runtime": {
+      "both": 0,
+      "candidate_faster": 0,
+      "candidate_only": 0,
+      "median_ratio": null,
+      "median_shared_seconds": {
+        "candidate": null,
+        "pi": null
+      },
+      "neither": 0,
+      "pairs": 0,
+      "pi_only": 0
+    }
+  }
+}

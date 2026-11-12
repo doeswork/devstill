@@ -10,8 +10,13 @@ from devstill.config import DevstillConfig, resolve_index_path, resolve_model_pa
 from devstill.embeddings import EmbeddingBackend
 from devstill.models import SearchResult
 from devstill.paths import IndexPaths
-from devstill.retrieval_policy import matches_retrieval_exclude
-from devstill.storage import ChromaStore, SQLiteStore
+from devstill.retrieval_policy import (
+    is_overload,
+    matches_retrieval_exclude,
+    query_references,
+    requests_signatures,
+)
+from devstill.storage import LazyChromaStore, SQLiteStore
 
 RRF_K = 60.0
 MIN_CANDIDATES_PER_CHANNEL = 50
@@ -46,6 +51,7 @@ class HybridSearch:
                 f"No Devstill index found at {paths.root}. Run `devstill index`."
             )
         self.store = SQLiteStore(paths.sqlite)
+        self.vectors = config.index.vectors
         self.retrieval_exclude = config.retrieval.exclude
         self.embedder = embedder or EmbeddingBackend(
             resolve_model_path(config),
@@ -54,7 +60,9 @@ class HybridSearch:
             normalize=config.embedding.normalize_embeddings,
             device=config.embedding.device,
         )
-        self.chroma = chroma_store or ChromaStore(paths.chroma, config.index.collection)
+        self.chroma = chroma_store or LazyChromaStore(
+            paths.chroma, config.index.collection
+        )
         self._symbol_choices: dict[str, str] | None = None
 
     def close(self) -> None:
@@ -118,16 +126,46 @@ class HybridSearch:
             raise ValueError(
                 "--semantic-only and --lexical-only cannot be used together"
             )
+        if not self.vectors:
+            if semantic_only:
+                raise ValueError("This index has no vectors (index.vectors is false)")
+            # A lexical-only index answers every query without embeddings.
+            lexical_only = not exact_only
         candidate_limit = self._candidate_limit(limit)
+        allowed_paths = None
+        if path or self.retrieval_exclude:
+            allowed_paths = [
+                p
+                for p in self.store.retrieval_paths()
+                if (not path or p.startswith(path))
+                and not matches_retrieval_exclude(p, self.retrieval_exclude)
+            ]
+            if not allowed_paths:
+                return [[] for _ in queries]
+        where_parts = []
+        if allowed_paths is not None:
+            where_parts.append({"path": {"$in": allowed_paths}})
+        if kind:
+            where_parts.append({"kind": kind})
+        where = (
+            ({"$and": where_parts} if len(where_parts) > 1 else where_parts[0])
+            if where_parts
+            else None
+        )
+        vector_options = {"where": where} if where else {}
         semantic_groups: list[list[tuple[str, float]] | None] = [None] * len(queries)
         if not exact_only and not lexical_only:
             vectors = self.embedder.encode(queries)
             batch_query = getattr(self.chroma, "query_embeddings", None)
             if callable(batch_query):
-                semantic_groups = batch_query(vectors, candidate_limit)
+                semantic_groups = batch_query(
+                    vectors, candidate_limit, **vector_options
+                )
             else:
                 semantic_groups = [
-                    self.chroma.query_embedding(vector, candidate_limit)
+                    self.chroma.query_embedding(
+                        vector, candidate_limit, **vector_options
+                    )
                     for vector in vectors
                 ]
         return [
@@ -141,6 +179,7 @@ class HybridSearch:
                 exact_only=exact_only,
                 semantic_only=semantic_only,
                 lexical_only=lexical_only,
+                allowed_paths=allowed_paths,
             )
             for index, query in enumerate(queries)
         ]
@@ -157,26 +196,46 @@ class HybridSearch:
         exact_only: bool,
         semantic_only: bool,
         lexical_only: bool,
+        allowed_paths: list[str] | None,
     ) -> list[SearchResult]:
         rankings: dict[str, list[tuple[str, float]]] = {}
+        scope = {"allowed_paths": allowed_paths, "kind": kind}
         if not semantic_only:
-            exact = self.store.find_symbol_exact(query, candidate_limit)
+            exact = self.store.find_symbol_exact(query, candidate_limit, **scope)
+            if not exact_only:
+                for reference in query_references(query):
+                    exact.extend(
+                        self.store.find_symbol_exact(
+                            reference, candidate_limit, **scope
+                        )
+                    )
+            exact = list(dict.fromkeys(exact))
             rankings["exact"] = [(chunk_id, 1.0) for chunk_id in exact]
             if not exact_only:
-                prefix = self.store.find_symbol_prefix(query, candidate_limit)
+                prefix = self.store.find_symbol_prefix(query, candidate_limit, **scope)
                 rankings["prefix"] = [(chunk_id, 1.0) for chunk_id in prefix]
-                path_ids = self.store.search_paths(query, candidate_limit)
+                path_ids = self.store.search_paths(query, candidate_limit, **scope)
                 rankings["path"] = [(chunk_id, 1.0) for chunk_id in path_ids]
-                fts = self.store.search_fts(query, candidate_limit)
+                fts = self.store.search_fts(query, candidate_limit, **scope)
                 rankings["lexical"] = [
                     (chunk_id, 1.0 / (1.0 + abs(rank))) for chunk_id, rank in fts
                 ]
-                fuzzy_values = process.extract(
-                    query,
-                    self._fuzzy_choices(),
-                    scorer=fuzz.WRatio,
-                    limit=candidate_limit,
-                    score_cutoff=45,
+                choices = self._fuzzy_choices() if len(query.split()) <= 3 else {}
+                if choices and (allowed_paths is not None or kind):
+                    eligible = self.store.eligible_chunk_ids(**scope)
+                    choices = {
+                        key: value for key, value in choices.items() if key in eligible
+                    }
+                fuzzy_values = (
+                    process.extract(
+                        query,
+                        choices,
+                        scorer=fuzz.WRatio,
+                        limit=candidate_limit,
+                        score_cutoff=45,
+                    )
+                    if len(query.split()) <= 3
+                    else []
                 )
                 rankings["fuzzy"] = [
                     (str(chunk_id), float(score) / 100.0)
@@ -206,6 +265,30 @@ class HybridSearch:
                 result.chunk.start_line,
             ),
         )
+        if not requests_signatures(query):
+            resolved = []
+            files = {}
+            for result in ordered:
+                chunk = result.chunk
+                if is_overload(chunk):
+                    if chunk.path not in files:
+                        files[chunk.path] = self.store.list_chunks_for_file(chunk.path)
+                    implementations = [
+                        c
+                        for c in files[chunk.path]
+                        if c.qualname == chunk.qualname
+                        and c.kind == chunk.kind
+                        and c.language == chunk.language
+                        and not is_overload(c)
+                        and c.parser_metadata.get("searchable", True)
+                    ]
+                    # Ambiguous conditional definitions remain visible for review.
+                    if len(implementations) == 1:
+                        result = SearchResult(
+                            implementations[0], result.final_score, dict(result.scores)
+                        )
+                resolved.append(result)
+            ordered = resolved
         selected: list[SearchResult] = []
         per_file: defaultdict[str, int] = defaultdict(int)
         seen_ranges: set[tuple[str, int, int]] = set()
@@ -225,4 +308,11 @@ class HybridSearch:
             per_file[chunk.path] += 1
             if len(selected) >= limit:
                 break
+        # Fingerprints describe the indexed file, not normalized parser snippets.
+        get_files = getattr(self.store, "get_files", None)
+        files = get_files() if callable(get_files) else {}
+        for result in selected:
+            record = files.get(result.chunk.path)
+            if record is not None:
+                result.source_hash = record.content_hash
         return selected

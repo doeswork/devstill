@@ -1,0 +1,1119 @@
+{
+  "campaign": {
+    "command": [
+      "bench_suite.py",
+      "run",
+      "--suite",
+      "nq",
+      "--suite",
+      "quick-fast",
+      "--suite",
+      "loop-dev",
+      "--repeats",
+      "2",
+      "--note",
+      "loop improvements 8bdf9f3, remote endpoint llm.codemonkey.study, 2 repeats"
+    ],
+    "finished_at": "2026-11-09T19:37:41+00:00",
+    "git": {
+      "branch": "bench-test-ui-ux",
+      "dirty": false,
+      "sha": "8bdf9f369f2bad4124213e34e6a6f090aaa4c89a",
+      "short": "8bdf9f3",
+      "status": []
+    },
+    "host": "USNBRosenbergJ",
+    "hours": 1.44,
+    "id": "20261109T181124Z-8bdf9f3",
+    "model": "vllm-qwen38-27b",
+    "model_endpoint": "https://llm.codemonkey.study/v1",
+    "note": "loop improvements 8bdf9f3, remote endpoint llm.codemonkey.study, 2 repeats",
+    "pi_version": "1.5.0",
+    "reason": null,
+    "sampling": "default",
+    "served_models": [
+      [
+        "vllm-qwen38-27b",
+        "gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090",
+        262144
+      ]
+    ],
+    "started_at": "2026-11-09T18:11:24+00:00",
+    "status": "completed",
+    "tools": {
+      "git": "git version 2.43.0",
+      "node": "v24.14.1",
+      "pytest": "pytest 8.3.5",
+      "python": "Python 3.12.3",
+      "ruff": "ruff 0.17.4"
+    }
+  },
+  "generated_at": "2026-11-09T19:37:51+00:00",
+  "previous": {
+    "git": "4771449",
+    "id": "20261109T041313Z-4771449",
+    "model": "vllm-qwen38-27b",
+    "started_at": "2026-11-09T04:13:13+00:00",
+    "suites": {
+      "loop-dev": {
+        "arms": {
+          "pi": {
+            "before": "11/12",
+            "now": "17/24"
+          },
+          "runtime": {
+            "before": "11/12",
+            "now": "22/24"
+          }
+        },
+        "flips": [
+          {
+            "before": "1/1",
+            "id": "xc01",
+            "now": "0/2",
+            "variant": "pi"
+          },
+          {
+            "before": "1/1",
+            "id": "xc03",
+            "now": "1/2",
+            "variant": "pi"
+          },
+          {
+            "before": "1/1",
+            "id": "xc09",
+            "now": "1/2",
+            "variant": "pi"
+          },
+          {
+            "before": "1/1",
+            "id": "xc11",
+            "now": "0/2",
+            "variant": "pi"
+          },
+          {
+            "before": "0/1",
+            "id": "xc11",
+            "now": "1/2",
+            "variant": "runtime"
+          },
+          {
+            "before": "0/1",
+            "id": "xw11",
+            "now": "1/2",
+            "variant": "pi"
+          },
+          {
+            "before": "1/1",
+            "id": "xw11",
+            "now": "1/2",
+            "variant": "runtime"
+          }
+        ],
+        "median_ratio": {
+          "before": 0.98,
+          "now": 0.93
+        }
+      },
+      "nq": {
+        "arms": {
+          "pi": {
+            "before": "9/10",
+            "now": "19/20"
+          },
+          "runtime": {
+            "before": "10/10",
+            "now": "20/20"
+          }
+        },
+        "flips": [
+          {
+            "before": "1/1",
+            "id": "nq06",
+            "now": "1/2",
+            "variant": "pi"
+          },
+          {
+            "before": "0/1",
+            "id": "nq10",
+            "now": "2/2",
+            "variant": "pi"
+          }
+        ],
+        "median_ratio": {
+          "before": 0.8,
+          "now": 0.79
+        }
+      },
+      "quick-fast": {
+        "arms": {
+          "pi": {
+            "before": "10/10",
+            "now": "19/20"
+          },
+          "runtime": {
+            "before": "10/10",
+            "now": "20/20"
+          }
+        },
+        "flips": [
+          {
+            "before": "1/1",
+            "id": "w_description",
+            "now": "1/2",
+            "variant": "pi"
+          }
+        ],
+        "median_ratio": {
+          "before": 0.61,
+          "now": 0.85
+        }
+      }
+    }
+  },
+  "schema_version": 1,
+  "suites": [
+    {
+      "arms": {
+        "pi": {
+          "acceptance_passes": 19,
+          "attempts": 20,
+          "failures": {
+            "no_change": 1
+          },
+          "median_pass_seconds": 17.9,
+          "passes": 19
+        },
+        "runtime": {
+          "acceptance_passes": 20,
+          "attempts": 20,
+          "failures": {},
+          "median_pass_seconds": 19.0,
+          "passes": 20
+        }
+      },
+      "audit": {
+        "baseline_unchanged": null,
+        "coding_toolchain_unchanged": true,
+        "complete": true,
+        "frozen_runtime_unchanged": true,
+        "frozen_source_unchanged": true,
+        "pi_unchanged": true,
+        "retrieval_inputs_unchanged": true,
+        "working_tree_source_changed": false
+      },
+      "cases": [
+        {
+          "id": "nq01",
+          "median_seconds": {
+            "pi": 12.2,
+            "runtime": 15.7
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "nq02",
+          "median_seconds": {
+            "pi": 17.0,
+            "runtime": 15.5
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "nq03",
+          "median_seconds": {
+            "pi": 21.7,
+            "runtime": 27.9
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "nq04",
+          "median_seconds": {
+            "pi": 14.6,
+            "runtime": 20.0
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "nq05",
+          "median_seconds": {
+            "pi": 22.2,
+            "runtime": 15.9
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "nq06",
+          "median_seconds": {
+            "pi": 62.1,
+            "runtime": 31.9
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "nq07",
+          "median_seconds": {
+            "pi": 24.2,
+            "runtime": 22.3
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "nq08",
+          "median_seconds": {
+            "pi": 18.0,
+            "runtime": 11.9
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "nq09",
+          "median_seconds": {
+            "pi": 18.1,
+            "runtime": 12.8
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "nq10",
+          "median_seconds": {
+            "pi": 19.0,
+            "runtime": 26.1
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        }
+      ],
+      "description": "10 Werkzeug quick edits (exposed development set)",
+      "excluded_cases": {},
+      "expected_trials": 40,
+      "failures": [
+        {
+          "category": "no_change",
+          "detail": "agent ended its turn after 1 tool call(s) without editing (stop reason: stop)",
+          "id": "nq06",
+          "repeat": 1,
+          "trial": "suites/nq/nq06-1-pi",
+          "variant": "pi"
+        }
+      ],
+      "name": "nq",
+      "paired": {
+        "runtime": {
+          "both": 19,
+          "candidate_faster": 13,
+          "candidate_only": 1,
+          "median_ratio": 0.79,
+          "median_shared_seconds": {
+            "pi": 17.9,
+            "runtime": 18.9
+          },
+          "neither": 0,
+          "pairs": 20,
+          "pi_only": 0,
+          "shared_seconds": [
+            [
+              12.53,
+              21.99
+            ],
+            [
+              11.93,
+              9.45
+            ],
+            [
+              16.16,
+              12.44
+            ],
+            [
+              17.8,
+              18.5
+            ],
+            [
+              17.06,
+              33.77
+            ],
+            [
+              26.35,
+              22.1
+            ],
+            [
+              11.27,
+              19.14
+            ],
+            [
+              17.86,
+              20.85
+            ],
+            [
+              19.42,
+              12.6
+            ],
+            [
+              24.92,
+              19.15
+            ],
+            [
+              62.13,
+              38.67
+            ],
+            [
+              19.87,
+              18.86
+            ],
+            [
+              28.58,
+              25.65
+            ],
+            [
+              17.88,
+              12.94
+            ],
+            [
+              18.03,
+              10.96
+            ],
+            [
+              18.4,
+              13.21
+            ],
+            [
+              17.82,
+              12.41
+            ],
+            [
+              20.41,
+              38.59
+            ],
+            [
+              17.68,
+              13.68
+            ]
+          ]
+        }
+      },
+      "quality": {
+        "pi": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 6,
+          "median_size_ratio": 2.0,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 1,
+          "trials_touching_tests": 1,
+          "trials_with_change": 19
+        },
+        "runtime": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 5.0,
+          "median_size_ratio": 1.0,
+          "new_lint_findings": 1,
+          "trials_touching_extra_files": 0,
+          "trials_touching_tests": 0,
+          "trials_with_change": 20
+        },
+        "tool": "ruff 0.17.4"
+      },
+      "reason": null,
+      "settings": {
+        "dataset": "benchmarks/retrieval/native_quick_fresh.v1.json",
+        "repeats": 2,
+        "timeout": 120,
+        "variants": "pi,runtime"
+      },
+      "status": "completed",
+      "trials": 40
+    },
+    {
+      "arms": {
+        "pi": {
+          "acceptance_passes": 19,
+          "attempts": 20,
+          "failures": {
+            "no_change": 1
+          },
+          "median_pass_seconds": 12.8,
+          "passes": 19
+        },
+        "runtime": {
+          "acceptance_passes": 20,
+          "attempts": 20,
+          "failures": {},
+          "median_pass_seconds": 10.2,
+          "passes": 20
+        }
+      },
+      "audit": {
+        "baseline_unchanged": null,
+        "coding_toolchain_unchanged": true,
+        "complete": true,
+        "frozen_runtime_unchanged": true,
+        "frozen_source_unchanged": true,
+        "pi_unchanged": true,
+        "retrieval_inputs_unchanged": true,
+        "working_tree_source_changed": false
+      },
+      "cases": [
+        {
+          "id": "w_age",
+          "median_seconds": {
+            "pi": 18.7,
+            "runtime": 9.9
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "w_close",
+          "median_seconds": {
+            "pi": 11.7,
+            "runtime": 10.8
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "w_description",
+          "median_seconds": {
+            "pi": 14.6,
+            "runtime": 9.6
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "w_header_lines",
+          "median_seconds": {
+            "pi": 14.7,
+            "runtime": 14.2
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "w_hop_whitespace",
+          "median_seconds": {
+            "pi": 16.5,
+            "runtime": 9.3
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "w_parse_age_types",
+          "median_seconds": {
+            "pi": 13.6,
+            "runtime": 11.3
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "w_repr",
+          "median_seconds": {
+            "pi": 14.3,
+            "runtime": 10.5
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "w_salt",
+          "median_seconds": {
+            "pi": 11.6,
+            "runtime": 9.9
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "w_secure_pathlike",
+          "median_seconds": {
+            "pi": 15.3,
+            "runtime": 14.0
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "w_storage_truth",
+          "median_seconds": {
+            "pi": 11.2,
+            "runtime": 11.9
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        }
+      ],
+      "description": "10 Werkzeug fast edits (exposed development set)",
+      "excluded_cases": {},
+      "expected_trials": 40,
+      "failures": [
+        {
+          "category": "no_change",
+          "detail": "agent ended its turn after 2 tool call(s) without editing (stop reason: stop)",
+          "id": "w_description",
+          "repeat": 0,
+          "trial": "suites/quick-fast/w_description-0-pi",
+          "variant": "pi"
+        }
+      ],
+      "name": "quick-fast",
+      "paired": {
+        "runtime": {
+          "both": 19,
+          "candidate_faster": 15,
+          "candidate_only": 1,
+          "median_ratio": 0.85,
+          "median_shared_seconds": {
+            "pi": 12.8,
+            "runtime": 10.2
+          },
+          "neither": 0,
+          "pairs": 20,
+          "pi_only": 0,
+          "shared_seconds": [
+            [
+              26.18,
+              10.43
+            ],
+            [
+              11.3,
+              9.38
+            ],
+            [
+              12.04,
+              10.2
+            ],
+            [
+              11.27,
+              11.34
+            ],
+            [
+              14.64,
+              9.44
+            ],
+            [
+              16.56,
+              10.11
+            ],
+            [
+              12.78,
+              18.27
+            ],
+            [
+              10.99,
+              9.16
+            ],
+            [
+              22.05,
+              9.39
+            ],
+            [
+              15.96,
+              13.59
+            ],
+            [
+              11.33,
+              8.98
+            ],
+            [
+              18.96,
+              10.21
+            ],
+            [
+              9.71,
+              10.73
+            ],
+            [
+              12.98,
+              10.15
+            ],
+            [
+              10.22,
+              9.59
+            ],
+            [
+              12.94,
+              11.47
+            ],
+            [
+              17.7,
+              16.55
+            ],
+            [
+              12.07,
+              11.8
+            ],
+            [
+              10.34,
+              11.92
+            ]
+          ]
+        }
+      },
+      "quality": {
+        "pi": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 3,
+          "median_size_ratio": 1.0,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 0,
+          "trials_touching_tests": 1,
+          "trials_with_change": 19
+        },
+        "runtime": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 2.0,
+          "median_size_ratio": 1.0,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 0,
+          "trials_touching_tests": 0,
+          "trials_with_change": 20
+        },
+        "tool": "ruff 0.17.4"
+      },
+      "reason": null,
+      "settings": {
+        "dataset": "benchmarks/retrieval/quick_fast.v1.json",
+        "repeats": 2,
+        "timeout": 120,
+        "variants": "pi,runtime"
+      },
+      "status": "completed",
+      "trials": 40
+    },
+    {
+      "arms": {
+        "pi": {
+          "acceptance_passes": 19,
+          "attempts": 24,
+          "failures": {
+            "timeout": 1,
+            "timeout_after_correct_edit": 2,
+            "wrong_fix:behavior_check": 2,
+            "wrong_fix:regression_tests": 2
+          },
+          "median_pass_seconds": 15.9,
+          "passes": 17
+        },
+        "runtime": {
+          "acceptance_passes": 22,
+          "attempts": 24,
+          "failures": {
+            "no_change": 1,
+            "wrong_fix:behavior_check": 1
+          },
+          "median_pass_seconds": 19.3,
+          "passes": 22
+        }
+      },
+      "audit": {
+        "baseline_unchanged": null,
+        "coding_toolchain_unchanged": true,
+        "complete": true,
+        "frozen_runtime_unchanged": true,
+        "frozen_source_unchanged": true,
+        "pi_unchanged": true,
+        "retrieval_inputs_unchanged": true,
+        "working_tree_source_changed": false
+      },
+      "cases": [
+        {
+          "id": "xc01",
+          "median_seconds": {
+            "pi": null,
+            "runtime": 29.5
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "xc03",
+          "median_seconds": {
+            "pi": 109.8,
+            "runtime": 90.0
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "xc05",
+          "median_seconds": {
+            "pi": 49.5,
+            "runtime": 87.1
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "xc07",
+          "median_seconds": {
+            "pi": 9.9,
+            "runtime": 5.7
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "xc09",
+          "median_seconds": {
+            "pi": 94.2,
+            "runtime": 34.7
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "xc11",
+          "median_seconds": {
+            "pi": null,
+            "runtime": 45.4
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "1/2"
+          }
+        },
+        {
+          "id": "xw01",
+          "median_seconds": {
+            "pi": 8.2,
+            "runtime": 7.2
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "xw03",
+          "median_seconds": {
+            "pi": 10.0,
+            "runtime": 8.7
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "xw05",
+          "median_seconds": {
+            "pi": 20.3,
+            "runtime": 27.3
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "xw07",
+          "median_seconds": {
+            "pi": 74.5,
+            "runtime": 29.4
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "xw09",
+          "median_seconds": {
+            "pi": 11.4,
+            "runtime": 13.7
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "xw11",
+          "median_seconds": {
+            "pi": 57.1,
+            "runtime": 37.2
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "1/2"
+          }
+        }
+      ],
+      "description": "12 Werkzeug and click cases (development set)",
+      "excluded_cases": {},
+      "expected_trials": 48,
+      "failures": [
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "FAILED tests/test_imports.py::test_light_imports - AssertionError: assert 'ma...",
+          "id": "xc01",
+          "repeat": 0,
+          "trial": "suites/loop-dev/xc01-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "FAILED tests/test_imports.py::test_light_imports - AssertionError: assert 'ma...",
+          "id": "xc01",
+          "repeat": 1,
+          "trial": "suites/loop-dev/xc01-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "xc03",
+          "repeat": 0,
+          "trial": "suites/loop-dev/xc03-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "xc09",
+          "repeat": 1,
+          "trial": "suites/loop-dev/xc09-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "wrong_fix:behavior_check",
+          "detail": "click.exceptions.BadParameter: Path '/tmp/tmpd5dntpcw/run.sh' is not executable.",
+          "id": "xc11",
+          "repeat": 0,
+          "trial": "suites/loop-dev/xc11-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "wrong_fix:behavior_check",
+          "detail": "click.exceptions.BadParameter: Path '~/run.sh' is not executable.",
+          "id": "xc11",
+          "repeat": 0,
+          "trial": "suites/loop-dev/xc11-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "wrong_fix:behavior_check",
+          "detail": "click.exceptions.BadParameter: Path '~/run.sh' is not executable.",
+          "id": "xc11",
+          "repeat": 1,
+          "trial": "suites/loop-dev/xc11-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: Not finished: your latest check also passes on the original code, so it does not test the requested change. Add assertions that fail without your change and pass with it, run them\u2026",
+          "id": "xw11",
+          "repeat": 0,
+          "trial": "suites/loop-dev/xw11-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "xw11",
+          "repeat": 1,
+          "trial": "suites/loop-dev/xw11-1-pi",
+          "variant": "pi"
+        }
+      ],
+      "name": "loop-dev",
+      "paired": {
+        "runtime": {
+          "both": 16,
+          "candidate_faster": 9,
+          "candidate_only": 6,
+          "median_ratio": 0.93,
+          "median_shared_seconds": {
+            "pi": 13.9,
+            "runtime": 14.0
+          },
+          "neither": 1,
+          "pairs": 24,
+          "pi_only": 1,
+          "shared_seconds": [
+            [
+              109.82,
+              102.35
+            ],
+            [
+              32.43,
+              75.26
+            ],
+            [
+              66.61,
+              98.93
+            ],
+            [
+              11.81,
+              6.6
+            ],
+            [
+              7.97,
+              4.76
+            ],
+            [
+              94.22,
+              56.52
+            ],
+            [
+              7.18,
+              6.62
+            ],
+            [
+              9.29,
+              7.88
+            ],
+            [
+              10.21,
+              8.43
+            ],
+            [
+              9.82,
+              9.05
+            ],
+            [
+              24.76,
+              36.27
+            ],
+            [
+              15.93,
+              18.27
+            ],
+            [
+              29.16,
+              44.58
+            ],
+            [
+              119.79,
+              14.14
+            ],
+            [
+              11.38,
+              13.5
+            ],
+            [
+              11.45,
+              13.94
+            ]
+          ]
+        }
+      },
+      "quality": {
+        "pi": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 13.5,
+          "median_size_ratio": 1.11,
+          "new_lint_findings": 4,
+          "trials_touching_extra_files": 2,
+          "trials_touching_tests": 8,
+          "trials_with_change": 24
+        },
+        "runtime": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 7,
+          "median_size_ratio": 1.0,
+          "new_lint_findings": 3,
+          "trials_touching_extra_files": 1,
+          "trials_touching_tests": 4,
+          "trials_with_change": 23
+        },
+        "tool": "ruff 0.17.4"
+      },
+      "reason": null,
+      "settings": {
+        "dataset": "benchmarks/retrieval/quick_loop_dev.v1.json",
+        "repeats": 2,
+        "timeout": 120,
+        "variants": "pi,runtime"
+      },
+      "status": "completed",
+      "trials": 48
+    }
+  ],
+  "totals": {
+    "pi": {
+      "attempts": 64,
+      "passes": 55
+    },
+    "runtime": {
+      "attempts": 64,
+      "passes": 62
+    }
+  },
+  "totals_paired": {
+    "runtime": {
+      "both": 54,
+      "candidate_faster": 37,
+      "candidate_only": 8,
+      "median_ratio": 0.85,
+      "median_shared_seconds": {
+        "candidate": 12.8,
+        "pi": 16.4
+      },
+      "neither": 1,
+      "pairs": 64,
+      "pi_only": 1
+    }
+  }
+}

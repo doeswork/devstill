@@ -1,0 +1,527 @@
+{
+  "schema_version": 1,
+  "name": "werkzeug-change-design-v2",
+  "corpus_commit": "6389612fd1ee1bd93579eed5026e8fd471d04abd",
+  "description": "Purposive design probes, not held-out validation. Five small edits, five features, one new capability and one absent existing capability. Freeze before prototype outputs.",
+  "cases": [
+    {
+      "id": "edit_getlist",
+      "family": "edit_getlist",
+      "category": "small_edit",
+      "workload": "small_edit",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex design review; independent review pending",
+      "query": "Change MultiDict.getlist so a missing key can use a supplied fallback while preserving value conversion. Extend the existing list-value tests.",
+      "answerable": true,
+      "include_tests": true,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/datastructures/structures.py",
+            "lines": [
+              278,
+              290
+            ],
+            "sha256": "54bcee93693c123cf01cb55bc7bb70392bc2ca6ea243b6bd6a9d7f799417a2dd"
+          }
+        ],
+        [
+          {
+            "path": "tests/test_datastructures.py",
+            "lines": [
+              106,
+              111
+            ],
+            "sha256": "f11459ffaa52b42b7c6248627ade373ab3a541acd8d4c11128d01c9d62b68be9"
+          }
+        ]
+      ],
+      "roles": [
+        "implementation",
+        "tests"
+      ],
+      "rationale": "Required existing implementation/support anchors for the requested change; no credit depends on inventing a new file."
+    },
+    {
+      "id": "edit_filename",
+      "family": "edit_filename",
+      "category": "small_edit",
+      "workload": "small_edit",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex design review; independent review pending",
+      "query": "Tweak secure_filename to collapse repeated underscores after normalizing the name. Add regression assertions beside the existing filename tests.",
+      "answerable": true,
+      "include_tests": true,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/utils.py",
+            "lines": [
+              219,
+              229
+            ],
+            "sha256": "46c13d6b9f6ae68d70679548c52d32730531f82f644ca28e5d9de37f6728c8f3"
+          }
+        ],
+        [
+          {
+            "path": "tests/test_utils.py",
+            "lines": [
+              295,
+              303
+            ],
+            "sha256": "fea879dcd82cd5e596531fd06731a99f6d51ab9d8ec2540b97ab78d1726ff523"
+          }
+        ]
+      ],
+      "roles": [
+        "implementation",
+        "tests"
+      ],
+      "rationale": "Required existing implementation/support anchors for the requested change; no credit depends on inventing a new file."
+    },
+    {
+      "id": "edit_join",
+      "family": "edit_join",
+      "category": "small_edit",
+      "workload": "small_edit",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex design review; independent review pending",
+      "query": "Improve the rejection of parent traversal in safe_join without changing normal relative paths. Extend the existing traversal tests.",
+      "answerable": true,
+      "include_tests": true,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/security.py",
+            "lines": [
+              154,
+              166
+            ],
+            "sha256": "04f6eee1cf0bfa308e1972ebd3005b1b7992868b5154e1e6508f7881dbb12deb"
+          }
+        ],
+        [
+          {
+            "path": "tests/test_security.py",
+            "lines": [
+              58,
+              59
+            ],
+            "sha256": "fea3a9668ce76757b2623e3f5a6a4423834829d29da769b7f93ea7b52cb452e1"
+          }
+        ]
+      ],
+      "roles": [
+        "implementation",
+        "tests"
+      ],
+      "rationale": "Required existing implementation/support anchors for the requested change; no credit depends on inventing a new file."
+    },
+    {
+      "id": "edit_import",
+      "family": "edit_import",
+      "category": "small_edit",
+      "workload": "small_edit",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex design review; independent review pending",
+      "query": "Change import_string so its silent option also suppresses an invalid dotted object name. Keep the normal error path intact.",
+      "answerable": true,
+      "include_tests": true,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/utils.py",
+            "lines": [
+              603,
+              608
+            ],
+            "sha256": "c542ec891dcd3b07b407c96713d23ee75a3035477cab4e0e60d1ef74cf99a403"
+          }
+        ]
+      ],
+      "roles": [
+        "implementation"
+      ],
+      "rationale": "Required existing implementation/support anchors for the requested change; no credit depends on inventing a new file."
+    },
+    {
+      "id": "edit_cookie",
+      "family": "edit_cookie",
+      "category": "small_edit",
+      "workload": "small_edit",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex design review; independent review pending",
+      "query": "Improve the error message for unsupported SameSite values in dump_cookie and update the existing invalid-value regression test.",
+      "answerable": true,
+      "include_tests": true,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/http.py",
+            "lines": [
+              1324,
+              1328
+            ],
+            "sha256": "d1f174b6c60d17de77bd149388a3451856cee0ea9d1a98dbeca95cbbe72c78cc"
+          }
+        ],
+        [
+          {
+            "path": "tests/test_http.py",
+            "lines": [
+              588,
+              590
+            ],
+            "sha256": "715d6ac2a3370dca1bd185db0a7e0f287c212169aee402611d64a9365315283b"
+          }
+        ]
+      ],
+      "roles": [
+        "implementation",
+        "tests"
+      ],
+      "rationale": "Required existing implementation/support anchors for the requested change; no credit depends on inventing a new file."
+    },
+    {
+      "id": "feature_upload_limits",
+      "family": "feature_upload_limits",
+      "category": "feature",
+      "workload": "feature",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex design review; independent review pending",
+      "query": "Add per-request multipart resource limits: pass settings from the request into the form parser, enforce limits across streamed field chunks, add regression tests, and document the knobs.",
+      "answerable": true,
+      "include_tests": true,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/wrappers/request.py",
+            "lines": [
+              248,
+              254
+            ],
+            "sha256": "9987cab5dfd73c116bdd710b16e95461cb32519e2413739b608cc62f507d283d"
+          }
+        ],
+        [
+          {
+            "path": "src/werkzeug/formparser.py",
+            "lines": [
+              381,
+              389
+            ],
+            "sha256": "02072548a1092892bba668c1909a4194ab5c66df7a00d342b4546dea1694ea18"
+          }
+        ],
+        [
+          {
+            "path": "tests/test_formparser.py",
+            "lines": [
+              461,
+              470
+            ],
+            "sha256": "aabc311380631325c237bb3d4321bdc41cae242f1ebdd2eb02765317ec7edbae"
+          }
+        ],
+        [
+          {
+            "path": "docs/request_data.rst",
+            "lines": [
+              82,
+              91
+            ],
+            "sha256": "5228cb2b1539f5a0f515f72ee3cf70dc84cae2dc6a38bbc8efbc92e14009eaaa"
+          }
+        ]
+      ],
+      "roles": [
+        "entry_point",
+        "implementation",
+        "tests",
+        "docs"
+      ],
+      "rationale": "Required existing implementation/support anchors for the requested change; no credit depends on inventing a new file."
+    },
+    {
+      "id": "feature_cookie_priority",
+      "family": "feature_cookie_priority",
+      "category": "feature",
+      "workload": "feature",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex design review; independent review pending",
+      "query": "Add a cookie Priority option end to end: accept it on the response cookie API, validate and serialize it into Set-Cookie, and extend the existing cookie serialization tests.",
+      "answerable": true,
+      "include_tests": true,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/sansio/response.py",
+            "lines": [
+              229,
+              244
+            ],
+            "sha256": "0218e96efbd20aecaf302bd755697cc30d8bd3e743ae1a4093e46246f724eeb8"
+          }
+        ],
+        [
+          {
+            "path": "src/werkzeug/http.py",
+            "lines": [
+              1345,
+              1366
+            ],
+            "sha256": "2a6a5f2ec4c23d97f6b510e7888adcab27db5358e71915c3877ae1c3ff3b0ea5"
+          }
+        ],
+        [
+          {
+            "path": "tests/test_http.py",
+            "lines": [
+              491,
+              502
+            ],
+            "sha256": "11a5abdbce1baf94b86e11a17c765f3633286ab0d15784b459859df2f0142803"
+          }
+        ]
+      ],
+      "roles": [
+        "entry_point",
+        "implementation",
+        "tests"
+      ],
+      "rationale": "Required existing implementation/support anchors for the requested change; no credit depends on inventing a new file."
+    },
+    {
+      "id": "feature_downloads",
+      "family": "feature_downloads",
+      "category": "feature",
+      "workload": "feature",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex design review; independent review pending",
+      "query": "Add an optional filename validation hook for serving downloads from a directory, while preserving traversal protection and the response construction path. Extend the directory-serving regression tests.",
+      "answerable": true,
+      "include_tests": true,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/utils.py",
+            "lines": [
+              564,
+              577
+            ],
+            "sha256": "858d00ee07e91e817853cdb4430d47dd8bde07b827c24db756acd72f25bd70d9"
+          }
+        ],
+        [
+          {
+            "path": "src/werkzeug/security.py",
+            "lines": [
+              154,
+              166
+            ],
+            "sha256": "04f6eee1cf0bfa308e1972ebd3005b1b7992868b5154e1e6508f7881dbb12deb"
+          }
+        ],
+        [
+          {
+            "path": "tests/test_send_file.py",
+            "lines": [
+              180,
+              190
+            ],
+            "sha256": "d556bfb800eb66a744c59c9502732d8998674e9deb15264a626158761fa747b4"
+          }
+        ]
+      ],
+      "roles": [
+        "entry_point",
+        "implementation",
+        "tests"
+      ],
+      "rationale": "Required existing implementation/support anchors for the requested change; no credit depends on inventing a new file."
+    },
+    {
+      "id": "feature_converter",
+      "family": "feature_converter",
+      "category": "feature",
+      "workload": "feature",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex design review; independent review pending",
+      "query": "Add a numeric route converter option that rejects values outside an allowed set. Trace converter construction and numeric validation, while preserving existing route matching behavior.",
+      "answerable": true,
+      "include_tests": true,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/routing/rules.py",
+            "lines": [
+              594,
+              596
+            ],
+            "sha256": "ccac45337143ffbc857614e4273c21dd2229814f4def099886b8e34aa872c34c"
+          }
+        ],
+        [
+          {
+            "path": "src/werkzeug/routing/converters.py",
+            "lines": [
+              152,
+              160
+            ],
+            "sha256": "1c246f5325b4f0baa63d9579608bdaa7143bcd916403953a103159825aae490d"
+          }
+        ],
+        [
+          {
+            "path": "src/werkzeug/routing/map.py",
+            "lines": [
+              599,
+              606
+            ],
+            "sha256": "91310f242d21fdd9d46fddfb9d17c2549009d23365bdeaaaae6c432158ac68eb"
+          }
+        ]
+      ],
+      "roles": [
+        "entry_point",
+        "implementation",
+        "integration"
+      ],
+      "rationale": "Required existing implementation/support anchors for the requested change; no credit depends on inventing a new file."
+    },
+    {
+      "id": "feature_conversion",
+      "family": "feature_conversion",
+      "category": "feature",
+      "workload": "feature",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex design review; independent review pending",
+      "query": "Add opt-in strict conversion for multi-value dictionaries: keep the forgiving default, align single-value and list-value conversion behavior, and extend their shared tests.",
+      "answerable": true,
+      "include_tests": true,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/datastructures/structures.py",
+            "lines": [
+              278,
+              290
+            ],
+            "sha256": "54bcee93693c123cf01cb55bc7bb70392bc2ca6ea243b6bd6a9d7f799417a2dd"
+          }
+        ],
+        [
+          {
+            "path": "src/werkzeug/datastructures/structures.py",
+            "lines": [
+              105,
+              117
+            ],
+            "sha256": "45af0b4ce29e5fee76cc43145ee866f49223e4efc34f96995f595ab48b8b4446"
+          }
+        ],
+        [
+          {
+            "path": "tests/test_datastructures.py",
+            "lines": [
+              100,
+              111
+            ],
+            "sha256": "e2c10640c6da5101fad4e772d1de0ad085948b25088f74d706ca3a6a3887b531"
+          }
+        ]
+      ],
+      "roles": [
+        "implementation",
+        "integration",
+        "tests"
+      ],
+      "rationale": "Required existing implementation/support anchors for the requested change; no credit depends on inventing a new file."
+    },
+    {
+      "id": "new_request_id",
+      "family": "new_request_id",
+      "category": "new_feature",
+      "workload": "new_feature",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex design review; independent review pending",
+      "query": "Build new request-ID middleware that accepts a supplied ID or generates one, exposes it in the request environment, and adds it to response headers. Find existing middleware and header manipulation patterns to build on.",
+      "answerable": true,
+      "include_tests": true,
+      "filters": {},
+      "evidence_groups": [
+        [
+          {
+            "path": "src/werkzeug/middleware/proxy_fix.py",
+            "lines": [
+              126,
+              145
+            ],
+            "sha256": "b9cf6ff2264a0911d9276105965faeaee9c2675e08ead8af2393994f173c0d28"
+          },
+          {
+            "path": "src/werkzeug/middleware/dispatcher.py",
+            "lines": [
+              62,
+              81
+            ],
+            "sha256": "c8e7cac29157253c86b017b5a0f9261ce9e244c3b58ec18065960d7c7e4ce6f5"
+          }
+        ],
+        [
+          {
+            "path": "src/werkzeug/datastructures/headers.py",
+            "lines": [
+              356,
+              361
+            ],
+            "sha256": "53706fe06d354bec369a05c18dc516b55ff0a007173583dfec726bb215f9d64d"
+          }
+        ]
+      ],
+      "roles": [
+        "integration_pattern",
+        "header_pattern"
+      ],
+      "rationale": "Required existing implementation/support anchors for the requested change; no credit depends on inventing a new file."
+    },
+    {
+      "id": "absent_refresh",
+      "family": "absent_refresh",
+      "category": "no_answer",
+      "workload": "no_answer",
+      "split": "dev",
+      "label_status": "reviewed",
+      "reviewer": "Codex design review; independent review pending",
+      "query": "Locate the existing OAuth refresh-token rotation implementation so I can fix its expiration bug.",
+      "answerable": false,
+      "include_tests": true,
+      "filters": {},
+      "evidence_groups": [],
+      "roles": [],
+      "rationale": "Required existing implementation/support anchors for the requested change; no credit depends on inventing a new file."
+    }
+  ]
+}

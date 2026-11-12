@@ -39,7 +39,7 @@ from devstill.parsers import (
 )
 from devstill.parsers.registry import language_for
 from devstill.paths import IndexPaths
-from devstill.storage import ChromaStore, SQLiteStore
+from devstill.storage import LazyChromaStore, SQLiteStore
 
 
 class RepositoryIndexer:
@@ -58,6 +58,7 @@ class RepositoryIndexer:
         )
         self.paths.create()
         self.store = SQLiteStore(self.paths.sqlite)
+        self.vectors = config.index.vectors
         self.embedder = embedder or EmbeddingBackend(
             resolve_model_path(config),
             max_sequence_length=config.embedding.max_sequence_length,
@@ -65,7 +66,7 @@ class RepositoryIndexer:
             normalize=config.embedding.normalize_embeddings,
             device=config.embedding.device,
         )
-        self.chroma = chroma_store or ChromaStore(
+        self.chroma = chroma_store or LazyChromaStore(
             self.paths.chroma,
             config.index.collection,
         )
@@ -86,16 +87,25 @@ class RepositoryIndexer:
         progress: Callable[[IndexProgress], None] | None,
         action: str,
     ) -> list[list[float]]:
+        if not self.vectors:
+            return []
         total = len(units)
         self._progress(
-            progress, "embedding", f"{action} {total} search units", 0, total
+            progress,
+            "embedding",
+            f"{action} {total:,} search units (shortest first)",
+            0,
+            total,
         )
 
         def embedding_progress(current: int, count: int) -> None:
+            message = f"{action} {current:,}/{count:,} search units"
+            if count and current < count and current / count >= 0.9:
+                message += f"; {count - current:,} left (longest excerpts last)"
             self._progress(
                 progress,
                 "embedding",
-                f"{action} {count} search units",
+                message,
                 current,
                 count,
             )
@@ -113,15 +123,21 @@ class RepositoryIndexer:
         chunks: dict[str, SourceChunk],
         progress: Callable[[IndexProgress], None] | None,
     ) -> None:
+        if not self.vectors:
+            return
+
         def write_progress(current: int, total: int) -> None:
             self._progress(
                 progress,
                 "persistence",
-                f"Writing {total} vectors to Chroma",
+                f"Saving vector index: {current:,}/{total:,} embeddings",
                 current,
                 total,
             )
 
+        # Announce this before Chroma prepares metadata or blocks on a write.
+        if units:
+            write_progress(0, len(units))
         self.chroma.upsert_search_units(
             units,
             embeddings,
@@ -134,6 +150,8 @@ class RepositoryIndexer:
         verbose: bool,
         progress: Callable[[IndexProgress], None] | None,
     ) -> int:
+        if not self.vectors:
+            return 0
         units = self.store.all_search_units()
         total = len(units)
         self._progress(
@@ -218,7 +236,8 @@ class RepositoryIndexer:
             self._mark_dirty()
             with self.store.transaction():
                 self.store.reset_all()
-            self.chroma.reset_collection()
+            if self.vectors:
+                self.chroma.reset_collection()
             previous = {}
             self._file_progress = IndexFileProgress()
 
@@ -374,37 +393,58 @@ class RepositoryIndexer:
         if not rebuild:
             self._mark_dirty()
         removed_units: list[str] = []
-        self._progress(progress, "persistence", "Writing repository index")
+        file_writes = len(deleted) + len(parsed)
+
+        def source_progress(current: int) -> None:
+            self._progress(
+                progress,
+                "persistence",
+                f"Saving searchable code: {current:,}/{file_writes:,} files",
+                current,
+                file_writes,
+            )
+
+        source_progress(0)
         with self.store.transaction():
-            for relative in deleted:
+            for position, relative in enumerate(deleted, start=1):
                 removed_units.extend(self.store.delete_file(relative))
-            for record, chunks, units, parse_errors, quality in parsed:
+                if self._report_file_position(position, file_writes):
+                    source_progress(position)
+            for position, (record, chunks, units, parse_errors, quality) in enumerate(
+                parsed, start=len(deleted) + 1
+            ):
                 removed_units.extend(
                     self.store.replace_chunks_for_file(record.path, chunks, units)
                 )
                 self.store.replace_parse_errors(record.path, parse_errors)
                 self.store.upsert_file(record)
                 self.store.upsert_quality(quality)
+                if self._report_file_position(position, file_writes):
+                    source_progress(position)
+            self._progress(progress, "persistence", "Committing searchable code index")
 
         def delete_progress(current: int, total: int) -> None:
             self._progress(
                 progress,
                 "persistence",
-                f"Deleting {total} stale vectors from Chroma",
+                f"Removing old vector entries: {current:,}/{total:,}",
                 current,
                 total,
             )
 
-        self.chroma.delete_search_units(
-            removed_units,
-            progress=delete_progress if progress is not None else None,
-        )
+        if removed_units and self.vectors:
+            delete_progress(0, len(removed_units))
+            self.chroma.delete_search_units(
+                removed_units,
+                progress=delete_progress if progress is not None else None,
+            )
         self._upsert_vectors(
             all_new_units,
             embeddings,
             new_chunks_by_id,
             progress,
         )
+        self._progress(progress, "finalizing", "Preparing index summary")
         errors = self.store.list_parse_errors()
         quality = self.store.list_quality()
         summary = IndexSummary(
@@ -453,6 +493,7 @@ class RepositoryIndexer:
             binary_files_skipped=sum(item.category == "binary" for item in quality),
             index_path=str(self.paths.root),
         )
+        self._progress(progress, "finalizing", "Saving index reports")
         self._write_outputs(summary, errors, quality)
         if verbose:
             self._write_verbose_quality(quality)

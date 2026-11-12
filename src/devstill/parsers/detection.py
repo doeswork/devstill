@@ -25,13 +25,19 @@ _GENERATED_RE = re.compile(
 )
 
 
+_CONTROL_BYTES = bytes(
+    value for value in range(256) if value < 9 or (13 < value < 32) or value == 127
+)
+
+
 def is_binary(raw: bytes) -> bool:
     sample = raw[:8192]
     if b"\0" in sample:
         return True
     if not sample:
         return False
-    control = sum(value < 9 or (13 < value < 32) or value == 127 for value in sample)
+    # Count control bytes in C rather than a Python-level loop.
+    control = len(sample) - len(sample.translate(None, _CONTROL_BYTES))
     return control / len(sample) > 0.08
 
 
