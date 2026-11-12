@@ -45,9 +45,10 @@ from devstill.credentials import (
 )
 from devstill.executor import PreparedExecution
 from devstill.feature_planning import FeatureDraft
+from devstill.herdr import HerdrReporter
 from devstill.models import IndexProgress
 from devstill.pi_runtime import inspect_pi
-from devstill.planning import PlanItem, PlanLabel, PlanOutput
+from devstill.planning import PlanItem, PlanLabel, PlanOutput, render_plan_markdown
 from devstill.tasks import TaskDraft
 from devstill.tui_agent import AgentSetupAction, AgentSetupResult, AgentSetupScreen
 from devstill.tui_commands import (
@@ -65,6 +66,7 @@ from devstill.tui_commands import (
     safe_status,
 )
 from devstill.tui_file_questions import FileQuestionScreen
+from devstill.ui_session import UiSession
 
 MAX_SESSION_ENTRIES = 50
 SIDEBAR_BREAKPOINT = 100
@@ -1236,10 +1238,14 @@ class DevstillApp(App[None]):
         config: DevstillConfig,
         *,
         workflow: TuiWorkflow | None = None,
+        resume: str | None = None,
     ) -> None:
         super().__init__()
         self.config_path = config_path
         self.config = config
+        self._session = UiSession(config_path, config, resume)
+        self._herdr = HerdrReporter(self._session.id, ("devstill", "--resume", self._session.id))
+        self._session_ready = False
         self._workflow_injected = workflow is not None
         self.workflow = workflow or TuiWorkflow(config_path, config)
         self._active_worker: Worker[TuiResult | None] | None = None
@@ -1343,7 +1349,11 @@ class DevstillApp(App[None]):
                 yield Static(id="sidebar-info")
         yield Footer()
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
+        await self._restore_session()
+        self._session_ready = True
+        self._sync_session()
+        self.set_interval(0.25, self._sync_session)
         self.query_one("#busy", LoadingIndicator).display = False
         self.refresh_repository_status()
         self._apply_sidebar_visibility(self.size.width)
@@ -1353,6 +1363,8 @@ class DevstillApp(App[None]):
             self._start_warmup(warm)
 
     def on_unmount(self) -> None:
+        self._session_ready = False
+        self._herdr.close()
         cancel_tasks = getattr(self.workflow, "cancel_tasks", None)
         if callable(cancel_tasks):
             cancel_tasks()
@@ -1365,6 +1377,76 @@ class DevstillApp(App[None]):
         if callable(close):
             close()
 
+    @property
+    def _busy(self):
+        return getattr(self, "_busy_value", False)
+
+    @_busy.setter
+    def _busy(self, value):
+        self._busy_value = value
+        if getattr(self, "_session_ready", False):
+            self._report_herdr()
+            self._sync_session()
+
+    def _report_herdr(self):
+        blocked = self._composer_mode is not ComposerMode.NORMAL or len(self.screen_stack) > 1
+        state = "working" if self._busy else "blocked" if blocked else "idle"
+        self._herdr.report(state, "Waiting for your review or input" if state == "blocked" else None)
+
+    def exit(self, *args, **kwargs):
+        self._sync_session()
+        return super().exit(*args, **kwargs)
+
+    def _sync_session(self):
+        if not self._session_ready or not self.screen_stack:
+            return
+        self._report_herdr()
+        screen = self.screen_stack[0]
+        if not screen.query("#command-input"):
+            return
+        entries = [{"command": e.command, "markdown": render_plan_markdown(e.plan, title=e.title) if isinstance(e, PlanSessionEntry) else getattr(e, "markdown", ""),
+                    "error": getattr(e, "error", False)}
+                   for e in screen.query(".session-entry") if hasattr(e, "command")]
+        data = {"history": self._history, "entries": entries[-MAX_SESSION_ENTRIES:],
+                "input": screen.query_one("#command-input", PromptTextArea).text,
+                "task_mode": screen.query_one("#task-mode", Select).value,
+                "request_type": screen.query_one("#request-type", Select).value,
+                "interrupted": self._busy,
+                "pending_review": self._task_review if self._composer_mode is ComposerMode.TASK_REVIEW and isinstance(self._task_review, dict) else None,
+                "review_interrupted": self._composer_mode is not ComposerMode.NORMAL}
+        try:
+            self._session.save(data)
+        except OSError as exc:
+            screen.query_one("#activity", Static).update(f"Session could not be saved: {exc}")
+
+    async def _restore_session(self):
+        data = self._session.data
+        if not data:
+            return
+        self._history = data.get("history", [])[-MAX_SESSION_ENTRIES:]
+        for entry in data.get("entries", [])[-MAX_SESSION_ENTRIES:]:
+            await self._append_entry(entry["command"], entry["markdown"], error=entry.get("error", False))
+        self.query_one("#command-input", PromptTextArea).text = data.get("input", "")
+        self.query_one("#task-mode", Select).value = data.get("task_mode", "review")
+        self.query_one("#request-type", Select).value = data.get("request_type", "quick")
+        draft = data.get("pending_review")
+        if draft:
+            import json
+
+            from devstill.runtime.artifacts import load
+            root = self._session.path.parent.parent / "runs"
+            try:
+                proposal = load(root, draft["id"])
+                state = json.loads((root / draft["id"] / "result.json").read_text())
+                if proposal["digest"] != draft["digest"] or state["status"] != "ready":
+                    raise ValueError("Saved proposal is no longer ready for review")
+                self._task_review = proposal
+                self._set_composer_mode(ComposerMode.TASK_REVIEW)
+            except (OSError, ValueError, KeyError) as exc:
+                await self._append_entry("Session restored", f"Patch review could not be restored: {exc}", error=True)
+        elif data.get("interrupted") or data.get("review_interrupted"):
+            await self._append_entry("Session restored", "The previous task or review was interrupted. Check the saved results and retry your request when ready. No task was replayed.")
+
     def _show_composer_actions(self, *button_ids: str) -> None:
         actions = self.query_one("#composer-actions", Horizontal)
         visible = set(button_ids)
@@ -1374,6 +1456,8 @@ class DevstillApp(App[None]):
 
     def _set_composer_mode(self, mode: ComposerMode) -> None:
         self._composer_mode = mode
+        if self._session_ready:
+            self._report_herdr()
         prompt = self.query_one("#command-input", PromptTextArea)
         sidebar = self.query_one("#sidebar-commands", OptionList)
         sidebar.disabled = mode is not ComposerMode.NORMAL

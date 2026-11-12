@@ -1,0 +1,295 @@
+{
+  "schema_version": 1,
+  "id": "20261112T002133Z-cc553e6",
+  "status": "completed",
+  "started_at": "2026-11-12T00:21:33+00:00",
+  "finished_at": "2026-11-12T02:52:16+00:00",
+  "note": "USB import verification: Quick Python and React/JS; local checker baseline-wait fix",
+  "command": [
+    "bench_suite.py",
+    "run",
+    "--tag",
+    "core",
+    "--tag",
+    "react",
+    "--note",
+    "USB import verification: Quick Python and React/JS; local checker baseline-wait fix"
+  ],
+  "host": "Jeffy4080",
+  "platform": "Linux-6.18.58.1-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+  "git": {
+    "sha": "cc553e6ee402519dc43426db9986a6a669c102f9",
+    "short": "cc553e6",
+    "branch": "bench-test-ui-ux",
+    "dirty": false,
+    "status": []
+  },
+  "model": {
+    "base_url": "https://llm.codemonkey.study/v1",
+    "configured_model": "vllm-qwen38-27b",
+    "served": [
+      [
+        "vllm-qwen38-27b",
+        "gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090",
+        262144
+      ]
+    ],
+    "served_sha256": "05a50541b75c9bee998e78c26a97e70deeb8c1da68a3150d6842d34ed586a6f1"
+  },
+  "pi": {
+    "version": "1.5.0",
+    "node": "v24.14.0",
+    "reason": null
+  },
+  "tools": {
+    "python": "Python 3.12.3",
+    "pytest": "pytest 8.3.5",
+    "ruff": "ruff 0.16.1",
+    "node": "v24.14.0",
+    "git": "git version 2.43.0"
+  },
+  "settings": {
+    "sampling": "default",
+    "endpoint_wait": 1800,
+    "max_hours": null,
+    "overrides": {
+      "repeats": null,
+      "variants": null,
+      "timeout": null,
+      "baseline_ref": null,
+      "baseline_budget": null
+    }
+  },
+  "suites": [
+    {
+      "name": "nq",
+      "settings": {
+        "variants": "pi,runtime",
+        "repeats": 1,
+        "timeout": 120,
+        "purpose": "development",
+        "pi_disable_reasoning": true,
+        "acceptance_budget": 240,
+        "requires": [],
+        "name": "nq",
+        "dataset": "benchmarks/retrieval/native_quick_fresh.v1.json",
+        "tags": [
+          "core",
+          "dev"
+        ],
+        "description": "10 Werkzeug quick edits (exposed development set)"
+      },
+      "dataset_sha256": "33c78670cdff816c8a85527fa346ddc3c38e181a0f648c19e7144367124adfe5",
+      "status": "completed",
+      "reason": null,
+      "attempts": [
+        {
+          "started_at": "2026-11-12T00:33:33+00:00",
+          "finished_at": "2026-11-12T00:40:29+00:00",
+          "exit_code": 0,
+          "resume": false,
+          "trials_recorded": 20,
+          "suite_time_limit_hit": false,
+          "stray_processes_killed": 0,
+          "stopped": null
+        }
+      ],
+      "verified_cache": "/home/jeffy4080/projects/devstill/devstill/.devstill/bench-cache/verified/nq-33c78670cdff-9023aeb3fe9a",
+      "excluded_cases": {},
+      "dataset_used": "/home/jeffy4080/projects/devstill/devstill/benchmarks/retrieval/native_quick_fresh.v1.json",
+      "verified_used": "/home/jeffy4080/projects/devstill/devstill/.devstill/bench-cache/verified/nq-33c78670cdff-9023aeb3fe9a"
+    },
+    {
+      "name": "quick-fast",
+      "settings": {
+        "variants": "pi,runtime",
+        "repeats": 1,
+        "timeout": 120,
+        "purpose": "development",
+        "pi_disable_reasoning": true,
+        "acceptance_budget": 240,
+        "requires": [],
+        "name": "quick-fast",
+        "dataset": "benchmarks/retrieval/quick_fast.v1.json",
+        "tags": [
+          "core",
+          "dev"
+        ],
+        "description": "10 Werkzeug fast edits (exposed development set)"
+      },
+      "dataset_sha256": "aeb5583db4c2f97f67a8320e35afa4520b91a356b35f2b5db1bcd82bb26eafbd",
+      "status": "completed",
+      "reason": null,
+      "attempts": [
+        {
+          "started_at": "2026-11-12T00:41:29+00:00",
+          "finished_at": "2026-11-12T00:46:08+00:00",
+          "exit_code": 0,
+          "resume": false,
+          "trials_recorded": 20,
+          "suite_time_limit_hit": false,
+          "stray_processes_killed": 0,
+          "stopped": null
+        }
+      ],
+      "verified_cache": "/home/jeffy4080/projects/devstill/devstill/.devstill/bench-cache/verified/quick-fast-aeb5583db4c2-9023aeb3fe9a",
+      "excluded_cases": {},
+      "dataset_used": "/home/jeffy4080/projects/devstill/devstill/benchmarks/retrieval/quick_fast.v1.json",
+      "verified_used": "/home/jeffy4080/projects/devstill/devstill/.devstill/bench-cache/verified/quick-fast-aeb5583db4c2-9023aeb3fe9a"
+    },
+    {
+      "name": "loop-dev",
+      "settings": {
+        "variants": "pi,runtime",
+        "repeats": 1,
+        "timeout": 120,
+        "purpose": "development",
+        "pi_disable_reasoning": true,
+        "acceptance_budget": 240,
+        "requires": [],
+        "name": "loop-dev",
+        "dataset": "benchmarks/retrieval/quick_loop_dev.v1.json",
+        "tags": [
+          "core",
+          "dev"
+        ],
+        "description": "12 Werkzeug and click cases (development set)"
+      },
+      "dataset_sha256": "3bcb9704cbf9c810e98535644cc7685c40862dc11e2f3d4121cb3da8e2d5f050",
+      "status": "completed",
+      "reason": null,
+      "attempts": [
+        {
+          "started_at": "2026-11-12T00:51:54+00:00",
+          "finished_at": "2026-11-12T01:05:56+00:00",
+          "exit_code": 0,
+          "resume": false,
+          "trials_recorded": 24,
+          "suite_time_limit_hit": false,
+          "stray_processes_killed": 0,
+          "stopped": null
+        }
+      ],
+      "verified_cache": "/home/jeffy4080/projects/devstill/devstill/.devstill/bench-cache/verified/loop-dev-3bcb9704cbf9-a2dd3f90fdf7",
+      "excluded_cases": {},
+      "dataset_used": "/home/jeffy4080/projects/devstill/devstill/benchmarks/retrieval/quick_loop_dev.v1.json",
+      "verified_used": "/home/jeffy4080/projects/devstill/devstill/.devstill/bench-cache/verified/loop-dev-3bcb9704cbf9-a2dd3f90fdf7"
+    },
+    {
+      "name": "loop-holdout",
+      "settings": {
+        "variants": "pi,runtime",
+        "repeats": 2,
+        "timeout": 120,
+        "purpose": "development",
+        "pi_disable_reasoning": true,
+        "acceptance_budget": 240,
+        "requires": [],
+        "name": "loop-holdout",
+        "dataset": "benchmarks/retrieval/quick_loop_holdout.v1.json",
+        "tags": [
+          "core"
+        ],
+        "description": "12 Werkzeug and click cases; exposed by the 2026-11-08 final run, so no longer held out"
+      },
+      "dataset_sha256": "19c8afcd816b9d071e95836790a1efaa040ba53b56796170a21c7f0282e621dc",
+      "status": "completed",
+      "reason": null,
+      "attempts": [
+        {
+          "started_at": "2026-11-12T01:06:44+00:00",
+          "finished_at": "2026-11-12T01:40:32+00:00",
+          "exit_code": 0,
+          "resume": false,
+          "trials_recorded": 48,
+          "suite_time_limit_hit": false,
+          "stray_processes_killed": 0,
+          "stopped": null
+        }
+      ],
+      "verified_cache": "/home/jeffy4080/projects/devstill/devstill/.devstill/bench-cache/verified/loop-holdout-19c8afcd816b-838ee6021a89",
+      "excluded_cases": {},
+      "dataset_used": "/home/jeffy4080/projects/devstill/devstill/benchmarks/retrieval/quick_loop_holdout.v1.json",
+      "verified_used": "/home/jeffy4080/projects/devstill/devstill/.devstill/bench-cache/verified/loop-holdout-19c8afcd816b-838ee6021a89"
+    },
+    {
+      "name": "react-dev",
+      "settings": {
+        "variants": "pi,runtime",
+        "repeats": 1,
+        "timeout": 120,
+        "purpose": "development",
+        "pi_disable_reasoning": true,
+        "acceptance_budget": 240,
+        "requires": [
+          "node"
+        ],
+        "name": "react-dev",
+        "dataset": "benchmarks/retrieval/zustand_dev.v1.json",
+        "tags": [
+          "react",
+          "dev"
+        ],
+        "description": "12 zustand (React/TypeScript) cases, vitest + tsc acceptance (development set)"
+      },
+      "dataset_sha256": "59d4d6ceac6a58a498995bfd44fa49139f1cde7d9652d4f84fc65a41b09c0b8a",
+      "status": "completed",
+      "reason": null,
+      "attempts": [
+        {
+          "started_at": "2026-11-12T01:45:58+00:00",
+          "finished_at": "2026-11-12T02:20:56+00:00",
+          "exit_code": 0,
+          "resume": false,
+          "trials_recorded": 24,
+          "suite_time_limit_hit": false,
+          "stray_processes_killed": 0,
+          "stopped": null
+        }
+      ],
+      "verified_cache": "/home/jeffy4080/projects/devstill/devstill/.devstill/bench-cache/verified/react-dev-59d4d6ceac6a-85314a7711f4",
+      "excluded_cases": {},
+      "dataset_used": "/home/jeffy4080/projects/devstill/devstill/benchmarks/retrieval/zustand_dev.v1.json",
+      "verified_used": "/home/jeffy4080/projects/devstill/devstill/.devstill/bench-cache/verified/react-dev-59d4d6ceac6a-85314a7711f4"
+    },
+    {
+      "name": "react-holdout",
+      "settings": {
+        "variants": "pi,runtime",
+        "repeats": 1,
+        "timeout": 120,
+        "purpose": "development",
+        "pi_disable_reasoning": true,
+        "acceptance_budget": 240,
+        "requires": [
+          "node"
+        ],
+        "name": "react-holdout",
+        "dataset": "benchmarks/retrieval/zustand_holdout.v1.json",
+        "tags": [
+          "react"
+        ],
+        "description": "12 zustand (React/TypeScript) cases authored with react-dev; not read while tuning Devstill"
+      },
+      "dataset_sha256": "bef6420fe9e3405f87e46abf08eb431e9fd7426e487930354e67f91890e3ec01",
+      "status": "completed",
+      "reason": null,
+      "attempts": [
+        {
+          "started_at": "2026-11-12T02:22:24+00:00",
+          "finished_at": "2026-11-12T02:52:16+00:00",
+          "exit_code": 0,
+          "resume": false,
+          "trials_recorded": 24,
+          "suite_time_limit_hit": false,
+          "stray_processes_killed": 0,
+          "stopped": null
+        }
+      ],
+      "verified_cache": "/home/jeffy4080/projects/devstill/devstill/.devstill/bench-cache/verified/react-holdout-bef6420fe9e3-85314a7711f4",
+      "excluded_cases": {},
+      "dataset_used": "/home/jeffy4080/projects/devstill/devstill/benchmarks/retrieval/zustand_holdout.v1.json",
+      "verified_used": "/home/jeffy4080/projects/devstill/devstill/.devstill/bench-cache/verified/react-holdout-bef6420fe9e3-85314a7711f4"
+    }
+  ]
+}

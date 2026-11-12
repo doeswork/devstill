@@ -1,0 +1,2171 @@
+{
+  "campaign": {
+    "command": [
+      "bench_suite.py",
+      "run",
+      "--tag",
+      "core",
+      "--tag",
+      "react",
+      "--note",
+      "USB import verification: Quick Python and React/JS; local checker baseline-wait fix"
+    ],
+    "finished_at": "2026-11-12T02:52:16+00:00",
+    "git": {
+      "branch": "bench-test-ui-ux",
+      "dirty": false,
+      "sha": "cc553e6ee402519dc43426db9986a6a669c102f9",
+      "short": "cc553e6",
+      "status": []
+    },
+    "host": "Jeffy4080",
+    "hours": 2.51,
+    "id": "20261112T002133Z-cc553e6",
+    "model": "vllm-qwen38-27b",
+    "model_endpoint": "https://llm.codemonkey.study/v1",
+    "note": "USB import verification: Quick Python and React/JS; local checker baseline-wait fix",
+    "pi_version": "1.5.0",
+    "reason": null,
+    "sampling": "default",
+    "served_models": [
+      [
+        "vllm-qwen38-27b",
+        "gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090",
+        262144
+      ]
+    ],
+    "started_at": "2026-11-12T00:21:33+00:00",
+    "status": "completed",
+    "tools": {
+      "git": "git version 2.43.0",
+      "node": "v24.14.0",
+      "pytest": "pytest 8.3.5",
+      "python": "Python 3.12.3",
+      "ruff": "ruff 0.16.1"
+    }
+  },
+  "generated_at": "2026-11-12T02:52:18+00:00",
+  "previous": {
+    "git": "d1bf301",
+    "id": "20261111T145638Z-d1bf301",
+    "model": "vllm-qwen38-27b",
+    "started_at": "2026-11-11T14:56:38+00:00",
+    "suites": {
+      "loop-dev": {
+        "arms": {
+          "pi": {
+            "before": "20/24",
+            "now": "11/12"
+          },
+          "runtime": {
+            "before": "22/24",
+            "now": "10/12"
+          }
+        },
+        "flips": [
+          {
+            "before": "2/2",
+            "id": "xc05",
+            "now": "0/1",
+            "variant": "runtime"
+          },
+          {
+            "before": "0/2",
+            "id": "xw11",
+            "now": "1/1",
+            "variant": "pi"
+          }
+        ],
+        "median_ratio": {
+          "before": 1.05,
+          "now": 0.85
+        }
+      },
+      "loop-holdout": {
+        "arms": {
+          "pi": {
+            "before": "18/24",
+            "now": "20/24"
+          },
+          "runtime": {
+            "before": "19/24",
+            "now": "16/24"
+          }
+        },
+        "flips": [
+          {
+            "before": "1/2",
+            "id": "xc04",
+            "now": "2/2",
+            "variant": "pi"
+          },
+          {
+            "before": "1/2",
+            "id": "xc08",
+            "now": "2/2",
+            "variant": "pi"
+          },
+          {
+            "before": "2/2",
+            "id": "xc08",
+            "now": "1/2",
+            "variant": "runtime"
+          },
+          {
+            "before": "1/2",
+            "id": "xc10",
+            "now": "2/2",
+            "variant": "pi"
+          },
+          {
+            "before": "1/2",
+            "id": "xc10",
+            "now": "0/2",
+            "variant": "runtime"
+          },
+          {
+            "before": "1/2",
+            "id": "xc12",
+            "now": "0/2",
+            "variant": "pi"
+          },
+          {
+            "before": "1/2",
+            "id": "xw12",
+            "now": "0/2",
+            "variant": "runtime"
+          }
+        ],
+        "median_ratio": {
+          "before": 0.99,
+          "now": 0.6
+        }
+      },
+      "nq": {
+        "arms": {
+          "pi": {
+            "before": "14/20",
+            "now": "9/10"
+          },
+          "runtime": {
+            "before": "20/20",
+            "now": "9/10"
+          }
+        },
+        "flips": [
+          {
+            "before": "1/2",
+            "id": "nq03",
+            "now": "1/1",
+            "variant": "pi"
+          },
+          {
+            "before": "2/2",
+            "id": "nq03",
+            "now": "0/1",
+            "variant": "runtime"
+          },
+          {
+            "before": "1/2",
+            "id": "nq09",
+            "now": "1/1",
+            "variant": "pi"
+          },
+          {
+            "before": "0/2",
+            "id": "nq10",
+            "now": "1/1",
+            "variant": "pi"
+          }
+        ],
+        "median_ratio": {
+          "before": 1.04,
+          "now": 0.73
+        }
+      },
+      "quick-fast": {
+        "arms": {
+          "pi": {
+            "before": "20/20",
+            "now": "10/10"
+          },
+          "runtime": {
+            "before": "20/20",
+            "now": "10/10"
+          }
+        },
+        "flips": [],
+        "median_ratio": {
+          "before": 0.77,
+          "now": 0.64
+        }
+      },
+      "react-dev": {
+        "arms": {
+          "pi": {
+            "before": "9/24",
+            "now": "3/12"
+          },
+          "runtime": {
+            "before": "17/24",
+            "now": "7/12"
+          }
+        },
+        "flips": [
+          {
+            "before": "1/2",
+            "id": "zd01",
+            "now": "1/1",
+            "variant": "pi"
+          },
+          {
+            "before": "1/2",
+            "id": "zd01",
+            "now": "0/1",
+            "variant": "runtime"
+          },
+          {
+            "before": "2/2",
+            "id": "zd02",
+            "now": "0/1",
+            "variant": "pi"
+          },
+          {
+            "before": "1/2",
+            "id": "zd02",
+            "now": "1/1",
+            "variant": "runtime"
+          },
+          {
+            "before": "1/2",
+            "id": "zd04",
+            "now": "0/1",
+            "variant": "pi"
+          },
+          {
+            "before": "1/2",
+            "id": "zd05",
+            "now": "0/1",
+            "variant": "pi"
+          },
+          {
+            "before": "1/2",
+            "id": "zd06",
+            "now": "1/1",
+            "variant": "runtime"
+          },
+          {
+            "before": "2/2",
+            "id": "zd07",
+            "now": "0/1",
+            "variant": "runtime"
+          },
+          {
+            "before": "1/2",
+            "id": "zd09",
+            "now": "0/1",
+            "variant": "runtime"
+          },
+          {
+            "before": "1/2",
+            "id": "zd12",
+            "now": "0/1",
+            "variant": "runtime"
+          }
+        ],
+        "median_ratio": {
+          "before": 0.71,
+          "now": 0.48
+        }
+      },
+      "react-holdout": {
+        "arms": {
+          "pi": {
+            "before": "12/24",
+            "now": "8/12"
+          },
+          "runtime": {
+            "before": "18/24",
+            "now": "9/12"
+          }
+        },
+        "flips": [
+          {
+            "before": "1/2",
+            "id": "zh01",
+            "now": "0/1",
+            "variant": "pi"
+          },
+          {
+            "before": "0/2",
+            "id": "zh02",
+            "now": "1/1",
+            "variant": "pi"
+          },
+          {
+            "before": "1/2",
+            "id": "zh02",
+            "now": "1/1",
+            "variant": "runtime"
+          },
+          {
+            "before": "2/2",
+            "id": "zh04",
+            "now": "0/1",
+            "variant": "pi"
+          },
+          {
+            "before": "1/2",
+            "id": "zh09",
+            "now": "1/1",
+            "variant": "pi"
+          },
+          {
+            "before": "1/2",
+            "id": "zh10",
+            "now": "1/1",
+            "variant": "pi"
+          },
+          {
+            "before": "1/2",
+            "id": "zh10",
+            "now": "1/1",
+            "variant": "runtime"
+          },
+          {
+            "before": "1/2",
+            "id": "zh11",
+            "now": "1/1",
+            "variant": "pi"
+          },
+          {
+            "before": "0/2",
+            "id": "zh12",
+            "now": "1/1",
+            "variant": "pi"
+          },
+          {
+            "before": "2/2",
+            "id": "zh12",
+            "now": "0/1",
+            "variant": "runtime"
+          }
+        ],
+        "median_ratio": {
+          "before": 0.64,
+          "now": 0.34
+        }
+      }
+    }
+  },
+  "schema_version": 1,
+  "suites": [
+    {
+      "arms": {
+        "pi": {
+          "acceptance_passes": 9,
+          "attempts": 10,
+          "failures": {
+            "no_change": 1
+          },
+          "median_pass_seconds": 14.7,
+          "passes": 9
+        },
+        "runtime": {
+          "acceptance_passes": 9,
+          "attempts": 10,
+          "failures": {
+            "wrong_fix:behavior_check": 1
+          },
+          "median_pass_seconds": 11.3,
+          "passes": 9
+        }
+      },
+      "audit": {
+        "baseline_unchanged": null,
+        "coding_toolchain_unchanged": true,
+        "complete": true,
+        "frozen_runtime_unchanged": true,
+        "frozen_source_unchanged": true,
+        "pi_unchanged": true,
+        "retrieval_inputs_unchanged": true,
+        "working_tree_source_changed": false
+      },
+      "cases": [
+        {
+          "id": "nq01",
+          "median_seconds": {
+            "pi": 14.1,
+            "runtime": 13.0
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "nq02",
+          "median_seconds": {
+            "pi": 16.3,
+            "runtime": 9.6
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "nq03",
+          "median_seconds": {
+            "pi": 30.7,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "0/1"
+          }
+        },
+        {
+          "id": "nq04",
+          "median_seconds": {
+            "pi": 14.5,
+            "runtime": 9.1
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "nq05",
+          "median_seconds": {
+            "pi": 10.9,
+            "runtime": 8.6
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "nq06",
+          "median_seconds": {
+            "pi": null,
+            "runtime": 41.3
+          },
+          "outcomes": {
+            "pi": "0/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "nq07",
+          "median_seconds": {
+            "pi": 17.0,
+            "runtime": 11.3
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "nq08",
+          "median_seconds": {
+            "pi": 14.7,
+            "runtime": 12.6
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "nq09",
+          "median_seconds": {
+            "pi": 13.0,
+            "runtime": 14.3
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "nq10",
+          "median_seconds": {
+            "pi": 58.4,
+            "runtime": 7.7
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        }
+      ],
+      "description": "10 Werkzeug quick edits (exposed development set)",
+      "excluded_cases": {},
+      "expected_trials": 20,
+      "failures": [
+        {
+          "category": "wrong_fix:behavior_check",
+          "detail": "TypeError: unhashable type: 'list'",
+          "id": "nq03",
+          "repeat": 0,
+          "trial": "suites/nq/nq03-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "agent ended its turn after 1 tool call(s) without editing (stop reason: stop)",
+          "id": "nq06",
+          "repeat": 0,
+          "trial": "suites/nq/nq06-0-pi",
+          "variant": "pi"
+        }
+      ],
+      "name": "nq",
+      "paired": {
+        "runtime": {
+          "both": 8,
+          "candidate_faster": 7,
+          "candidate_only": 1,
+          "median_ratio": 0.73,
+          "median_shared_seconds": {
+            "pi": 14.6,
+            "runtime": 10.4
+          },
+          "neither": 0,
+          "pairs": 10,
+          "pi_only": 1,
+          "shared_seconds": [
+            [
+              14.11,
+              13.01
+            ],
+            [
+              16.32,
+              9.59
+            ],
+            [
+              14.52,
+              9.14
+            ],
+            [
+              10.85,
+              8.64
+            ],
+            [
+              16.98,
+              11.26
+            ],
+            [
+              14.72,
+              12.55
+            ],
+            [
+              12.96,
+              14.26
+            ],
+            [
+              58.36,
+              7.75
+            ]
+          ]
+        }
+      },
+      "quality": {
+        "pi": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 6,
+          "median_size_ratio": 2.0,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 0,
+          "trials_touching_tests": 0,
+          "trials_with_change": 9
+        },
+        "runtime": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 3.0,
+          "median_size_ratio": 1.0,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 0,
+          "trials_touching_tests": 0,
+          "trials_with_change": 10
+        },
+        "tool": "ruff 0.16.1"
+      },
+      "reason": null,
+      "settings": {
+        "dataset": "benchmarks/retrieval/native_quick_fresh.v1.json",
+        "repeats": 1,
+        "timeout": 120,
+        "variants": "pi,runtime"
+      },
+      "status": "completed",
+      "trials": 20
+    },
+    {
+      "arms": {
+        "pi": {
+          "acceptance_passes": 10,
+          "attempts": 10,
+          "failures": {},
+          "median_pass_seconds": 12.7,
+          "passes": 10
+        },
+        "runtime": {
+          "acceptance_passes": 10,
+          "attempts": 10,
+          "failures": {},
+          "median_pass_seconds": 8.0,
+          "passes": 10
+        }
+      },
+      "audit": {
+        "baseline_unchanged": null,
+        "coding_toolchain_unchanged": true,
+        "complete": true,
+        "frozen_runtime_unchanged": true,
+        "frozen_source_unchanged": true,
+        "pi_unchanged": true,
+        "retrieval_inputs_unchanged": true,
+        "working_tree_source_changed": false
+      },
+      "cases": [
+        {
+          "id": "w_age",
+          "median_seconds": {
+            "pi": 15.3,
+            "runtime": 8.3
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "w_close",
+          "median_seconds": {
+            "pi": 12.9,
+            "runtime": 9.7
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "w_description",
+          "median_seconds": {
+            "pi": 11.6,
+            "runtime": 7.6
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "w_header_lines",
+          "median_seconds": {
+            "pi": 16.2,
+            "runtime": 8.7
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "w_hop_whitespace",
+          "median_seconds": {
+            "pi": 10.6,
+            "runtime": 6.6
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "w_parse_age_types",
+          "median_seconds": {
+            "pi": 13.5,
+            "runtime": 7.8
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "w_repr",
+          "median_seconds": {
+            "pi": 9.6,
+            "runtime": 7.6
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "w_salt",
+          "median_seconds": {
+            "pi": 12.5,
+            "runtime": 8.1
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "w_secure_pathlike",
+          "median_seconds": {
+            "pi": 13.1,
+            "runtime": 8.3
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "w_storage_truth",
+          "median_seconds": {
+            "pi": 9.1,
+            "runtime": 7.7
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        }
+      ],
+      "description": "10 Werkzeug fast edits (exposed development set)",
+      "excluded_cases": {},
+      "expected_trials": 20,
+      "failures": [],
+      "name": "quick-fast",
+      "paired": {
+        "runtime": {
+          "both": 10,
+          "candidate_faster": 10,
+          "candidate_only": 0,
+          "median_ratio": 0.64,
+          "median_shared_seconds": {
+            "pi": 12.7,
+            "runtime": 8.0
+          },
+          "neither": 0,
+          "pairs": 10,
+          "pi_only": 0,
+          "shared_seconds": [
+            [
+              15.26,
+              8.34
+            ],
+            [
+              12.9,
+              9.75
+            ],
+            [
+              11.61,
+              7.59
+            ],
+            [
+              16.17,
+              8.74
+            ],
+            [
+              10.61,
+              6.59
+            ],
+            [
+              13.51,
+              7.84
+            ],
+            [
+              9.6,
+              7.64
+            ],
+            [
+              12.45,
+              8.09
+            ],
+            [
+              13.06,
+              8.3
+            ],
+            [
+              9.1,
+              7.74
+            ]
+          ]
+        }
+      },
+      "quality": {
+        "pi": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 2.0,
+          "median_size_ratio": 1.0,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 0,
+          "trials_touching_tests": 0,
+          "trials_with_change": 10
+        },
+        "runtime": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 2.0,
+          "median_size_ratio": 1.0,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 0,
+          "trials_touching_tests": 0,
+          "trials_with_change": 10
+        },
+        "tool": "ruff 0.16.1"
+      },
+      "reason": null,
+      "settings": {
+        "dataset": "benchmarks/retrieval/quick_fast.v1.json",
+        "repeats": 1,
+        "timeout": 120,
+        "variants": "pi,runtime"
+      },
+      "status": "completed",
+      "trials": 20
+    },
+    {
+      "arms": {
+        "pi": {
+          "acceptance_passes": 11,
+          "attempts": 12,
+          "failures": {
+            "wrong_fix:behavior_check": 1
+          },
+          "median_pass_seconds": 13.4,
+          "passes": 11
+        },
+        "runtime": {
+          "acceptance_passes": 10,
+          "attempts": 12,
+          "failures": {
+            "wrong_fix:behavior_check": 2
+          },
+          "median_pass_seconds": 16.9,
+          "passes": 10
+        }
+      },
+      "audit": {
+        "baseline_unchanged": null,
+        "coding_toolchain_unchanged": true,
+        "complete": true,
+        "frozen_runtime_unchanged": true,
+        "frozen_source_unchanged": true,
+        "pi_unchanged": true,
+        "retrieval_inputs_unchanged": true,
+        "working_tree_source_changed": false
+      },
+      "cases": [
+        {
+          "id": "xc01",
+          "median_seconds": {
+            "pi": 31.2,
+            "runtime": 27.6
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "xc03",
+          "median_seconds": {
+            "pi": 98.9,
+            "runtime": 81.1
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "xc05",
+          "median_seconds": {
+            "pi": 91.1,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "0/1"
+          }
+        },
+        {
+          "id": "xc07",
+          "median_seconds": {
+            "pi": 5.6,
+            "runtime": 4.0
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "xc09",
+          "median_seconds": {
+            "pi": 12.8,
+            "runtime": 12.0
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "xc11",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/1",
+            "runtime": "0/1"
+          }
+        },
+        {
+          "id": "xw01",
+          "median_seconds": {
+            "pi": 5.8,
+            "runtime": 4.5
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "xw03",
+          "median_seconds": {
+            "pi": 3.6,
+            "runtime": 12.2
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "xw05",
+          "median_seconds": {
+            "pi": 13.4,
+            "runtime": 22.6
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "xw07",
+          "median_seconds": {
+            "pi": 74.1,
+            "runtime": 21.6
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "xw09",
+          "median_seconds": {
+            "pi": 7.4,
+            "runtime": 10.1
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "xw11",
+          "median_seconds": {
+            "pi": 119.1,
+            "runtime": 46.7
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        }
+      ],
+      "description": "12 Werkzeug and click cases (development set)",
+      "excluded_cases": {},
+      "expected_trials": 24,
+      "failures": [
+        {
+          "category": "wrong_fix:behavior_check",
+          "detail": "AssertionError: {'build': 'Build the project.', 'clean': 'Remove build outputs.', 'deploy': 'Deploy the app secret deploy note', 'mirror': 'Mirror every tracked file and directory\u2026",
+          "id": "xc05",
+          "repeat": 0,
+          "trial": "suites/loop-dev/xc05-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "wrong_fix:behavior_check",
+          "detail": "click.exceptions.BadParameter: Path '~/run.sh' is not executable.",
+          "id": "xc11",
+          "repeat": 0,
+          "trial": "suites/loop-dev/xc11-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "wrong_fix:behavior_check",
+          "detail": "click.exceptions.BadParameter: Path '~/run.sh' is not executable.",
+          "id": "xc11",
+          "repeat": 0,
+          "trial": "suites/loop-dev/xc11-0-runtime",
+          "variant": "runtime"
+        }
+      ],
+      "name": "loop-dev",
+      "paired": {
+        "runtime": {
+          "both": 10,
+          "candidate_faster": 7,
+          "candidate_only": 0,
+          "median_ratio": 0.85,
+          "median_shared_seconds": {
+            "pi": 13.1,
+            "runtime": 16.9
+          },
+          "neither": 1,
+          "pairs": 12,
+          "pi_only": 1,
+          "shared_seconds": [
+            [
+              31.17,
+              27.57
+            ],
+            [
+              98.94,
+              81.12
+            ],
+            [
+              5.64,
+              4.03
+            ],
+            [
+              12.8,
+              12.01
+            ],
+            [
+              5.83,
+              4.48
+            ],
+            [
+              3.58,
+              12.21
+            ],
+            [
+              13.43,
+              22.56
+            ],
+            [
+              74.14,
+              21.59
+            ],
+            [
+              7.44,
+              10.05
+            ],
+            [
+              119.1,
+              46.68
+            ]
+          ]
+        }
+      },
+      "quality": {
+        "pi": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 11.0,
+          "median_size_ratio": 1.0,
+          "new_lint_findings": 2,
+          "trials_touching_extra_files": 1,
+          "trials_touching_tests": 2,
+          "trials_with_change": 12
+        },
+        "runtime": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 6.0,
+          "median_size_ratio": 1.0,
+          "new_lint_findings": 2,
+          "trials_touching_extra_files": 0,
+          "trials_touching_tests": 2,
+          "trials_with_change": 12
+        },
+        "tool": "ruff 0.16.1"
+      },
+      "reason": null,
+      "settings": {
+        "dataset": "benchmarks/retrieval/quick_loop_dev.v1.json",
+        "repeats": 1,
+        "timeout": 120,
+        "variants": "pi,runtime"
+      },
+      "status": "completed",
+      "trials": 24
+    },
+    {
+      "arms": {
+        "pi": {
+          "acceptance_passes": 21,
+          "attempts": 24,
+          "failures": {
+            "no_change": 1,
+            "timeout": 1,
+            "timeout_after_correct_edit": 1,
+            "wrong_fix:behavior_check": 1
+          },
+          "median_pass_seconds": 31.1,
+          "passes": 20
+        },
+        "runtime": {
+          "acceptance_passes": 16,
+          "attempts": 24,
+          "failures": {
+            "no_change": 7,
+            "wrong_fix:behavior_check": 1
+          },
+          "median_pass_seconds": 15.8,
+          "passes": 16
+        }
+      },
+      "audit": {
+        "baseline_unchanged": null,
+        "coding_toolchain_unchanged": true,
+        "complete": true,
+        "frozen_runtime_unchanged": true,
+        "frozen_source_unchanged": true,
+        "pi_unchanged": true,
+        "retrieval_inputs_unchanged": true,
+        "working_tree_source_changed": false
+      },
+      "cases": [
+        {
+          "id": "xc02",
+          "median_seconds": {
+            "pi": 44.0,
+            "runtime": 25.1
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "1/2"
+          }
+        },
+        {
+          "id": "xc04",
+          "median_seconds": {
+            "pi": 59.1,
+            "runtime": 74.7
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "1/2"
+          }
+        },
+        {
+          "id": "xc06",
+          "median_seconds": {
+            "pi": 24.7,
+            "runtime": 14.3
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "xc08",
+          "median_seconds": {
+            "pi": 34.8,
+            "runtime": 25.4
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "1/2"
+          }
+        },
+        {
+          "id": "xc10",
+          "median_seconds": {
+            "pi": 91.2,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "0/2"
+          }
+        },
+        {
+          "id": "xc12",
+          "median_seconds": {
+            "pi": null,
+            "runtime": 65.2
+          },
+          "outcomes": {
+            "pi": "0/2",
+            "runtime": "1/2"
+          }
+        },
+        {
+          "id": "xw02",
+          "median_seconds": {
+            "pi": 7.0,
+            "runtime": 12.5
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "xw04",
+          "median_seconds": {
+            "pi": 70.1,
+            "runtime": 19.7
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "xw06",
+          "median_seconds": {
+            "pi": 28.1,
+            "runtime": 11.1
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "xw08",
+          "median_seconds": {
+            "pi": 14.3,
+            "runtime": 11.8
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "xw10",
+          "median_seconds": {
+            "pi": 18.5,
+            "runtime": 17.0
+          },
+          "outcomes": {
+            "pi": "2/2",
+            "runtime": "2/2"
+          }
+        },
+        {
+          "id": "xw12",
+          "median_seconds": {
+            "pi": 95.5,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "1/2",
+            "runtime": "0/2"
+          }
+        }
+      ],
+      "description": "12 Werkzeug and click cases; exposed by the 2026-11-08 final run, so no longer held out",
+      "excluded_cases": {},
+      "expected_trials": 48,
+      "failures": [
+        {
+          "category": "no_change",
+          "detail": "agent ended its turn after 1 tool call(s) without editing (stop reason: stop)",
+          "id": "xc02",
+          "repeat": 1,
+          "trial": "suites/loop-holdout/xc02-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: No verified change within 20 model calls",
+          "id": "xc02",
+          "repeat": 1,
+          "trial": "suites/loop-holdout/xc02-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: Not finished: your latest check also passes on the original code, so it does not test the requested change. Add assertions that fail without your change and pass with it, run them\u2026",
+          "id": "xc04",
+          "repeat": 1,
+          "trial": "suites/loop-holdout/xc04-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "wrong_fix:behavior_check",
+          "detail": "AssertionError: /tmp/tmp9impn2th/home/.foo-bar",
+          "id": "xc08",
+          "repeat": 1,
+          "trial": "suites/loop-holdout/xc08-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: No verified change within 20 model calls",
+          "id": "xc10",
+          "repeat": 0,
+          "trial": "suites/loop-holdout/xc10-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: No verified change within 20 model calls",
+          "id": "xc10",
+          "repeat": 1,
+          "trial": "suites/loop-holdout/xc10-1-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "xc12",
+          "repeat": 0,
+          "trial": "suites/loop-holdout/xc12-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: No verified change within 20 model calls",
+          "id": "xc12",
+          "repeat": 0,
+          "trial": "suites/loop-holdout/xc12-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "wrong_fix:behavior_check",
+          "detail": "AssertionError: [<Option b>]",
+          "id": "xc12",
+          "repeat": 1,
+          "trial": "suites/loop-holdout/xc12-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: Not finished: your latest check also passes on the original code, so it does not test the requested change. Add assertions that fail without your change and pass with it, run them\u2026",
+          "id": "xw12",
+          "repeat": 0,
+          "trial": "suites/loop-holdout/xw12-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "xw12",
+          "repeat": 1,
+          "trial": "suites/loop-holdout/xw12-1-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: Your latest check fails after your last edit (re-run automatically): \u2026 \"(\\'private\\', \\'\\\\\"Authorization\\\\\"\\')\", \"(\\'max-age\\', \\'3600\\')\", \"(\\'no-transform\\', N",
+          "id": "xw12",
+          "repeat": 1,
+          "trial": "suites/loop-holdout/xw12-1-runtime",
+          "variant": "runtime"
+        }
+      ],
+      "name": "loop-holdout",
+      "paired": {
+        "runtime": {
+          "both": 15,
+          "candidate_faster": 11,
+          "candidate_only": 1,
+          "median_ratio": 0.6,
+          "median_shared_seconds": {
+            "pi": 25.2,
+            "runtime": 13.4
+          },
+          "neither": 3,
+          "pairs": 24,
+          "pi_only": 5,
+          "shared_seconds": [
+            [
+              44.03,
+              25.13
+            ],
+            [
+              87.09,
+              74.67
+            ],
+            [
+              27.02,
+              19.74
+            ],
+            [
+              22.44,
+              8.89
+            ],
+            [
+              35.5,
+              25.42
+            ],
+            [
+              7.79,
+              13.41
+            ],
+            [
+              6.18,
+              11.55
+            ],
+            [
+              104.92,
+              18.28
+            ],
+            [
+              35.23,
+              21.19
+            ],
+            [
+              25.21,
+              11.41
+            ],
+            [
+              30.95,
+              10.75
+            ],
+            [
+              20.44,
+              11.91
+            ],
+            [
+              8.25,
+              11.61
+            ],
+            [
+              21.74,
+              11.0
+            ],
+            [
+              15.31,
+              23.05
+            ]
+          ]
+        }
+      },
+      "quality": {
+        "pi": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 15,
+          "median_size_ratio": 1.53,
+          "new_lint_findings": 11,
+          "trials_touching_extra_files": 2,
+          "trials_touching_tests": 4,
+          "trials_with_change": 23
+        },
+        "runtime": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 7,
+          "median_size_ratio": 1.0,
+          "new_lint_findings": 2,
+          "trials_touching_extra_files": 0,
+          "trials_touching_tests": 2,
+          "trials_with_change": 17
+        },
+        "tool": "ruff 0.16.1"
+      },
+      "reason": null,
+      "settings": {
+        "dataset": "benchmarks/retrieval/quick_loop_holdout.v1.json",
+        "repeats": 2,
+        "timeout": 120,
+        "variants": "pi,runtime"
+      },
+      "status": "completed",
+      "trials": 48
+    },
+    {
+      "arms": {
+        "pi": {
+          "acceptance_passes": 8,
+          "attempts": 12,
+          "failures": {
+            "no_change": 2,
+            "timeout": 2,
+            "timeout_after_correct_edit": 5
+          },
+          "median_pass_seconds": 46.8,
+          "passes": 3
+        },
+        "runtime": {
+          "acceptance_passes": 7,
+          "attempts": 12,
+          "failures": {
+            "no_change": 5
+          },
+          "median_pass_seconds": 43.7,
+          "passes": 7
+        }
+      },
+      "audit": {
+        "baseline_unchanged": null,
+        "coding_toolchain_unchanged": true,
+        "complete": true,
+        "frozen_runtime_unchanged": true,
+        "frozen_source_unchanged": true,
+        "pi_unchanged": true,
+        "retrieval_inputs_unchanged": true,
+        "working_tree_source_changed": false
+      },
+      "cases": [
+        {
+          "id": "zd01",
+          "median_seconds": {
+            "pi": 52.3,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "0/1"
+          }
+        },
+        {
+          "id": "zd02",
+          "median_seconds": {
+            "pi": null,
+            "runtime": 13.4
+          },
+          "outcomes": {
+            "pi": "0/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "zd03",
+          "median_seconds": {
+            "pi": null,
+            "runtime": 89.0
+          },
+          "outcomes": {
+            "pi": "0/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "zd04",
+          "median_seconds": {
+            "pi": null,
+            "runtime": 26.3
+          },
+          "outcomes": {
+            "pi": "0/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "zd05",
+          "median_seconds": {
+            "pi": null,
+            "runtime": 43.7
+          },
+          "outcomes": {
+            "pi": "0/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "zd06",
+          "median_seconds": {
+            "pi": null,
+            "runtime": 111.0
+          },
+          "outcomes": {
+            "pi": "0/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "zd07",
+          "median_seconds": {
+            "pi": 24.9,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "0/1"
+          }
+        },
+        {
+          "id": "zd08",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/1",
+            "runtime": "0/1"
+          }
+        },
+        {
+          "id": "zd09",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/1",
+            "runtime": "0/1"
+          }
+        },
+        {
+          "id": "zd10",
+          "median_seconds": {
+            "pi": null,
+            "runtime": 93.5
+          },
+          "outcomes": {
+            "pi": "0/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "zd11",
+          "median_seconds": {
+            "pi": 46.8,
+            "runtime": 22.4
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "zd12",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/1",
+            "runtime": "0/1"
+          }
+        }
+      ],
+      "description": "12 zustand (React/TypeScript) cases, vitest + tsc acceptance (development set)",
+      "excluded_cases": {},
+      "expected_trials": 24,
+      "failures": [
+        {
+          "category": "no_change",
+          "detail": "deadline: No verified change before the deadline",
+          "id": "zd01",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd01-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "zd02",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd02-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "zd03",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd03-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "zd04",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd04-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "zd05",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd05-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zd06",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd06-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: No verified change within 30 model calls",
+          "id": "zd07",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd07-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zd08",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd08-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: No verified change before the deadline",
+          "id": "zd08",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd08-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "agent ended its turn after 6 tool call(s) without editing (stop reason: stop)",
+          "id": "zd09",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd09-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: No verified change within 30 model calls",
+          "id": "zd09",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd09-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "no_change",
+          "detail": "Pi did not complete normally: exit=0, stop=length",
+          "id": "zd10",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd10-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "zd12",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd12-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "turn_limit: No verified change within 30 model calls",
+          "id": "zd12",
+          "repeat": 0,
+          "trial": "suites/react-dev/zd12-0-runtime",
+          "variant": "runtime"
+        }
+      ],
+      "name": "react-dev",
+      "paired": {
+        "runtime": {
+          "both": 1,
+          "candidate_faster": 1,
+          "candidate_only": 6,
+          "median_ratio": 0.48,
+          "median_shared_seconds": {
+            "pi": 46.8,
+            "runtime": 22.4
+          },
+          "neither": 3,
+          "pairs": 12,
+          "pi_only": 2,
+          "shared_seconds": [
+            [
+              46.79,
+              22.45
+            ]
+          ]
+        }
+      },
+      "quality": {
+        "pi": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 78.0,
+          "median_size_ratio": 6.75,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 1,
+          "trials_touching_tests": 8,
+          "trials_with_change": 10
+        },
+        "runtime": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 16,
+          "median_size_ratio": 1.26,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 0,
+          "trials_touching_tests": 0,
+          "trials_with_change": 7
+        },
+        "tool": "ruff 0.16.1"
+      },
+      "reason": null,
+      "settings": {
+        "dataset": "benchmarks/retrieval/zustand_dev.v1.json",
+        "repeats": 1,
+        "timeout": 120,
+        "variants": "pi,runtime"
+      },
+      "status": "completed",
+      "trials": 24
+    },
+    {
+      "arms": {
+        "pi": {
+          "acceptance_passes": 10,
+          "attempts": 12,
+          "failures": {
+            "timeout": 1,
+            "timeout_after_correct_edit": 2,
+            "wrong_fix:behavior_check": 1
+          },
+          "median_pass_seconds": 81.6,
+          "passes": 8
+        },
+        "runtime": {
+          "acceptance_passes": 9,
+          "attempts": 12,
+          "failures": {
+            "no_change": 1,
+            "wrong_fix:regression_tests": 2
+          },
+          "median_pass_seconds": 29.7,
+          "passes": 9
+        }
+      },
+      "audit": {
+        "baseline_unchanged": null,
+        "coding_toolchain_unchanged": true,
+        "complete": true,
+        "frozen_runtime_unchanged": true,
+        "frozen_source_unchanged": true,
+        "pi_unchanged": true,
+        "retrieval_inputs_unchanged": true,
+        "working_tree_source_changed": false
+      },
+      "cases": [
+        {
+          "id": "zh01",
+          "median_seconds": {
+            "pi": null,
+            "runtime": 26.7
+          },
+          "outcomes": {
+            "pi": "0/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "zh02",
+          "median_seconds": {
+            "pi": 41.4,
+            "runtime": 102.2
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "zh03",
+          "median_seconds": {
+            "pi": 65.4,
+            "runtime": 21.1
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "zh04",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/1",
+            "runtime": "0/1"
+          }
+        },
+        {
+          "id": "zh05",
+          "median_seconds": {
+            "pi": 90.5,
+            "runtime": 30.9
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "zh06",
+          "median_seconds": {
+            "pi": null,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "0/1",
+            "runtime": "0/1"
+          }
+        },
+        {
+          "id": "zh07",
+          "median_seconds": {
+            "pi": 14.6,
+            "runtime": 22.6
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "zh08",
+          "median_seconds": {
+            "pi": null,
+            "runtime": 90.8
+          },
+          "outcomes": {
+            "pi": "0/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "zh09",
+          "median_seconds": {
+            "pi": 94.8,
+            "runtime": 29.7
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "zh10",
+          "median_seconds": {
+            "pi": 74.8,
+            "runtime": 87.0
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "zh11",
+          "median_seconds": {
+            "pi": 88.5,
+            "runtime": 27.8
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "1/1"
+          }
+        },
+        {
+          "id": "zh12",
+          "median_seconds": {
+            "pi": 104.7,
+            "runtime": null
+          },
+          "outcomes": {
+            "pi": "1/1",
+            "runtime": "0/1"
+          }
+        }
+      ],
+      "description": "12 zustand (React/TypeScript) cases authored with react-dev; not read while tuning Devstill",
+      "excluded_cases": {},
+      "expected_trials": 24,
+      "failures": [
+        {
+          "category": "wrong_fix:behavior_check",
+          "detail": "No index signature with a parameter of type 'string' was found on type '{}'.",
+          "id": "zh01",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh01-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "zh04",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh04-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-tr2xhd48/vitest-report.json",
+          "id": "zh04",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh04-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout",
+          "detail": "no finished change within the time limit",
+          "id": "zh06",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh06-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "no_change",
+          "detail": "deadline: No verified change before the deadline",
+          "id": "zh06",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh06-0-runtime",
+          "variant": "runtime"
+        },
+        {
+          "category": "timeout_after_correct_edit",
+          "detail": "edit was correct but the agent did not stop in time",
+          "id": "zh08",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh08-0-pi",
+          "variant": "pi"
+        },
+        {
+          "category": "wrong_fix:regression_tests",
+          "detail": "JSON report written to /tmp/devstill-accept-hf0qaxt8/vitest-report.json",
+          "id": "zh12",
+          "repeat": 0,
+          "trial": "suites/react-holdout/zh12-0-runtime",
+          "variant": "runtime"
+        }
+      ],
+      "name": "react-holdout",
+      "paired": {
+        "runtime": {
+          "both": 7,
+          "candidate_faster": 4,
+          "candidate_only": 2,
+          "median_ratio": 0.34,
+          "median_shared_seconds": {
+            "pi": 74.8,
+            "runtime": 29.7
+          },
+          "neither": 2,
+          "pairs": 12,
+          "pi_only": 1,
+          "shared_seconds": [
+            [
+              41.36,
+              102.16
+            ],
+            [
+              65.35,
+              21.1
+            ],
+            [
+              90.47,
+              30.89
+            ],
+            [
+              14.62,
+              22.55
+            ],
+            [
+              94.81,
+              29.69
+            ],
+            [
+              74.78,
+              87.03
+            ],
+            [
+              88.46,
+              27.83
+            ]
+          ]
+        }
+      },
+      "quality": {
+        "pi": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 29.0,
+          "median_size_ratio": 2.27,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 1,
+          "trials_touching_tests": 4,
+          "trials_with_change": 12
+        },
+        "runtime": {
+          "lint_not_scored": 0,
+          "median_changed_lines": 19,
+          "median_size_ratio": 1.08,
+          "new_lint_findings": 0,
+          "trials_touching_extra_files": 0,
+          "trials_touching_tests": 0,
+          "trials_with_change": 11
+        },
+        "tool": "ruff 0.16.1"
+      },
+      "reason": null,
+      "settings": {
+        "dataset": "benchmarks/retrieval/zustand_holdout.v1.json",
+        "repeats": 1,
+        "timeout": 120,
+        "variants": "pi,runtime"
+      },
+      "status": "completed",
+      "trials": 24
+    }
+  ],
+  "totals": {
+    "pi": {
+      "attempts": 80,
+      "passes": 61
+    },
+    "runtime": {
+      "attempts": 80,
+      "passes": 61
+    }
+  },
+  "totals_paired": {
+    "runtime": {
+      "both": 51,
+      "candidate_faster": 40,
+      "candidate_only": 10,
+      "median_ratio": 0.66,
+      "median_shared_seconds": {
+        "candidate": 12.0,
+        "pi": 16.2
+      },
+      "neither": 9,
+      "pairs": 80,
+      "pi_only": 10
+    }
+  }
+}

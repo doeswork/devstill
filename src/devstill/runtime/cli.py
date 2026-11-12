@@ -38,10 +38,22 @@ def perform(session, action, *, query=None, run_id=None, approved_digest=None):
 
 
 def command(args, config_path, config):
+    from devstill.herdr import HerdrReporter
+
+    reporter = HerdrReporter()
+    try:
+        return _command(args, config_path, config, reporter)
+    finally:
+        reporter.close()
+
+
+def _command(args, config_path, config, reporter):
     with RuntimeSession(config_path, config) as session:
         if args.command == "session":
             # One request at a time, retaining encoder/storage but never chat history.
+            reporter.report("idle")
             for line in sys.stdin:
+                reporter.report("working")
                 request = {}
                 try:
                     request = json.loads(line)
@@ -61,7 +73,10 @@ def command(args, config_path, config):
                         "error": str(exc),
                     }
                 print(json.dumps(response), flush=True)
+                ready = response.get("result", {}).get("status") == "ready"
+                reporter.report("blocked" if ready else "idle", "Patch ready for review" if ready else None)
             return 0
+        reporter.report("working")
         if args.command == "runs":
             result = perform(
                 session, args.action, run_id=args.run_id, approved_digest=args.digest

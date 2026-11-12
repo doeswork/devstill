@@ -1,0 +1,88 @@
+{
+  "checks": [
+    {
+      "name": "venv",
+      "ok": true,
+      "detail": "/home/jeffy4080/projects/devstill/devstill/.venv/bin/python",
+      "blocking": true
+    },
+    {
+      "name": "git",
+      "ok": true,
+      "detail": "bench-test-ui-ux cc553e6",
+      "blocking": false
+    },
+    {
+      "name": "model_endpoint",
+      "ok": true,
+      "detail": "https://llm.codemonkey.study/v1 serves ['vllm-qwen38-27b']",
+      "blocking": true
+    },
+    {
+      "name": "pi",
+      "ok": true,
+      "detail": "1.5.0",
+      "blocking": true
+    },
+    {
+      "name": "werkzeug_test_deps",
+      "ok": true,
+      "detail": "cryptography, pytest-timeout and ephemeral-port-reserve importable",
+      "blocking": false
+    },
+    {
+      "name": "pytest_8",
+      "ok": true,
+      "detail": "pytest 8.3.5 (click 8.1.8's suite does not collect under pytest 9)",
+      "blocking": false
+    },
+    {
+      "name": "disk",
+      "ok": true,
+      "detail": "/tmp 854 GB free, repo 854 GB free",
+      "blocking": false
+    }
+  ],
+  "suites": {
+    "nq": [],
+    "quick-fast": [],
+    "loop-dev": [],
+    "loop-holdout": [],
+    "react-dev": [],
+    "react-holdout": []
+  },
+  "blocked": [],
+  "git": {
+    "sha": "cc553e6ee402519dc43426db9986a6a669c102f9",
+    "short": "cc553e6",
+    "branch": "bench-test-ui-ux",
+    "dirty": false,
+    "status": []
+  },
+  "model": {
+    "base_url": "https://llm.codemonkey.study/v1",
+    "configured_model": "vllm-qwen38-27b",
+    "served": [
+      [
+        "vllm-qwen38-27b",
+        "gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090",
+        262144
+      ]
+    ],
+    "served_sha256": "05a50541b75c9bee998e78c26a97e70deeb8c1da68a3150d6842d34ed586a6f1"
+  },
+  "pi": {
+    "version": "1.5.0",
+    "node": "v24.14.0",
+    "reason": null
+  },
+  "tools": {
+    "python": "Python 3.12.3",
+    "pytest": "pytest 8.3.5",
+    "ruff": "ruff 0.16.1",
+    "node": "v24.14.0",
+    "git": "git version 2.43.0"
+  },
+  "host": "Jeffy4080",
+  "platform": "Linux-6.18.58.1-microsoft-standard-WSL2-x86_64-with-glibc2.39"
+}

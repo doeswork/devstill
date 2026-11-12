@@ -112,6 +112,7 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument(
         "--version", action="version", version=f"devstill {__version__}"
     )
+    command.add_argument("--resume", metavar="SESSION_ID", help="Restore a saved TUI session")
     sub = command.add_subparsers(dest="command")
 
     help_parser = sub.add_parser(
@@ -1467,7 +1468,7 @@ def main() -> None:
         if args.command == "execute":
             raise SystemExit(execute_command(args))
         config_path, config = _configured()
-        DevstillApp(config_path, config).run()
+        DevstillApp(config_path, config, resume=args.resume).run()
     except KeyboardInterrupt:
         raise SystemExit(130) from None
     except (FileNotFoundError, RuntimeError, ValueError) as exc:

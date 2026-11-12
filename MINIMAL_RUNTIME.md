@@ -251,3 +251,32 @@ old Pi path explicitly. The check wire format now uses `python_lines` arrays;
 the runtime joins source lines without unescaping Python string literals. The
 old invalid-check response remains retained as a failed benchmark attempt.
 This default change is a product decision, not evidence of having beaten Pi.
+
+## Herdr lifecycle and session restoration
+
+Run `devstill` in a Herdr pane. The TUI reports `working` during operations,
+`blocked` while a review or input dialog needs attention, and `idle` when ready.
+Herdr may display an unviewed idle completion as `done`. Closing Devstill releases
+its registration. Reporting uses the inherited Herdr binary and pane, with a
+background worker, coalesced updates and a short timeout; failures do not stop
+Devstill. Outside Herdr, reporting is disabled.
+
+TUI sessions are saved privately beneath the configured index directory's parent,
+in `sessions/<id>.json`. Herdr receives `devstill --resume <id>` as the restart
+command. This restores the transcript, prompt history, draft text, composer
+settings and a pending Quick patch review. Manual restoration uses the same
+command from the original project directory. A pending patch is reloaded from its
+validated artifact and must still be ready; applying it retains the usual digest
+and source checks. Interrupted operations are not replayed automatically. Legacy
+Plan/Pi reviews return as transcript entries and need to be started again.
+Session snapshots contain task text and results, are written atomically with
+owner-only file permissions, and contain no process environment or agent API key.
+
+The JSONL adapter (`devstill session --stdio`) reports lifecycle state while
+handling requests, but does not advertise automatic restoration of its input
+stream. One-shot `edit`/`runs` commands report work and release on exit.
+
+Verified with Herdr 0.9.5: status reporting, blocked input, release, and a real
+server restart restoring the same TUI session. That Herdr version rejects custom
+agents through `agent prompt` with `agent_not_ready`; use normal terminal input
+or `pane send-text`/`pane send-keys` for automation until Herdr supports that path.
